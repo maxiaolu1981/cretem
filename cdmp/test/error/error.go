@@ -3,9 +3,9 @@ package main
 import (
 	"fmt"
 
-	"github.com/cretem/cdmp/backend/pkg/code"
-	_ "github.com/cretem/cdmp/backend/pkg/code"
-	base "github.com/cretem/nexuscore/errors"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+
+	base "github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
 func main() {

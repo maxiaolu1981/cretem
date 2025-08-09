@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/cretem/nexuscore/log" // 替换为实际日志库路径
+	"github.com/maxiaolu1981/cretem/nexuscore/log" // 替换为实际日志库路径
 )
 
 func main1() {

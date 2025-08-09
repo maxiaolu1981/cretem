@@ -20,7 +20,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 
-	"github.com/cretem/nexuscore/log/klog"
+	"github.com/maxiaolu1981/cretem/nexuscore/log/klog"
 )
 
 /*

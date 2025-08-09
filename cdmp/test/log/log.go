@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cretem/nexuscore/log"
+	"github.com/maxiaolu1981/cretem/nexuscore/log"
 	"github.com/robfig/cron/v3"
 )
 

@@ -1,4 +1,4 @@
-module github.com/cretem/cdmp
+module github.com/maxiaolu1981/cretem/cdmp
 
 go 1.24.5
 

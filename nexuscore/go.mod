@@ -1,4 +1,4 @@
-module github.com/cretem/nexuscore
+module github.com/maxiaolu1981/cretem/nexuscore
 
 go 1.24.5
 
