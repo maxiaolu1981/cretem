@@ -3,8 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
-
+	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/code"
 	base "github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
