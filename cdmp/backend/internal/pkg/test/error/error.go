@@ -20,7 +20,7 @@ func main() {
 
 func getDatabase() error {
 	if err := getUser(); err != nil {
-		return base.WrapC(err, code.ErrValidation, "验证失败.")
+		return base.WrapC(err, code.ErrDatabase, "验证失败.")
 	}
 	return nil
 }

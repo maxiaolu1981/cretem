@@ -3,7 +3,6 @@ module github.com/maxiaolu1981/cretem/cdmp
 go 1.24.5
 
 require (
-	github.com/marmotedu/iam v1.7.0
 	github.com/maxiaolu1981/cretem/nexuscore v0.0.0-20250809065019-325c87651814
 	github.com/novalagung/gubrak v1.0.0
 	github.com/robfig/cron/v3 v3.0.1
