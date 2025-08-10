@@ -24,6 +24,8 @@ import (
 	"os"
 	"runtime"
 	"time"
+
+	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver"
 )
 
 func main() {
@@ -31,6 +33,5 @@ func main() {
 	if len(os.Getenv("GOMAXPROCS")) == 0 {
 		runtime.GOMAXPROCS(runtime.NumCPU())
 	}
-
-	// apiserver.NewApp("iam-apiserver").Run()
+	apiserver.NewApp("iam-apiserver").Run()
 }

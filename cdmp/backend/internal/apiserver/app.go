@@ -26,12 +26,9 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/log"
 )
 
-const commandDesc = `The IAM API server validates and configures data
-for the api objects which include users, policies, secrets, and
-others. The API Server services REST operations to do the api objects management.
-
-Find more iam-apiserver information at:
-    https://github.com/marmotedu/iam/blob/master/docs/guide/en-US/cmd/iam-apiserver.md`
+const commandDesc = `IAM API 服务器负责验证和配置 API 对象的数据，这些对象包括用户、策略、密钥等。API 服务器通过处理 REST 操作来管理这些 API 对象。
+如需了解更多关于 iam-apiserver 的信息，请访问：
+https://github.com/maxiaolu1981/cretem/cdmp/doc/docs/guide/cmd/iam-apiserver.md`
 
 // NewApp creates an App object with default parameters.
 func NewApp(basename string) *app.App {
