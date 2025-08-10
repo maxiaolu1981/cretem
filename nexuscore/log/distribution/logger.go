@@ -1,4 +1,5 @@
 /*
+log:distribution:logger.go
 让依赖logrus日志接口的代码能够无缝兼容底层基于zap的日志实现，同时支持标准库log和prometheus等组件的日志需求。
 核心定位：日志接口适配层
 结构体Logger同时持有*zap.Logger（底层高性能日志实现）和*logrus.Logger（兼容层），通过实现logrus风格的全套日志方法（如Debug()/Infof()/WithError()等），让原本依赖logrus接口的代码可以直接使用该Logger，而底层实际通过zap输出日志（兼顾性能和兼容性）。

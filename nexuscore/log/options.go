@@ -2,6 +2,7 @@
 // Copyright 2025 马晓璐 <15940995655@13..com>. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
+log:options.go
 核心定位
 作为日志系统的 "配置中枢"，负责定义日志的可配置项（如级别、格式、输出路径等），并提供配置的初始化、验证和外部（命令行）交互能力，为后续日志实例的创建提供标准化参数。
 设计思路
