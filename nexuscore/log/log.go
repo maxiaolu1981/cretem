@@ -1,4 +1,7 @@
 /*
+// Copyright 2025 马晓璐 <15940995655@13..com>. All rights reserved.
+// Use of this source code is governed by a MIT style
+// license that can be found in the LICENSE file.
 基于 Uber 的高性能日志库 zap 封装实现，提供了一套功能完整、接口统一的结构化日志解决方案。
 该包的核心设计目标是：
 标准化日志接口：通过 Logger 和 InfoLogger 接口定义日志操作规范，隔离业务代码与底层日志库（zap）的强依赖，便于未来扩展或替换日志实现。

@@ -1,4 +1,7 @@
 /*
+// Copyright 2025 马晓璐 <15940995655@13..com>. All rights reserved.
+// Use of this source code is governed by a MIT style
+// license that can be found in the LICENSE file.
 典型的门面模式（Facade Pattern） 应用，通过包装 zap 的核心类型和工具函数，为项目提供统一的日志接口。其核心价值在于降低耦合、统一规范，并为未来的扩展或替换日志库提供灵活性。
 解耦业务与底层日志库
 通过将 zapcore.Field、zapcore.Level 定义为当前包的别名（type Field = zapcore.Field、type Level = zapcore.Level），并将 Zap 的工具函数（如 zap.String、zap.Int 等）重导出为当前包的变量，使业务代码只需依赖本包（package log），无需直接引用 zap 或 zapcore。这意味着未来若需替换日志库（如切换到 logrus），仅需修改本包的实现，无需改动所有业务代码中的日志操作逻辑。
