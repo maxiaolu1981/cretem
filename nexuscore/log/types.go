@@ -110,3 +110,10 @@ var (
 	Uintptr     = zap.Uintptr
 	Uintptrs    = zap.Uintptrs
 )
+
+// Defines common log fields.
+const (
+	KeyRequestID   string = "requestID"
+	KeyUsername    string = "username"
+	KeyWatcherName string = "watcher"
+)

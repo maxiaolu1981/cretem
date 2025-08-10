@@ -10,9 +10,8 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
 	flag "github.com/spf13/pflag" // 第三方pflag库，用于定义命令行标志
-
-	"github.com/marmotedu/component-base/pkg/version" // 版本信息包，提供程序版本元数据
 )
 
 // versionValue 自定义命令行标志类型，用于表示版本标志的三种状态
