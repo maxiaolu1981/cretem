@@ -1,4 +1,6 @@
-// Package verflag 提供版本信息相关的命令行标志（flag）处理功能，
+// Package verflag
+// verflag.go
+// 提供版本信息相关的命令行标志（flag）处理功能，
 // 支持通过命令行参数（如 --version）触发版本信息的打印并退出程序，
 // 支持普通文本和原始JSON两种输出格式，依赖版本信息包和pflag库实现。
 package verflag

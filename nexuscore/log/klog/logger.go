@@ -1,4 +1,5 @@
-// log:klog:logger.go
+// package klog
+// logger.go
 // 提供klog与zap日志库的集成功能，实现将klog的日志输出重定向到zap日志实例。
 // 核心功能包括：
 // 1. 通过InitLogger函数初始化klog，将不同级别（INFO、WARNING、FATAL、ERROR）的日志输出绑定到zap对应的日志方法；

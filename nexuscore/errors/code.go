@@ -1,5 +1,6 @@
 /*
-errors:code.go
+package errors
+code.go
 错误码管理包：提供标准化的错误码定义、注册、解析及查询功能。
 
 设计思路：

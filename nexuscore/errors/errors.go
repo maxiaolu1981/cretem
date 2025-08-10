@@ -1,4 +1,5 @@
-// errors:errors.go
+// package errors
+// errors.go
 // 提供增强型错误处理功能，支持错误消息包装、堆栈跟踪记录和错误码关联
 //
 // 该包在标准库 error 接口的基础上扩展了以下核心能力：

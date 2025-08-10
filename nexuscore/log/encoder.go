@@ -1,8 +1,9 @@
 /*
+// package log
+// encode.go
 // Copyright 2025 马晓璐 <15940995655@13..com>. All rights reserved.
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
-// log:encode.go
 // 提供Zap日志库的自定义编码功能，
 // 包括时间格式化为"2006-01-02 15:04:05.000"的编码器，
 // 以及将时间间隔转换为毫秒浮点数的编码器，

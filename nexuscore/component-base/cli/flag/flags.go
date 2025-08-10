@@ -1,4 +1,6 @@
-// Package flag 提供命令行参数（flag）的增强处理功能，基于 spf13/pflag 库扩展，
+// package flag
+// flags:flags.go
+// 提供命令行参数（flag）的增强处理功能，基于 spf13/pflag 库扩展，
 // 主要实现标志名规范化、标准库 flag 兼容及调试打印功能，确保命令行参数解析的一致性和易用性。
 //
 // 核心功能包括：

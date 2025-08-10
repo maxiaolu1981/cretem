@@ -1,4 +1,6 @@
-// Package flag 提供命名标志集（NamedFlagSets）的管理与格式化输出功能，
+// Package flag
+// sectioned.go
+// 提供命名标志集（NamedFlagSets）的管理与格式化输出功能，
 // 支持按名称组织多个pflag.FlagSet并按顺序打印为分节的帮助信息，
 // 适用于需要将命令行参数分类展示的场景（如按功能模块划分参数）
 package flag
