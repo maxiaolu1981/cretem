@@ -115,34 +115,3 @@ func register(code int, httpStatus int, message string, refs ...string) {
 	// 若错误码已存在或不符合规范，MustRegister会触发panic
 	errors.MustRegister(coder)
 }
-
-// 初始化业务编码
-func init() {
-	register(ErrUserNotFound, 404, "用户不存在")
-	register(ErrUserAlreadyExist, 400, "用户已存在")
-	register(ErrReachMaxCount, 400, "密钥数量已达上限")
-	register(ErrSecretNotFound, 404, "密钥不存在")
-	register(ErrPolicyNotFound, 404, "策略不存在")
-	register(ErrSuccess, 200, "成功")
-	register(ErrUnknown, 500, "服务器内部错误")
-	register(ErrBind, 400, "后端接收 HTTP 请求并解析请求体(如 JSON、表单数据等) 发生错误")
-	register(ErrValidation, 400, "验证失败")
-	register(ErrTokenInvalid, 401, "令牌无效")
-	register(ErrPageNotFound, 404, "页面不存在")
-	register(ErrDatabase, 500, "数据库错误")
-	register(ErrEncrypt, 401, "加密用户密码时发生错误")
-	register(ErrSignatureInvalid, 401, "签名无效")
-	register(ErrExpired, 401, "令牌已过期")
-	register(ErrInvalidAuthHeader, 401, "无效的授权头")
-	register(ErrMissingHeader, 401, "Authorization头为空")
-	register(ErrPasswordIncorrect, 401, "密码无效", "http:mxl.com")
-	register(ErrPermissionDenied, 403, "权限")
-	register(ErrEncodingFailed, 500, "因数据错误导致编码失败")
-	register(ErrDecodingFailed, 500, "因数据错误导致解码失败")
-	register(ErrInvalidJSON, 500, "数据不是有效的JSON格式")
-	register(ErrEncodingJSON, 500, "JSON数据编码失败")
-	register(ErrDecodingJSON, 500, "JSON数据解码失败")
-	register(ErrInvalidYaml, 500, "数据不是有效的Yaml格式")
-	register(ErrEncodingYaml, 500, "Yaml数据编码失败")
-	register(ErrDecodingYaml, 500, "Yaml数据解码失败")
-}

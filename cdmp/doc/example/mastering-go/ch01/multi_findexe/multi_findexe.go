@@ -1,19 +1,16 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
-	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
-
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
-	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-func isExecuteable(filePath string) bool {
-	fileInfo, err := os.Stat(filePath)
+func isExecutable(path string) bool {
+	fileInfo, err := os.Stat(path)
 	if err != nil {
 		return false
 	}
@@ -21,39 +18,53 @@ func isExecuteable(filePath string) bool {
 		return false
 	}
 	if runtime.GOOS == "windows" {
-		ext := path.Ext(filePath)
-		if ext == ".exe" || ext == ".bat" || ext == ".com" {
+		ext := filepath.Ext(path)
+		if ext == ".bat" || ext == ".exe" || ext == ".com" {
 			return true
+		} else {
+			return false
 		}
 	}
 	return fileInfo.Mode()&0111 != 0
 }
 
-func findExefile(file string) (string, error) {
+func findInExecutable(file string) (string, error) {
 	if strings.TrimSpace(file) == "" {
-		return "", errors.WrapC(fmt.Errorf("%s文件不能为空", file), code.ErrValidation, "文件不能为空")
+		return "", errors.New("文件名不能为空")
 	}
-	if path.IsAbs(file) || file[0] == '.' {
-		if isExecuteable(file) {
-			return filepath.Abs(file)
+	if filepath.IsAbs(file) || file[0] == '.' {
+		resolvedPath, err := filepath.Abs(file)
+		if err != nil {
+			return "", errors.New("绝对路径转换错误")
 		}
-		return "", fmt.Errorf("文件%s不存在", file)
+		if isExecutable(resolvedPath) {
+			return resolvedPath, nil
+		}
 	}
-	path := os.Getenv("PATH")
-	if path == "" {
-		return "", errors.Errorf("环境变量PATH为空")
+	paths := os.Getenv("PATH")
+	if paths == "" {
+		return "", errors.New("没有设置环境变量")
 	}
-	pathList := filepath.SplitList(path)
+	pathList := filepath.SplitList(paths)
 	for _, v := range pathList {
 		fullPath := filepath.Join(v, file)
-		if !isExecuteable(fullPath) {
-			continue
+		if isExecutable(fullPath) {
+			return fullPath, nil
 		}
-		return fullPath, nil
 	}
-	return "", fmt.Errorf("在path中未找到可执行文件%s", file)
+	return "", errors.New("没有发现可执行文件")
 }
 
 func main() {
-	//if len(os.Args) < 2
+	args := os.Args[1:]
+	if len(args) == 0 {
+		fmt.Fprintf(os.Stderr, "用法: %s <可执行文件名1> [可执行文件名2...]\n")
+		os.Exit(1)
+	}
+	for _, v := range args {
+		fullPath, err := findInExecutable(v)
+		if err == nil {
+			fmt.Println(fullPath)
+		}
+	}
 }

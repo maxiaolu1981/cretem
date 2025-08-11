@@ -132,6 +132,7 @@ func MustRegister(coder Coder) {
 		panic(_iseMsg)
 	}
 	withLock(func() {
+
 		if _, ok := _codes[coder.Code()]; ok {
 			panic(fmt.Sprintf("%d编码已经存在,不允许重复录入", coder.Code()))
 		}
