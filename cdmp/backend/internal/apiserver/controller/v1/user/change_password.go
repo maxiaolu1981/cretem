@@ -30,7 +30,7 @@ func (u *UserController) ChangePassword(c *gin.Context) {
 	var r ChangePasswordRequest
 
 	if err := c.ShouldBindJSON(&r); err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrBind, err.Error()), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrBind, "%s", err.Error()), nil)
 
 		return
 	}
@@ -43,7 +43,7 @@ func (u *UserController) ChangePassword(c *gin.Context) {
 	}
 
 	if err := user.Compare(r.OldPassword); err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrPasswordIncorrect, err.Error()), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrPasswordIncorrect, "%s", err.Error()), nil)
 
 		return
 	}

@@ -22,7 +22,7 @@ func (s *SecretController) Update(c *gin.Context) {
 
 	var r v1.Secret
 	if err := c.ShouldBindJSON(&r); err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrBind, err.Error()), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrBind, "%s", err.Error()), nil)
 
 		return
 	}
@@ -32,7 +32,7 @@ func (s *SecretController) Update(c *gin.Context) {
 
 	secret, err := s.srv.Secrets().Get(c, username, name, metav1.GetOptions{})
 	if err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrDatabase, err.Error()), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrDatabase, "%s", err.Error()), nil)
 
 		return
 	}
@@ -43,7 +43,7 @@ func (s *SecretController) Update(c *gin.Context) {
 	secret.Extend = r.Extend
 
 	if errs := secret.Validate(); len(errs) != 0 {
-		core.WriteResponse(c, errors.WithCode(code.ErrValidation, errs.ToAggregate().Error()), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrValidation, "%s", errs.ToAggregate().Error()), nil)
 
 		return
 	}

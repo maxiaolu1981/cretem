@@ -123,10 +123,7 @@ func LoggerWithConfig(conf gin.LoggerConfig) gin.HandlerFunc {
 
 		// Log only when path is not being skipped
 		if _, ok := skip[path]; !ok {
-			param := gin.LogFormatterParams{
-				Request: c.Request,
-				Keys:    c.Keys,
-			}
+			param := gin.LogFormatterParams{}
 
 			// Stop timer
 			param.TimeStamp = time.Now()

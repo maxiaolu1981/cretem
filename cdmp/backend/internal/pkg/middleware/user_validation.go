@@ -52,7 +52,7 @@ func isAdmin(c *gin.Context) error {
 	username := c.GetString(UsernameKey)
 	user, err := store.Client().Users().Get(c, username, metav1.GetOptions{})
 	if err != nil {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.WithCode(code.ErrDatabase, "%s", err.Error())
 	}
 
 	if user.IsAdmin != 1 {

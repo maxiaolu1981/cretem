@@ -22,7 +22,7 @@ func (u *UserController) Update(c *gin.Context) {
 	var r v1.User
 
 	if err := c.ShouldBindJSON(&r); err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrBind, err.Error()), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrBind, "%s", err.Error()), nil)
 
 		return
 	}
@@ -40,7 +40,7 @@ func (u *UserController) Update(c *gin.Context) {
 	user.Extend = r.Extend
 
 	if errs := user.ValidateUpdate(); len(errs) != 0 {
-		core.WriteResponse(c, errors.WithCode(code.ErrValidation, errs.ToAggregate().Error()), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrValidation, "%s", errs.ToAggregate().Error()), nil)
 
 		return
 	}

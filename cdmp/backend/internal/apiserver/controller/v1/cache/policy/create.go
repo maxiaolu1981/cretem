@@ -24,7 +24,7 @@ func (p *PolicyController) Create(c *gin.Context) {
 
 	var r v1.Policy
 	if err := c.ShouldBindJSON(&r); err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrBind, err.Error()), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrBind, "%s", err.Error()), nil)
 
 		return
 	}
