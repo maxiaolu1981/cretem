@@ -16,33 +16,26 @@
 // COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 package main
 
 import (
 	"bufio"
 	"fmt"
 	"os"
-	"strings"
 )
 
 func main() {
 	scanner := bufio.NewScanner(os.Stdin)
-	fmt.Printf("请输入你的名字:")
+	fmt.Print("请输入姓名:")
 	if !scanner.Scan() {
 		if err := scanner.Err(); err != nil {
-			fmt.Printf("%v输入错误", err)
+			fmt.Println("输入发生错误!", err)
 			return
 		} else {
-			fmt.Println("输入被中断,退出.")
+			fmt.Println("用户按下了终止键盘")
 			return
 		}
 	}
-	name := strings.TrimSpace(scanner.Text())
-	if name == "" {
-		fmt.Println("姓名不能为空")
-		return
-	}
-	fmt.Println("hi:", name)
-
+	name := scanner.Text()
+	fmt.Println("hi", name)
 }
