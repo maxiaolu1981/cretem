@@ -2,5 +2,4 @@
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
-// Package idutil is a tool set used to generate multiple id string.
-package idutil // import "github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
+package log // import "github.com/maxiaolu1981/cretem/nexuscore/log"

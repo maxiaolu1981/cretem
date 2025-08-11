@@ -16,24 +16,4 @@
 // COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-/*
-// 该包提供了 IAM 泵服务的配置管理功能，包括配置结构定义和从选项创建配置实例的方法。
-// 通过将命令行或配置文件中的选项转换为服务运行所需的配置，实现了配置的统一管理，
-// 为 IAM 泵服务的初始化和运行提供必要的参数支持。
-*/
-package config
-
-import "github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/options"
-
-// 它嵌入了 options.Options 结构体，用于存储服务运行所需的所有配置项。
-type Config struct {
-	*options.Options
-}
-
-// CreateConfigFromOptions 基于给定的 IAM 泵服务命令行或配置文件选项，
-// 创建一个运行配置实例。
-// 参数 opts 是从命令行或配置文件解析得到的选项结构体指针。
-// 返回值是创建的配置实例指针和可能出现的错误。
-func CreateConfigFromOptions(opts *options.Options) (*Config, error) {
-	return &Config{opts}, nil
-}
+package v1 // import "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
