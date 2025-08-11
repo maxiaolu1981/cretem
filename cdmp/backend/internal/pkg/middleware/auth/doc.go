@@ -2,4 +2,5 @@
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
-package shutdown // import "github.com/maxiaolu1981/cretem/cdmp/backend/pkg/shutdown"
+// Package auth defines authentication strategy like Basic, Bearer.
+package auth // import "github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/middleware/auth"

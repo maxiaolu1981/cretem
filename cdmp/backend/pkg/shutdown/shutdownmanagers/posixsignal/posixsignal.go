@@ -14,7 +14,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/maxiaolu1981/cretem/cdmp/pkg/shutdown"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/shutdown"
 )
 
 // Name defines shutdown manager name.

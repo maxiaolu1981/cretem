@@ -16,17 +16,4 @@
 // COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
 // IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
 // CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-package apiserver
-
-import "github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/config"
-
-// Run runs the specified APIServer. This should never exit.
-func Run(cfg *config.Config) error {
-	server, err := createAPIServer(cfg)
-	if err != nil {
-		return err
-	}
-
-	return server.PrepareRun().Run()
-}
+package middleware // import "github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/middleware"

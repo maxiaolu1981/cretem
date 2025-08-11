@@ -2,4 +2,4 @@
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
-package shutdown // import "github.com/maxiaolu1981/cretem/cdmp/backend/pkg/shutdown"
+package validator // import "github.com/maxiaolu1981/cretem/cdmp/backend/pkg/validator"

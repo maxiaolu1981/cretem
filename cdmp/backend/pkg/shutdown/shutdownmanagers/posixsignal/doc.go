@@ -2,4 +2,4 @@
 // Use of this source code is governed by a MIT style
 // license that can be found in the LICENSE file.
 
-package posixsignal // import "github.com/marmotedu/iam/pkg/shutdown/shutdownmanagers/posixsignal"
+package posixsignal // import "github.com/maxiaolu1981/cretem/cdmp/backend/pkg/shutdown/shutdownmanagers/posixsignal"
