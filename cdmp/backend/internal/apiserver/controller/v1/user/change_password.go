@@ -9,7 +9,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
 
-	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 )
 
 // ChangePasswordRequest defines the ChangePasswordRequest data format.

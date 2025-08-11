@@ -6,9 +6,9 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/controller/v1/secret"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/controller/v1/user"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/store/mysql"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/middleware/auth"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 

@@ -28,7 +28,7 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 
 	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/store"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
 )
 

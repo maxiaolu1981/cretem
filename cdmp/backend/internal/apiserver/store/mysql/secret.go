@@ -13,8 +13,8 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
 
-	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/util/gormutil"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 )
 
 type secrets struct {
