@@ -22,12 +22,10 @@ package main
 import (
 	"time"
 
+	o "github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/options"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/db" // 替换为实际 db 包路径
+	"github.com/maxiaolu1981/cretem/nexuscore/log"       // 导入自定义日志系统
 	"gorm.io/gorm"
-
-	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/options" // 替换为实际 options 包路径
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/db"               // 替换为实际 db 包路径
-
-	"github.com/maxiaolu1981/cretem/nexuscore/log" // 导入自定义日志系统
 )
 
 // User 测试用数据模型
@@ -42,7 +40,7 @@ func main() {
 	initLogger()
 
 	// 2. 初始化数据库配置
-	mysqlOpts := options.NewMySQLOptions()
+	mysqlOpts := o.NewMySQLOptions()
 	// 根据实际环境修改数据库配置
 	mysqlOpts.Host = "127.0.0.1:3306"
 	mysqlOpts.Username = "root"
