@@ -99,7 +99,7 @@ type App struct {
 	noConfig    bool                 // 是否不提供配置文件标志
 	commands    []*Command           // 子命令列表
 	args        cobra.PositionalArgs // 位置参数验证函数
-	cmd         *cobra.Command       // cobra 命令实例（核心命令对象）
+	cmd         *cobra.Command       // cobra 命令实例（核心命令对象）cmd *cobra.Command：单个命令实例
 }
 
 // Option 定义初始化应用程序结构的可选参数

@@ -21,7 +21,7 @@ package apiserver
 
 import "github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/config"
 
-// Run runs the specified APIServer. This should never exit.
+// Run 启动指定的 APIServer。此函数不应退出。
 func Run(cfg *config.Config) error {
 	server, err := createAPIServer(cfg)
 	if err != nil {
