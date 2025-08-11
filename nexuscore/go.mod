@@ -8,7 +8,6 @@ require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/gosuri/uitable v0.0.4
 	github.com/json-iterator/go v1.1.12
-	github.com/marmotedu/component-base v1.6.2
 	github.com/moby/term v0.5.2
 	github.com/ory/ladon v1.3.0
 	github.com/robfig/cron/v3 v3.0.1

@@ -1,20 +1,16 @@
-// Copyright 2020 Lingfei Kong <colin404@foxmail.com>. All rights reserved.
-// Use of this source code is governed by a MIT style
-// license that can be found in the LICENSE file.
-
 package mysql
 
 import (
 	"context"
 
-	v1 "github.com/marmotedu/api/apiserver/v1"
-	"github.com/marmotedu/component-base/pkg/fields"
-	metav1 "github.com/marmotedu/component-base/pkg/meta/v1"
-	"github.com/marmotedu/errors"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/code"
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/fields"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
 
-	"github.com/marmotedu/iam/internal/pkg/code"
-	"github.com/marmotedu/iam/internal/pkg/util/gormutil"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/util/gormutil"
 )
 
 type policies struct {
@@ -43,7 +39,7 @@ func (p *policies) Delete(ctx context.Context, username, name string, opts metav
 
 	err := p.db.Where("username = ? and name = ?", username, name).Delete(&v1.Policy{}).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.WithCode(code.ErrDatabase, "%s", err.Error())
 	}
 
 	return nil
@@ -87,7 +83,7 @@ func (p *policies) Get(ctx context.Context, username, name string, opts metav1.G
 	err := p.db.Where("username = ? and name = ?", username, name).First(&policy).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.WithCode(code.ErrPolicyNotFound, err.Error())
+			return nil, errors.WithCode(code.ErrPolicyNotFound, "%s", err.Error())
 		}
 
 		return nil, errors.WithCode(code.ErrDatabase, err.Error())

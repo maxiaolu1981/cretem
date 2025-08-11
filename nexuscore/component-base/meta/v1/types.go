@@ -7,7 +7,7 @@ package v1
 import (
 	"time"
 
-	"github.com/marmotedu/component-base/pkg/json"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/json"
 	"gorm.io/gorm"
 )
 

@@ -7,14 +7,14 @@ package mysql
 import (
 	"context"
 
-	v1 "github.com/marmotedu/api/apiserver/v1"
-	"github.com/marmotedu/component-base/pkg/fields"
-	metav1 "github.com/marmotedu/component-base/pkg/meta/v1"
-	"github.com/marmotedu/errors"
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/fields"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	gorm "gorm.io/gorm"
 
-	"github.com/marmotedu/iam/internal/pkg/code"
-	"github.com/marmotedu/iam/internal/pkg/util/gormutil"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/util/gormutil"
 )
 
 type users struct {
@@ -49,7 +49,7 @@ func (u *users) Delete(ctx context.Context, username string, opts metav1.DeleteO
 
 	err := u.db.Where("name = ?", username).Delete(&v1.User{}).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.WithCode(code.ErrDatabase, "%s", err.Error())
 	}
 
 	return nil
@@ -76,10 +76,10 @@ func (u *users) Get(ctx context.Context, username string, opts metav1.GetOptions
 	err := u.db.Where("name = ? and status = 1", username).First(&user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, errors.WithCode(code.ErrUserNotFound, err.Error())
+			return nil, errors.WithCode(code.ErrUserNotFound, "%s", err.Error())
 		}
 
-		return nil, errors.WithCode(code.ErrDatabase, err.Error())
+		return nil, errors.WithCode(code.ErrDatabase, "%s", err.Error())
 	}
 
 	return user, nil

@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/marmotedu/component-base/pkg/auth"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/auth"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
 	"gorm.io/gorm"

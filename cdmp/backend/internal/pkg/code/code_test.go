@@ -134,9 +134,7 @@ func TestRegister_ParamValidation(t *testing.T) {
 // TestRegister_RefHandling 测试参考信息处理逻辑（只取第一个）
 func TestRegister_RefHandling(t *testing.T) {
 	// 手动构造ErrCode，模拟register的内部逻辑
-	code := 888888
-	httpStatus := 400
-	message := "测试参考信息"
+
 	refs := []string{"ref#1", "ref#2", "ref#3"}
 
 	// 模拟register函数内部的参考信息处理逻辑
@@ -145,10 +143,8 @@ func TestRegister_RefHandling(t *testing.T) {
 		reference = refs[0]
 	}
 	coder := ErrCode{
-		C:    code,
-		HTTP: httpStatus,
-		Ext:  message,
-		Ref:  reference,
+
+		Ref: reference,
 	}
 
 	// 验证是否只取第一个参考信息

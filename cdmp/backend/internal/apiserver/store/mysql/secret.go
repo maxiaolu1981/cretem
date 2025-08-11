@@ -7,14 +7,14 @@ package mysql
 import (
 	"context"
 
-	v1 "github.com/marmotedu/api/apiserver/v1"
-	"github.com/marmotedu/component-base/pkg/fields"
-	metav1 "github.com/marmotedu/component-base/pkg/meta/v1"
-	"github.com/marmotedu/errors"
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/fields"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
 
-	"github.com/marmotedu/iam/internal/pkg/code"
-	"github.com/marmotedu/iam/internal/pkg/util/gormutil"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/util/gormutil"
 )
 
 type secrets struct {
