@@ -1,0 +1,115 @@
+<mxfile host="65bd71144e">
+    <diagram id="wAYvWaUbMTE8i4xY5U41" name="第 1 页">
+        <mxGraphModel dx="1893" dy="2020" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="2" value="control/v1/user&lt;div&gt;&lt;span style=&quot;color: rgb(63, 63, 63); font-weight: 400; text-align: left;&quot;&gt;NewUserController(store store.Factory):*UserController&lt;/span&gt;&lt;/div&gt;" style="shape=folder;fontStyle=1;spacingTop=10;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="-10" y="-340" width="180" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="3" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;&quot;&gt;&lt;i&gt;&amp;lt;&amp;lt;Interface&amp;gt;&amp;gt;&lt;/i&gt;&lt;br&gt;&lt;b&gt;UserSrv&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;&lt;span style=&quot;color: rgb(63, 63, 63); background-color: transparent;&quot;&gt;+ Create(ctx context.Context,user *v1.User, opts metav1.CreateOptions): error&lt;/span&gt;&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ Update(ctx context.Context,user *v1.User, opts metav1.UpdateOptions):error&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ Delete(ctx context.Context, username string, opts metav1.DeleteOptions):error&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ DeleteCollection(ctx context.Context, usernames []string, opts metav1.DeleteOptions):error&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ Get(ctx context.Context, username string, opts metav1.GetOptions)(*v1.User,error)&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ List(ctx context.Context,opts metav1.ListOptions)(*v1.UserList,error)&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ ListWithBadPerformance(ctx context.Context,opts metav1.ListOptions)(*v1.UserList,error)&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ ChangePassword(ctx context.Context,user *v1.User) error&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;&lt;br&gt;&lt;/p&gt;" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="530" y="-40" width="660" height="170" as="geometry"/>
+                </mxCell>
+                <mxCell id="4" value="service/v1&lt;div&gt;NewService(store store.Factory)Service&lt;/div&gt;" style="shape=folder;fontStyle=1;spacingTop=10;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="-10" y="-40" width="180" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="6" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;&quot;&gt;&lt;b&gt;userService&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;- store: store.Factory&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;&lt;br&gt;&lt;/p&gt;" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="430" y="400" width="160" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="7" value="" style="endArrow=block;dashed=1;endFill=0;endSize=12;html=1;exitX=0.429;exitY=-0.003;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.421;entryY=0.983;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="6" target="3">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="290" y="440" as="sourcePoint"/>
+                        <mxPoint x="450" y="440" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="36" value="" style="edgeStyle=none;html=1;" edge="1" parent="1" source="9" target="12">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="9" value="store&lt;div&gt;GetMySQLFactoryOr(opts *genericoptions.MySQLOptions)&lt;/div&gt;&lt;div&gt;（store.Factory,error）&lt;/div&gt;" style="shape=folder;fontStyle=1;spacingTop=10;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry y="640" width="200" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="10" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;&quot;&gt;&lt;i&gt;&amp;lt;&amp;lt;Interface&amp;gt;&amp;gt;&lt;/i&gt;&lt;br&gt;&lt;b&gt;Factory&lt;/b&gt;&lt;/p&gt;&lt;br&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ Users() UserStore&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ Secrets() SecretStore&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ Ploicies() PolicyStore&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ PolicyAudits() PolicyAuditStore&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ Close() error&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;&lt;br&gt;&lt;/p&gt;" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="250" y="660" width="190" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="11" value="Use" style="endArrow=open;endSize=12;dashed=1;html=1;exitX=0.3;exitY=0.97;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.533;entryY=-0.023;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="6" target="10">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="290" y="610" as="sourcePoint"/>
+                        <mxPoint x="410" y="590" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="12" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;&quot;&gt;&lt;i&gt;&amp;lt;&amp;lt;Interface&amp;gt;&amp;gt;&lt;/i&gt;&lt;br&gt;&lt;b&gt;UserStore&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;&lt;br&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;color: rgb(63, 63, 63); scrollbar-color: rgb(226, 226, 226) rgb(251, 251, 251); margin: 0px 0px 0px 4px;&quot;&gt;+ Create(ctx context.Context,user *v1.User,opts metav1.CreateOptions): error&lt;br style=&quot;color: rgb(63, 63, 63); scrollbar-color: rgb(226, 226, 226) rgb(251, 251, 251);&quot;&gt;+ Update(ctx context.Context,user *v1.User,opts metav1.UpdateOptions): error&lt;/p&gt;&lt;p style=&quot;color: rgb(63, 63, 63); scrollbar-color: rgb(226, 226, 226) rgb(251, 251, 251); margin: 0px 0px 0px 4px;&quot;&gt;+ Delete(ctx context.Context,username string,opts.metav1.DeleteOptions):error&lt;/p&gt;&lt;p style=&quot;color: rgb(63, 63, 63); scrollbar-color: rgb(226, 226, 226) rgb(251, 251, 251); margin: 0px 0px 0px 4px;&quot;&gt;+ DeleteCollection(ctx context.Context,usernames []string,,opts metav1.DeleteOptions)&lt;/p&gt;&lt;p style=&quot;color: rgb(63, 63, 63); scrollbar-color: rgb(226, 226, 226) rgb(251, 251, 251); margin: 0px 0px 0px 4px;&quot;&gt;+ Get(ctx context.Context,username string,opts metav1.GetOptions):(*v1.User,error)&lt;/p&gt;&lt;p style=&quot;color: rgb(63, 63, 63); scrollbar-color: rgb(226, 226, 226) rgb(251, 251, 251); margin: 0px 0px 0px 4px;&quot;&gt;+ List(ctx context.Context,opts metav1.ListOptions)(*v1.UserList,error)&lt;/p&gt;" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="110" y="860" width="530" height="220" as="geometry"/>
+                </mxCell>
+                <mxCell id="13" value="" style="endArrow=block;dashed=1;endFill=0;endSize=12;html=1;entryX=0.644;entryY=1.015;entryDx=0;entryDy=0;entryPerimeter=0;exitX=0.483;exitY=-0.008;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="12" target="10">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="290" y="860" as="sourcePoint"/>
+                        <mxPoint x="450" y="860" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="14" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;&quot;&gt;&lt;b&gt;users&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;+ db&amp;nbsp; *gorm.DB&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;&lt;br&gt;&lt;/p&gt;" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="239" y="1190" width="160" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="15" value="" style="endArrow=block;dashed=1;endFill=0;endSize=12;html=1;exitX=0.5;exitY=0;exitDx=0;exitDy=0;entryX=0.482;entryY=1.002;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="14" target="12">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="290" y="1110" as="sourcePoint"/>
+                        <mxPoint x="450" y="1110" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="16" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;&quot;&gt;&lt;i&gt;&amp;lt;&amp;lt;Interface&amp;gt;&amp;gt;&lt;/i&gt;&lt;br&gt;&lt;b&gt;Service&lt;/b&gt;&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;&lt;br&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;Users() UserSrv&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;Secrets() SecretSrv&lt;/p&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;Policies() PolicySrv&lt;/p&gt;" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="140" y="150" width="190" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="18" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;&quot;&gt;&lt;b&gt;UserController&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;- srv:srvv1.Service&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;&lt;br&gt;&lt;/p&gt;" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="320" y="-280" width="390" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="23" style="edgeStyle=none;html=1;exitX=0;exitY=0.5;exitDx=0;exitDy=0;entryX=0;entryY=0;entryDx=200;entryDy=82;entryPerimeter=0;" edge="1" parent="1" source="10" target="9">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="27" value="Use" style="endArrow=open;endSize=12;dashed=1;html=1;entryX=-0.005;entryY=0.569;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" target="18">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="170" y="-280" as="sourcePoint"/>
+                        <mxPoint x="229" y="-135.42000000000002" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="28" value="Use" style="endArrow=open;endSize=12;dashed=1;html=1;exitX=0.362;exitY=0.976;exitDx=0;exitDy=0;exitPerimeter=0;entryX=0.458;entryY=-0.017;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="18" target="30">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="280" y="-50" as="sourcePoint"/>
+                        <mxPoint x="440" y="-50" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="30" value="&lt;p style=&quot;margin:0px;margin-top:4px;text-align:center;&quot;&gt;&lt;b&gt;service&lt;/b&gt;&lt;/p&gt;&lt;hr size=&quot;1&quot; style=&quot;border-style:solid;&quot;&gt;&lt;p style=&quot;margin:0px;margin-left:4px;&quot;&gt;-store:store.Factory&lt;/p&gt;" style="verticalAlign=top;align=left;overflow=fill;html=1;whiteSpace=wrap;" vertex="1" parent="1">
+                    <mxGeometry x="310" y="-40" width="160" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="31" value="" style="endArrow=block;dashed=1;endFill=0;endSize=12;html=1;entryX=0.333;entryY=-0.007;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" target="3">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="500" y="-190" as="sourcePoint"/>
+                        <mxPoint x="660" y="-190" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="32" value="Use" style="endArrow=open;endSize=12;dashed=1;html=1;" edge="1" parent="1">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="570" y="10" as="sourcePoint"/>
+                        <mxPoint x="730" y="10" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="33" value="Use" style="endArrow=open;endSize=12;dashed=1;html=1;entryX=0;entryY=0.5;entryDx=0;entryDy=0;" edge="1" parent="1" target="30">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="180" y="10" as="sourcePoint"/>
+                        <mxPoint x="340" y="10" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="34" value="" style="endArrow=block;dashed=1;endFill=0;endSize=12;html=1;" edge="1" parent="1">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="570" y="10" as="sourcePoint"/>
+                        <mxPoint x="730" y="10" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="35" value="" style="endArrow=block;dashed=1;endFill=0;endSize=12;html=1;entryX=0.573;entryY=-0.016;entryDx=0;entryDy=0;entryPerimeter=0;exitX=0.346;exitY=0.965;exitDx=0;exitDy=0;exitPerimeter=0;" edge="1" parent="1" source="30" target="16">
+                    <mxGeometry width="160" relative="1" as="geometry">
+                        <mxPoint x="320" y="90" as="sourcePoint"/>
+                        <mxPoint x="480" y="90" as="targetPoint"/>
+                    </mxGeometry>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

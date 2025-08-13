@@ -43,7 +43,7 @@ func (s *secrets) Delete(ctx context.Context, username, name string, opts metav1
 
 	err := s.db.Where("username = ? and name = ?", username, name).Delete(&v1.Secret{}).Error
 	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		return errors.WithCode(code.ErrDatabase, err.Error())
+		return errors.WithCode(code.ErrDatabase, "%s", err.Error())
 	}
 
 	return nil
