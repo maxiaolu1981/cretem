@@ -56,6 +56,12 @@ const (
 
 	// ErrPermissionDenied - 403: 权限不足。
 	ErrPermissionDenied
+
+	// ErrInvalidResourceKind - 403:资源类型不匹配
+	ErrInvalidResourceKind
+
+	// ErrInvalidAPIVersion - 403 api版本支持
+	ErrInvalidAPIVersion
 )
 
 // 通用错误：编码/解码相关错误

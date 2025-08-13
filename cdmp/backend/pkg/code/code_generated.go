@@ -29,4 +29,7 @@ func init() {
 	register(ErrInvalidYaml, 500, "数据不是有效的Yaml格式")
 	register(ErrEncodingYaml, 500, "Yaml数据编码失败")
 	register(ErrDecodingYaml, 500, "Yaml数据解码失败")
+
+	register(ErrInvalidResourceKind, 403, "资源类型不匹配")
+	register(ErrInvalidAPIVersion, 403, "api版本不支持")
 }
