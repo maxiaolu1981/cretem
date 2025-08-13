@@ -7,7 +7,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/logger"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/logger"
 	"gorm.io/gorm"
 )
 
@@ -21,7 +21,7 @@ type datastore struct {
 }
 
 func (db *datastore) Users() store.UserStore {
-	return newUsers(ds)
+	return newUsers(db)
 }
 
 func GetMySQLFactoryOr(opts *options.MySQLOptions) (store.Factory, error) {
@@ -48,5 +48,8 @@ func GetMySQLFactoryOr(opts *options.MySQLOptions) (store.Factory, error) {
 		dbIns, err = db.New(options)
 		mysqlFactory = &datastore{dbIns}
 	})
-
+	if mysqlFactory == nil || err != nil {
+		return nil, fmt.Errorf("失败连接到mysql store factory,mysqlFactory:%+v", mysqlFactory, err)
+	}
+	return mysqlFactory, nil
 }

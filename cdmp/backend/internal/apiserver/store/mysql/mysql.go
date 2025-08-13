@@ -26,9 +26,9 @@ import (
 	"gorm.io/gorm"                                                 // 第三方库：GORM ORM 框架
 
 	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/store"            // 自定义库：存储层接口定义
-	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/logger"                 // 自定义库：日志工具
 	genericoptions "github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/options" // 自定义库：通用配置选项
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/db"                              // 自定义库：数据库连接工具
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/logger"                          // 自定义库：日志工具
 )
 
 // datastore 实现了 store.Factory 接口，封装了 MySQL 数据库连接及数据操作
