@@ -39,6 +39,8 @@ func (c CompletedConfig) New() (*GenericAPIServer, error) {
 		middlewares:         c.Middlewares,
 		Engine:              gin.New(),
 	}
+	initGenericAPIServer(s)
+	return s, nil
 
 }
 
