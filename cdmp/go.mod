@@ -13,9 +13,8 @@ require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/go-redis/redis/v7 v7.4.1
 	github.com/gosuri/uitable v0.0.4
-
 	github.com/mattn/go-isatty v0.0.20
-	github.com/maxiaolu1981/cretem/nexuscore v0.0.0-20250811065055-d7d5b5dd9360
+	github.com/maxiaolu1981/cretem/nexuscore v0.0.0-20250814093948-b586eac40dbc
 	github.com/novalagung/gubrak v1.0.0
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b
 	github.com/spf13/cobra v1.9.1
@@ -34,8 +33,13 @@ require (
 )
 
 require (
+	github.com/AlekSi/pointer v1.1.0
+	github.com/go-playground/validator/v10 v10.27.0
+	github.com/golang/mock v1.6.0
+)
+
+require (
 	filippo.io/edwards25519 v1.1.0 // indirect
-	github.com/AlekSi/pointer v1.1.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bytedance/sonic v1.14.0 // indirect
@@ -50,12 +54,10 @@ require (
 	github.com/gin-contrib/sse v1.1.0 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.27.0 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/go-viper/mapstructure/v2 v2.2.1 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
-	github.com/golang/mock v1.6.0 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
@@ -63,7 +65,6 @@ require (
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
-	github.com/marmotedu/log v0.0.1 // indirect
 	github.com/mattn/go-colorable v0.1.13 // indirect
 	github.com/mattn/go-runewidth v0.0.10 // indirect
 	github.com/moby/term v0.5.2 // indirect

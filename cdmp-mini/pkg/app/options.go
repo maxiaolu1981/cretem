@@ -8,3 +8,11 @@ type CliOptions interface {
 	Flags() (fss flag.NamedFlagSets)
 	Validate() []error
 }
+
+type CompleteableOptions interface {
+	Complete() error
+}
+
+type PrintableOptions interface {
+	String() string
+}

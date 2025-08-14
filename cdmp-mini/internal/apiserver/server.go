@@ -1,40 +1,49 @@
 package apiserver
 
 import (
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/config"
+	genericoptions "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	genericapiserver "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
 )
 
-// NewApp主要功能是初始化日志、数据库连接，并通过数据层查询用户信息，完整展示了从环境初始化到具体业务操作的流程
-func NewApp(basename string) {
-	//生成日志参数
-	opts := options.NewOptions()
+type apiServer struct {
+	genericAPIServer *genericapiserver.InsecureServingInfo
+}
 
-	// //初始化日志
-	// log.Init(opts)
-	// //确保程序退出时刷新日志缓冲区，避免日志丢失
-	// log.Flush()
-	// //定义mysql options
-	// mysqlOptions := options.NewMySQLOptions()
-	// //得到mysql包实例:GetMySQLFactoryOr
-	// storeIns, err := mysql.GetMySQLFactoryOr(mysqlOptions)
-	// if err != nil {
-	// 	fmt.Println(err)
-	// 	return
-	// }
-	// //得到上下文
-	// ctx := context.Background()
-	// //GetOptions初始化
-	// getOptions := metav1.GetOptions{
-	// 	TypeMeta: metav1.TypeMeta{
-	// 		Kind:       "User",
-	// 		APIVersion: "v1",
-	// 	},
-	// }
+func createAPIServer(cfg *config.Config) (*apiServer, error) {
+	genericConfig, err := buildGenericConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
+	extraConfig, err := buildExtraConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 
-	// //// 调用用户查询方法：通过数据工厂获取用户操作实例，查询用户名为 "admin" 的用户
-	// user, err := storeIns.Users().Get(ctx, "admin", getOptions)
-	// if err != nil {
-	// 	fmt.Println(err)
-	// }
-	// fmt.Println(user)
+}
+
+func buildGenericConfig(cfg *config.Config) (genericConfig *genericapiserver.Config, lastErr error) {
+
+	genericConfig = genericapiserver.NewConfig()
+	if lastErr = cfg.GenericServerRunOptions.ApplyTo(genericConfig); lastErr != nil {
+		return
+	}
+	if lastErr = cfg.FeatureOptions.ApplyTo(genericConfig); lastErr != nil {
+		return
+	}
+
+	if lastErr = cfg.InsecureServing.ApplyTo(genericConfig); lastErr != nil {
+		return
+	}
+	return
+}
+
+type ExtraConfig struct {
+	mySQLOptions *genericoptions.MySQLOptions
+}
+
+func buildExtraConfig(cfg *config.Config) (*ExtraConfig, error) {
+	return &ExtraConfig{
+		mySQLOptions: cfg.MySQLOptions,
+	}, nil
 }

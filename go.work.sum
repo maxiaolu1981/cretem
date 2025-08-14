@@ -104,6 +104,7 @@ github.com/likexian/host-stat-go v0.0.0-20190516151207-c9cf36dd6ce9/go.mod h1:Hn
 github.com/lyft/protoc-gen-star/v2 v2.0.4-0.20230330145011-496ad1ac90a4/go.mod h1:amey7yeodaJhXSbf/TlLvWiqQfLOSpEk//mLlc+axEk=
 github.com/magiconair/properties v1.8.5/go.mod h1:y3VJvCyxH9uVvJTWEGAELF3aiYNyPKd5NZ3oSwXrF60=
 github.com/mailru/easyjson v0.7.7/go.mod h1:xzfreul335JAWq5oZzymOObrkdz5UnU4kGfJJLY9Nlc=
+github.com/marmotedu/log v0.0.1/go.mod h1:EsU1dxbgXmzan4NXzYhnYZ7H/soLrBZrTXlfN6svSNM=
 github.com/marmotedu/marmotedu-sdk-go v1.6.2/go.mod h1:+Fe3LwD4H/OayBrgkHkqTVB1iVXK+hCurFyqxhKXOGI=
 github.com/mattn/go-colorable v0.1.9/go.mod h1:u6P/XSegPjTcexA+o6vUJrdnUu04hMope9wVRipJSqc=
 github.com/mattn/go-isatty v0.0.14/go.mod h1:7GGIvUiUoEMVVmxf/4nioHXj79iQHKdU27kJ6hsGG94=

@@ -1,9 +1,11 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"runtime"
 	"strings"
+
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -27,38 +29,39 @@ func FormatBaseName(name string) string {
 	return name
 }
 
-func (c *Command) cobraCommand() *cobra.Command{
+func (c *Command) cobraCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use: c.usage,
+		Use:   c.usage,
 		Short: c.desc,
 	}
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
 	cmd.Flags().SortFlags = false
 	if len(c.commands) > 0 {
-		for _,command := range c.commands{
+		for _, command := range c.commands {
 			cmd.AddCommand(command.cobraCommand())
 		}
 	}
-	
-	if c.runFunc != nil{
+
+	if c.runFunc != nil {
 		cmd.Run = c.runCommand
 	}
 
-	if c.options != nil{
-		for _,f := range c.options.Flags().FlagSets{
+	if c.options != nil {
+		for _, f := range c.options.Flags().FlagSets {
 			cmd.Flags().AddFlagSet(f)
 		}
 	}
-	addHelpCommandFlag(c.usage,cmd.Flags())
+	addHelpCommandFlag(c.usage, cmd.Flags())
+	return cmd
 
 }
 
-func(c *Command) runCommand(cmd *cobra.Command,args []string){
-		if c.runFunc != nil{
-			if err := c.runFunc(args); err != nil{
-				fmt.Printf("%v %v\m",color.RedString("Error:"),err)
-				os.Exit(1)
-			}
+func (c *Command) runCommand(cmd *cobra.Command, args []string) {
+	if c.runFunc != nil {
+		if err := c.runFunc(args); err != nil {
+			fmt.Printf("%v %v\n", color.RedString("Error:"), err)
+			os.Exit(1)
 		}
+	}
 }

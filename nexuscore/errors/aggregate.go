@@ -1,6 +1,47 @@
-// Copyright 2020 Lingfei Kong <colin404@foxmail.com>. All rights reserved.
-// Use of this source code is governed by a MIT style
-// license that can be found in the LICENSE file.
+/*
+该包是一个增强型错误处理工具，主要用于管理多个错误的聚合与处理，解决 Go 原生错误类型难以表示 "一组错误" 的问题。核心功能包括：
+定义Aggregate接口，用于表示包含多个错误的聚合错误，支持检查特定错误是否存在；
+提供创建聚合错误的NewAggregate函数，可过滤空错误并处理嵌套聚合；
+支持错误过滤（FilterOut）、扁平化嵌套聚合（Flatten）、从错误计数映射创建聚合（CreateAggregateFromMessageCountMap）等操作；
+提供并行执行函数并收集错误的AggregateGoroutines，简化多协程错误处理；
+定义ErrPreconditionViolated常量，表示前置条件被违反的错误。
+二、核心流程
+1. 聚合错误的创建（NewAggregate）
+输入：一个错误切片（[]error）；
+处理：
+过滤切片中的nil错误（避免空指针问题）；
+若过滤后切片为空，返回nil；
+否则，将非空错误切片包装为aggregate结构体（实现Aggregate接口）并返回。
+2. 聚合错误的错误信息生成（aggregate.Error()）
+作用：将聚合中的所有错误信息合并为一个字符串，去重后返回；
+流程：
+若聚合仅含一个错误，直接返回该错误的信息；
+若含多个错误，使用StringSet记录已见过的错误信息，避免重复；
+合并去重后的错误信息，多个错误时用[]包裹（如[err1, err2]）。
+3. 检查特定错误是否存在（aggregate.Is()）
+作用：判断聚合中是否包含目标错误（支持嵌套聚合的递归检查）；
+流程：
+递归遍历聚合中的每个错误（若子错误也是Aggregate，继续递归）；
+对每个错误调用errors.Is(err, target)，若匹配则返回true；
+遍历完所有错误仍无匹配，返回false。
+4. 错误过滤（FilterOut）
+作用：从错误（或聚合错误）中移除符合匹配器（Matcher）条件的错误；
+流程：
+若输入是Aggregate，递归处理其包含的所有错误；
+对每个错误，检查是否匹配任何Matcher，不匹配则保留；
+将保留的错误重新包装为聚合错误（若仅一个错误则直接返回该错误）。
+5. 扁平化嵌套聚合（Flatten）
+作用：将嵌套的Aggregate（如聚合中包含另一个聚合）展平为单层聚合；
+流程：
+递归遍历聚合中的每个错误，若子错误是Aggregate，继续扁平化；
+收集所有非Aggregate的错误，组成新的聚合并返回。
+6. 并行执行函数并收集错误（AggregateGoroutines）
+作用：同时执行多个函数，收集所有非nil错误并聚合；
+流程：
+创建带缓冲的通道，用于接收每个函数的返回错误；
+为每个函数启动协程，执行后将错误发送到通道；
+从通道接收所有错误，过滤nil后通过NewAggregate创建聚合错误。
+*/
 
 package errors
 

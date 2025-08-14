@@ -1,5 +1,5 @@
 // Copyright (c) 2025 马晓璐
-//
+
 // Permission is hereby granted, free of charge, to any person obtaining a copy of
 // this software and associated documentation files (the "Software"), to deal in
 // the Software without restriction, including without limitation the rights to
@@ -28,7 +28,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/moby/term" // 引入第三方终端处理库，提供跨平台的终端信息获取能力
+	"github.com/moby/term"
+	// 引入第三方终端处理库，提供跨平台的终端信息获取能力
 )
 
 // TerminalSize 获取当前用户终端的宽度和高度。
