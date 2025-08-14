@@ -3,8 +3,10 @@ module github.com/maxiaolu1981/cretem/cdmp-mini
 go 1.24.5
 
 require (
-	github.com/maxiaolu1981/cretem/cdmp v0.0.0-20250813100740-eaef7bf20c04
+	github.com/fatih/color v1.18.0
+	github.com/maxiaolu1981/cretem/cdmp v0.0.0-20250813101445-4c008b730f81
 	github.com/maxiaolu1981/cretem/nexuscore v0.0.0-20250813100740-eaef7bf20c04
+	github.com/spf13/cobra v1.9.1
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.30.1
 )
@@ -20,10 +22,13 @@ require (
 	github.com/go-playground/validator/v10 v10.27.0 // indirect
 	github.com/go-sql-driver/mysql v1.8.1 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
+	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
+	github.com/mattn/go-colorable v0.1.13 // indirect
+	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/novalagung/gubrak v1.0.0 // indirect

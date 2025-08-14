@@ -65,7 +65,7 @@ func NewOptions() *Options {
 		Format:            consoleFormat,
 		EnableColor:       false,
 		Development:       false,
-		OutputPaths:       []string{"stdout"},
+		OutputPaths:       []string{"stdout", "/var/"},
 		ErrorOutputPaths:  []string{"stderr"},
 	}
 }
