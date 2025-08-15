@@ -62,11 +62,14 @@ type ExtraConfig struct {
 func buildExtraConfig(cfg *config.Config) (*ExtraConfig, error) {
 	return &ExtraConfig{
 		mySQLOptions: cfg.MySQLOptions,
+		Addr:         "127.0.0.1",
 	}, nil
 }
 
 func (c *ExtraConfig) complete() *completedExtraConfig {
-	return &completedExtraConfig{}
+	return &completedExtraConfig{
+		ExtraConfig: c,
+	}
 }
 
 type completedExtraConfig struct {
@@ -85,5 +88,11 @@ type preparedAPIServer struct {
 }
 
 func (s *apiServer) PrepareRun() preparedAPIServer {
+	initRouter(s.genericAPIServer.Engine)
+	return preparedAPIServer{s}
+}
 
+func (s preparedAPIServer) Run() error {
+
+	return s.genericAPIServer.Run()
 }

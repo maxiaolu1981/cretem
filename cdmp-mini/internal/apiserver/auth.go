@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"context"
 	"encoding/base64"
 	"net/http"
 	"strings"
@@ -10,9 +11,19 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/auth"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/spf13/viper"
+)
+
+const (
+	// APIServerAudience defines the value of jwt audience field.
+	APIServerAudience = "iam.api.marmotedu.com"
+
+	// APIServerIssuer defines the value of jwt issuer field.
+	APIServerIssuer = "iam-apiserver"
 )
 
 func newJWTAuth() middleware.AuthStrategy {
@@ -26,7 +37,25 @@ func newJWTAuth() middleware.AuthStrategy {
 		LogoutResponse: func(c *gin.Context, code int) {
 			c.JSON(http.StatusOK, nil)
 		},
+		RefreshResponse: refreshResponse(),
+		PayloadFunc:     payloadFunc(),
+		IdentityHandler: func(c *gin.Context) interface{} {
+			claims := jwt.ExtractClaims(c)
+			return claims[jwt.IdentityKey]
+		},
+		IdentityKey:  middleware.UsernameKey,
+		Authorizator: authorizator(),
+		Unauthorized: func(c *gin.Context, code int, message string) {
+			c.JSON(code, gin.H{
+				"message": message,
+			})
+		},
+		TokenLookup:   "header: Authorization, query: token, cookie: jwt",
+		TokenHeadName: "Bearer",
+		SendCookie:    true,
+		TimeFunc:      time.Now,
 	})
+	return auth.NewJWTStrategy(*ginJwt)
 }
 
 func authenticator() func(c *gin.Context) (interface{}, error) {
@@ -90,4 +119,61 @@ func parseWithBody(c *gin.Context) (loginInfo, error) {
 type loginInfo struct {
 	Username string `form:"username" json:"username" binding:"required,username"`
 	Password string `form:"password" json:"password" binding:"required,password"`
+}
+
+func refreshResponse() func(c *gin.Context, code int, token string, expire time.Time) {
+	return func(c *gin.Context, code int, token string, expire time.Time) {
+		c.JSON(http.StatusOK, gin.H{
+			"token":  token,
+			"expire": expire.Format(time.RFC3339),
+		})
+	}
+}
+
+func payloadFunc() func(data interface{}) jwt.MapClaims {
+	return func(data interface{}) jwt.MapClaims {
+		claims := jwt.MapClaims{
+			"iss": APIServerIssuer,
+			"aud": APIServerAudience,
+		}
+		if u, ok := data.(*v1.User); ok {
+			claims[jwt.IdentityKey] = u.Name
+			claims["sub"] = u.Name
+		}
+		return claims
+	}
+}
+
+func authorizator() func(data interface{}, c *gin.Context) bool {
+	return func(data interface{}, c *gin.Context) bool {
+		if v, ok := data.(string); ok {
+			log.L(c).Infof("user `%s` is authenticated.", v)
+			return true
+		}
+		return false
+	}
+}
+
+func newAutoAuth() middleware.AuthStrategy {
+	return auth.NewAutoStrategy(newBasicAuth().(auth.BasicStrategy), newJWTAuth().(auth.JWTStrategy))
+}
+
+func newBasicAuth() middleware.AuthStrategy {
+	return auth.NewBasicStrategy(func(username string, password string) bool {
+		// fetch user from database
+		user, err := store.Client().Users().Get(context.TODO(), username, metav1.GetOptions{})
+		if err != nil {
+			return false
+		}
+
+		// Compare the login password with the user password.
+		if err := user.Compare(password); err != nil {
+			return false
+		}
+
+		user.LoginedAt = time.Now()
+		_ = store.Client().Users().Update(context.TODO(), user, metav1.UpdateOptions{})
+
+		return true
+	})
 }

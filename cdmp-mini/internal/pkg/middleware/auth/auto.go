@@ -1,0 +1,56 @@
+package auth
+
+import (
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+)
+
+const authHeaderCount = 2
+
+type AutoStrategy struct {
+	basic middleware.AuthStrategy
+	jwt   middleware.AuthStrategy
+}
+
+var _ middleware.AuthStrategy = &AutoStrategy{}
+
+func NewAutoStrategy(base, jwt middleware.AuthStrategy) AutoStrategy {
+	return AutoStrategy{
+		basic: base,
+		jwt:   jwt,
+	}
+}
+
+func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		operator := middleware.AuthOperator{}
+		authHeader := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
+		if len(authHeader) != authHeaderCount {
+			core.WriteResponse(
+				c,
+				errors.WithCode(code.ErrInvalidAuthHeader,
+					"Authorization header format is wrong"),
+				nil,
+			)
+			c.Abort()
+			return
+		}
+		switch authHeader[0] {
+		case "Basic":
+			operator.SetStrategy(a.basic)
+		case "Bearer":
+			operator.SetStrategy(a.jwt)
+		default:
+			core.WriteResponse(c, errors.WithCode(code.ErrSignatureInvalid, "unrecoginized authorization header."), nil)
+			c.Abort()
+			return
+		}
+		operator.AuthFunc()(c)
+		c.Next()
+	}
+}

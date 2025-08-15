@@ -13,4 +13,5 @@ import (
 type UserStore interface {
 	Get(ctx context.Context, username string, opts metav1.GetOptions) (*v1.User, error)
 	Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions) error
+	List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error)
 }

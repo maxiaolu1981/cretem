@@ -270,3 +270,11 @@ func addCmdTemplate(cmd *cobra.Command, namedFlagSets flag.NamedFlagSets) {
 		flag.PrintSections(cmd.OutOrStdout(), namedFlagSets, cols)
 	})
 }
+
+// Run is used to launch the application.
+func (a *App) Run() {
+	if err := a.cmd.Execute(); err != nil {
+		fmt.Printf("%v %v\n", color.RedString("Error:"), err)
+		os.Exit(1)
+	}
+}

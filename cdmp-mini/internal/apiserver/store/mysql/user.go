@@ -3,11 +3,12 @@ package mysql
 import (
 	"context"
 
+	gormutil "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/util"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/fields"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
-
 	"gorm.io/gorm"
 )
 
@@ -48,4 +49,23 @@ func newUsers(ds *datastore) *users {
 
 func (u *users) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions) error {
 	return u.db.Save(user).Error
+}
+
+// List return all users.
+func (u *users) List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error) {
+	ret := &v1.UserList{}
+	ol := gormutil.Unpointer(opts.Offset, opts.Limit)
+
+	selector, _ := fields.ParseSelector(opts.FieldSelector)
+	username, _ := selector.RequiresExactMatch("name")
+	d := u.db.Where("name like ? and status = 1", "%"+username+"%").
+		Offset(ol.Offset).
+		Limit(ol.Limit).
+		Order("id desc").
+		Find(&ret.Items).
+		Offset(-1).
+		Limit(-1).
+		Count(&ret.TotalCount)
+
+	return ret, d.Error
 }

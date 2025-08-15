@@ -65,8 +65,8 @@ func NewOptions() *Options {
 		Format:            consoleFormat,
 		EnableColor:       false,
 		Development:       false,
-		OutputPaths:       []string{"stdout", "/var/"},
-		ErrorOutputPaths:  []string{"stderr"},
+		OutputPaths:       []string{"stdout", "/var/cdmp-mini/run.log"},
+		ErrorOutputPaths:  []string{"stderr", "/var/cdmp-mini/error.log"},
 	}
 }
 
