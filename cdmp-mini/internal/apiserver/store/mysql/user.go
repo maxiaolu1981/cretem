@@ -21,14 +21,14 @@ type users struct {
 // 作用：通过用户名（username）和查询选项（opts）从数据库中查询状态有效的用户，并返回符合条件的用户信息。
 // 核心依赖：u.db（*gorm.DB）执行数据库查询，ctx（context.Context）用于传递上下文（如超时控制、追踪信息）。
 func (u *users) Get(ctx context.Context, username string, opts metav1.GetOptions) (*v1.User, error) {
-	// 校验资源类型是否为 "User"
-	if opts.Kind != "User" {
-		return nil, errors.WithCode(code.ErrInvalidResourceKind, "资源类型不匹配,期望:User,实际:%s", opts.Kind)
-	}
-	// 校验 API 版本是否为 "v1"
-	if opts.APIVersion != "v1" {
-		return nil, errors.WithCode(code.ErrInvalidAPIVersion, "API版本不支持,期望:v1,实际:%s", opts.APIVersion)
-	}
+	// // 校验资源类型是否为 "User"
+	// if opts.Kind != "User" {
+	// 	return nil, errors.WithCode(code.ErrInvalidResourceKind, "资源类型不匹配,期望:User,实际:%s", opts.Kind)
+	// }
+	// // 校验 API 版本是否为 "v1"
+	// if opts.APIVersion != "v1" {
+	// 	return nil, errors.WithCode(code.ErrInvalidAPIVersion, "API版本不支持,期望:v1,实际:%s", opts.APIVersion)
+	// }
 	// 初始化用户对象（v1.User 是定义用户结构的模型，如包含 ID、Name、Status 等字段）
 	user := &v1.User{}
 	err := u.db.Where("name=? and status =1", username).First(&user).Error

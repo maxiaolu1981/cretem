@@ -16,7 +16,7 @@ func (u *UserController) List(c *gin.Context) {
 
 	var r metav1.ListOptions
 	if err := c.ShouldBindQuery(&r); err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrBind, err.Error()), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrBind, "%s", err.Error()), nil)
 
 		return
 	}

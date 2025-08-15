@@ -3,6 +3,7 @@ package apiserver
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/auth"
+	_ "github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -110,6 +112,7 @@ func parseWithHeader(c *gin.Context) (loginInfo, error) {
 func parseWithBody(c *gin.Context) (loginInfo, error) {
 	var login loginInfo
 	if err := c.ShouldBindJSON(&login); err != nil {
+		fmt.Println("..............", err)
 		log.Errorf("解析用户名密码错误,%s", err.Error())
 		return loginInfo{}, jwt.ErrFailedAuthentication
 	}

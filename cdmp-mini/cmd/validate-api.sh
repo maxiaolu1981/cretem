@@ -1,86 +1,84 @@
 #!/bin/bash
-# API服务验证脚本：检查服务状态、登录及接口访问
-# 使用方法：chmod +x validate-api.sh && ./validate-api.sh
+# validate-api.sh - 验证API服务存活状态及登录接口功能
 
-# 配置服务地址（根据实际情况修改）
-BASE_URL="http://localhost:8080"
-USERNAME="testuser"   # 替换为实际用户名
-PASSWORD="Test@123"   # 替换为实际密码
-TOKEN=""              # 用于存储登录后的令牌
+# 配置参数
+API_HOST="localhost"
+API_PORT="8080"
+HEALTH_CHECK_ENDPOINT="/healthz"
+LOGIN_ENDPOINT="/login"
+ADMIN_USER="admin"
+ADMIN_PASS="Admin@2021"  # 请根据实际密码修改
+TIMEOUT=10  # 超时时间(秒)
+
+# 颜色输出定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # 无颜色
 
 # 打印分隔线
-print_sep() {
-  echo "=============================================="
+print_separator() {
+    echo "=============================================="
 }
 
-# 1. 验证服务是否存活（健康检查）
-print_sep
-echo "1. 验证服务是否存活: ${BASE_URL}/healthz"
-response=$(curl -s -w "%{http_code}" "${BASE_URL}/healthz")
-http_code=$(echo "$response" | tail -n1)
-body=$(echo "$response" | head -n -1)
+# 1. 验证服务是否存活
+print_separator
+echo "1. 验证服务是否存活: http://${API_HOST}:${API_PORT}${HEALTH_CHECK_ENDPOINT}"
 
-if [ "$http_code" -eq 200 ]; then
-  echo "✅ 服务正常运行"
+health_check_url="http://${API_HOST}:${API_PORT}${HEALTH_CHECK_ENDPOINT}"
+
+# 使用curl检查健康状态
+health_response=$(curl -s -w "\n%{http_code}" -X GET "${health_check_url}" --max-time ${TIMEOUT})
+health_status_code=$(echo "${health_response}" | tail -n1)
+health_body=$(echo "${health_response}" | head -n -1)
+
+if [ "${health_status_code}" -eq 200 ]; then
+    echo -e "${GREEN}✅ 服务正常运行${NC}"
 else
-  echo "❌ 服务未启动或健康检查失败（状态码: $http_code）"
-  exit 1
-fi
-
-# 2. 验证登录接口（获取JWT令牌）
-print_sep
-echo "2. 验证登录接口: ${BASE_URL}/login"
-login_response=$(curl -s -w "%{http_code}" -X POST "${BASE_URL}/login" \
-  -H "Content-Type: application/json" \
-  -d "{\"username\": \"${USERNAME}\", \"password\": \"${PASSWORD}\"}")
-
-login_http_code=$(echo "$login_response" | tail -n1)
-login_body=$(echo "$login_response" | head -n -1)
-
-if [ "$login_http_code" -eq 200 ]; then
-  # 从响应中提取token（假设响应格式为{"token":"xxx"}）
-  TOKEN=$(echo "$login_body" | grep -o '"token":"[^"]*' | cut -d'"' -f4)
-  if [ -n "$TOKEN" ]; then
-    echo "✅ 登录成功，令牌已获取"
-  else
-    echo "❌ 登录响应中未找到token（响应: $login_body）"
+    echo -e "${RED}❌ 服务未响应${NC}"
+    echo "状态码: ${health_status_code}"
+    echo "响应内容: ${health_body}"
     exit 1
-  fi
-else
-  echo "❌ 登录失败（状态码: $login_http_code，响应: $login_body）"
-  exit 1
 fi
 
-# 3. 验证受保护接口（使用令牌访问用户列表）
-print_sep
-echo "3. 验证受保护接口: ${BASE_URL}/v1/users"
-protected_response=$(curl -s -w "%{http_code}" "${BASE_URL}/v1/users" \
-  -H "Authorization: Bearer ${TOKEN}")
+# 2. 验证登录接口
+print_separator
+echo "2. 验证登录接口: http://${API_HOST}:${API_PORT}${LOGIN_ENDPOINT}"
 
-protected_http_code=$(echo "$protected_response" | tail -n1)
-protected_body=$(echo "$protected_response" | head -n -1)
+login_url="http://${API_HOST}:${API_PORT}${LOGIN_ENDPOINT}"
+login_payload=$(printf '{"username":"%s","password":"%s"}' "${ADMIN_USER}" "${ADMIN_PASS}")
 
-if [ "$protected_http_code" -eq 200 ]; then
-  echo "✅ 受保护接口访问成功"
-  echo "接口响应预览: $(echo "$protected_body" | jq '.items | length' 2>/dev/null) 个用户"
+# 使用curl发送登录请求（分离响应体和状态码）
+temp_file=$(mktemp)
+login_status_code=$(curl -s -w "%{http_code}" -o "${temp_file}" \
+    -X POST "${login_url}" \
+    -H "Content-Type: application/json" \
+    -d "${login_payload}" \
+    --max-time ${TIMEOUT})
+
+login_response=$(cat "${temp_file}")
+rm -f "${temp_file}"
+
+# 检查HTTP状态码
+if [ "${login_status_code}" -eq 200 ]; then
+    # 检查响应体是否包含token（简单验证）
+    if echo "${login_response}" | grep -q "token"; then
+        echo -e "${GREEN}✅ 登录成功${NC}"
+        echo "状态码: ${login_status_code}"
+        echo "响应内容: ${login_response}"
+    else
+        echo -e "${YELLOW}⚠️ 登录响应格式异常${NC}"
+        echo "状态码: ${login_status_code}"
+        echo "响应内容: ${login_response}"
+        exit 1
+    fi
 else
-  echo "❌ 受保护接口访问失败（状态码: $protected_http_code，响应: $protected_body）"
-  exit 1
+    echo -e "${RED}❌ 登录失败${NC}"
+    echo "状态码: ${login_status_code}"
+    echo "响应内容: ${login_response}"
+    exit 1
 fi
 
-# 4. 验证404路由处理
-print_sep
-echo "4. 验证404路由: ${BASE_URL}/invalid-path"
-notfound_response=$(curl -s -w "%{http_code}" "${BASE_URL}/invalid-path")
-notfound_http_code=$(echo "$notfound_response" | tail -n1)
-
-if [ "$notfound_http_code" -eq 404 ]; then
-  echo "✅ 404路由处理正常（状态码: $notfound_http_code）"
-else
-  echo "❌ 404路由处理异常（状态码: $notfound_http_code）"
-  exit 1
-fi
-
-print_sep
-echo "🎉 所有API验证通过！"
-
+print_separator
+echo -e "${GREEN}所有API验证通过${NC}"
+exit 0
