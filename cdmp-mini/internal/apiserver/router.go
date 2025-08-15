@@ -13,5 +13,5 @@ func installMiddleware(g *gin.Engine) {
 }
 
 func installContorller(g *gin.Engine) {
-	g.POST("/login")
+   jwtStrategy,_ := new 
 }

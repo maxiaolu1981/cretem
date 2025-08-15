@@ -52,6 +52,7 @@ import (
 // Cache 定义了一个缓存服务，用于查询所有密钥（secrets）和策略（policies）
 type Cache struct {
 	store store.Factory // 存储层工厂，用于获取底层数据
+	pb.UnimplementedCacheServer
 }
 
 var (

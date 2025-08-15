@@ -1,9 +1,10 @@
 package apiserver
 
 import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/config"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/app"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/config"
+
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
 )
 
@@ -16,8 +17,8 @@ Find more iam-apiserver information at:
 
 func NewApp(basename string) *app.App {
 	opts := options.NewOptions()
-	//application := app.NewApp(basename, "IAM API Server", app.WithOptions(opts),app.WithDescription(commandDesc),app.WithDefaultValidArgs(),app.WithRunFunc(run(opts))
-
+	application := app.NewApp(basename, "iam-apiserver", app.WithOptions(opts), app.WithDescription(commandDesc), app.WithDefaultValidArgs(), app.WithRunFunc(run(opts)))
+	return application
 }
 
 func run(opts *options.Options) app.RunFunc {

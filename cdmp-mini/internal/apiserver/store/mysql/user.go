@@ -45,3 +45,7 @@ func (u *users) Get(ctx context.Context, username string, opts metav1.GetOptions
 func newUsers(ds *datastore) *users {
 	return &users{ds.db}
 }
+
+func (u *users) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions) error {
+	return u.db.Save(user).Error
+}
