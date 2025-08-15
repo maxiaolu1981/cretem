@@ -13,12 +13,13 @@ import (
 
 func initRouter(g *gin.Engine) {
 	installMiddleware(g)
+	//绑定用户控制器
 	installContorller(g)
 
 }
 
 func installMiddleware(g *gin.Engine) {
-
+	// log.Error("测试错误.............")
 }
 
 func installContorller(g *gin.Engine) *gin.Engine {

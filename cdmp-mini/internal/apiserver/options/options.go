@@ -2,24 +2,37 @@ package options
 
 import (
 	genericoptions "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	flag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 )
 
 // 定义Options参数结构
 type Options struct {
-	MySQLOptions            *genericoptions.MySQLOptions `json:"mysql"`
-	Log                     *log.Options
-	GenericServerRunOptions *genericoptions.ServerRunOptions       `json:"server"   mapstructure:"server"`
-	InsecureServing         *genericoptions.InsecureServingOptions `json:"insecure" mapstructure:"insecure"`
-	FeatureOptions          *genericoptions.FeatureOptions         `json:"feature"  mapstructure:"feature"`
+	GenericServerRunOptions *genericoptions.ServerRunOptions `json:"server"   mapstructure:"server"`
+	//GRPCOptions             *genericoptions.//GRPCOptions            `json:"grpc"     mapstructure:"grpc"`
+	InsecureServing *genericoptions.InsecureServingOptions `json:"insecure" mapstructure:"insecure"`
+	//SecureServing           *genericoptions.SecureServingOptions   `json:"secure"   mapstructure:"secure"`
+	MySQLOptions *genericoptions.MySQLOptions `json:"mysql"    mapstructure:"mysql"`
+	//RedisOptions            *genericoptions.RedisOptions           `json:"redis"    mapstructure:"redis"`
+	JwtOptions     *genericoptions.JwtOptions     `json:"jwt"      mapstructure:"jwt"`
+	Log            *log.Options                   `json:"log"      mapstructure:"log"`
+	FeatureOptions *genericoptions.FeatureOptions `json:"feature"  mapstructure:"feature"`
 }
 
 func NewOptions() *Options {
-	return &Options{
+	o := Options{
+		//GenericServerRunOptions: genericoptions.NewServerRunOptions(),
+		//GRPCOptions:             genericoptions.NewGRPCOptions(),
+		//InsecureServing:         genericoptions.NewInsecureServingOptions(),
+		//SecureServing:           genericoptions.NewSecureServingOptions(),
 		MySQLOptions: genericoptions.NewMySQLOptions(),
-		Log:          log.NewOptions(),
+		//	RedisOptions:            genericoptions.NewRedisOptions(),
+		JwtOptions: genericoptions.NewJwtOptions(),
+		Log:        log.NewOptions(),
+		//	FeatureOptions:          genericoptions.NewFeatureOptions(),
 	}
+
+	return &o
 }
 
 func (o *Options) Flags() (fss flag.NamedFlagSets) {

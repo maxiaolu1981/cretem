@@ -6,6 +6,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/mysql"
 	genericoptions "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	genericapiserver "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 )
 
 type apiServer struct {
@@ -93,6 +94,6 @@ func (s *apiServer) PrepareRun() preparedAPIServer {
 }
 
 func (s preparedAPIServer) Run() error {
-
+	log.Info("服务器就绪...................")
 	return s.genericAPIServer.Run()
 }

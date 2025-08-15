@@ -1,6 +1,10 @@
 package server
 
-import "github.com/gin-gonic/gin"
+import (
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
 
 type InsecureServingInfo struct {
 	Address string
@@ -13,6 +17,7 @@ type Config struct {
 	Healthz         bool
 	EnableProfiling bool
 	EnableMetrics   bool
+	Jwt             *JwtInfo
 }
 
 func NewConfig() *Config {
@@ -22,6 +27,11 @@ func NewConfig() *Config {
 		Middlewares:     []string{},
 		EnableProfiling: true,
 		EnableMetrics:   true,
+		Jwt: &JwtInfo{
+			Realm:      "iam jwt",
+			Timeout:    1 * time.Hour,
+			MaxRefresh: 1 * time.Hour,
+		},
 	}
 }
 
@@ -46,4 +56,16 @@ func (c CompletedConfig) New() (*GenericAPIServer, error) {
 
 type CompletedConfig struct {
 	*Config
+}
+
+// JwtInfo defines jwt fields used to create jwt authentication middleware.
+type JwtInfo struct {
+	// defaults to "iam jwt"
+	Realm string
+	// defaults to empty
+	Key string
+	// defaults to one hour
+	Timeout time.Duration
+	// defaults to zero
+	MaxRefresh time.Duration
 }

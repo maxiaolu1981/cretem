@@ -5,9 +5,10 @@ import (
 	"sync"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
+
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
@@ -34,7 +35,7 @@ func (u *userService) List(ctx context.Context, opts metav1.ListOptions) (*v1.Us
 	if err != nil {
 		log.L(ctx).Errorf("list users from storage failed: %s", err.Error())
 
-		return nil, errors.WithCode(code.ErrDatabase, err.Error())
+		return nil, errors.WithCode(code.ErrDatabase, "%s", err.Error())
 	}
 
 	wg := sync.WaitGroup{}

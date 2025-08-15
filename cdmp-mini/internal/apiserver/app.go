@@ -4,8 +4,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/config"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/app"
-
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 )
 
 const commandDesc = `The IAM API server validates and configures data
@@ -23,6 +22,7 @@ func NewApp(basename string) *app.App {
 
 func run(opts *options.Options) app.RunFunc {
 	return func(basename string) error {
+
 		log.Init(opts.Log)
 		defer log.Flush()
 
