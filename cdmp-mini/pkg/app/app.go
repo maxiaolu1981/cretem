@@ -103,13 +103,13 @@ func WithSilence() Option {
 
 func WithNoVersion() Option {
 	return func(app *App) {
-		app.noVersion = false
+		app.noVersion = true
 	}
 }
 
 func WithNoConfig() Option {
 	return func(app *App) {
-		app.noConfig = false
+		app.noConfig = true
 	}
 }
 

@@ -3,6 +3,7 @@ package apiserver
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/auth"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	_ "github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator"
 
@@ -72,6 +74,7 @@ func authenticator() func(c *gin.Context) (interface{}, error) {
 		if err != nil {
 			return "", jwt.ErrFailedAuthentication
 		}
+
 		user, err := store.Client().Users().Get(c, login.Username, metav1.GetOptions{})
 		if err != nil {
 			log.Errorf("查询用户信息失败:%s", err.Error())
@@ -82,6 +85,9 @@ func authenticator() func(c *gin.Context) (interface{}, error) {
 		}
 		user.LoginedAt = time.Now()
 		_ = store.Client().Users().Update(c, user, metav1.UpdateOptions{})
+
+		c.Set(middleware.UsernameKey, login.Username)
+		fmt.Println("context username:", c.GetString(middleware.UsernameKey))
 		return user, nil
 	}
 
@@ -147,8 +153,11 @@ func payloadFunc() func(data interface{}) jwt.MapClaims {
 }
 
 func authorizator() func(data interface{}, c *gin.Context) bool {
+	//log.Error("已经触发了authorizator)_")
 	return func(data interface{}, c *gin.Context) bool {
+		fmt.Println("......................", data)
 		if v, ok := data.(string); ok {
+
 			log.L(c).Infof("user `%s` is authenticated.", v)
 			return true
 		}
@@ -162,6 +171,8 @@ func newAutoAuth() middleware.AuthStrategy {
 
 func newBasicAuth() middleware.AuthStrategy {
 	return auth.NewBasicStrategy(func(username string, password string) bool {
+
+		log.Info("我在用basic验证........")
 		// fetch user from database
 		user, err := store.Client().Users().Get(context.TODO(), username, metav1.GetOptions{})
 		if err != nil {

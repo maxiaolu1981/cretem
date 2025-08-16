@@ -1,11 +1,12 @@
 #!/bin/bash
-# validate-api.sh - 验证API服务存活状态及登录接口功能
+# validate-api.sh - 验证API服务存活状态、登录接口及用户列表接口功能
 
 # 配置参数
 API_HOST="localhost"
 API_PORT="8080"
 HEALTH_CHECK_ENDPOINT="/healthz"
 LOGIN_ENDPOINT="/login"
+V1_USERS_ENDPOINT="/v1/users"  # 修正语法错误（等号两侧无空格）
 ADMIN_USER="admin"
 ADMIN_PASS="Admin@2021"  # 请根据实际密码修改
 TIMEOUT=10  # 超时时间(秒)
@@ -65,9 +66,15 @@ if [ "${login_status_code}" -eq 200 ]; then
     if echo "${login_response}" | grep -q "token"; then
         echo -e "${GREEN}✅ 登录成功${NC}"
         echo "状态码: ${login_status_code}"
-        echo "响应内容: ${login_response}"
+        # 提取token（假设响应格式为{"token":"xxx"}）
+        TOKEN=$(echo "${login_response}" | grep -o '"token":"[^"]*"' | cut -d'"' -f4)
+        if [ -z "${TOKEN}" ]; then
+            echo -e "${YELLOW}⚠️ 无法从响应中提取token${NC}"
+            exit 1
+        fi
+        echo "已获取token，准备验证用户列表接口..."
     else
-        echo -e "${YELLOW}⚠️ 登录响应格式异常${NC}"
+        echo -e "${YELLOW}⚠️ 登录响应格式异常（未包含token）${NC}"
         echo "状态码: ${login_status_code}"
         echo "响应内容: ${login_response}"
         exit 1
@@ -76,6 +83,45 @@ else
     echo -e "${RED}❌ 登录失败${NC}"
     echo "状态码: ${login_status_code}"
     echo "响应内容: ${login_response}"
+    exit 1
+fi
+
+# 3. 验证/v1/users/接口（新增，包含完整内容打印）
+print_separator
+echo "3. 验证用户列表接口: http://${API_HOST}:${API_PORT}${V1_USERS_ENDPOINT}"
+
+users_url="http://${API_HOST}:${API_PORT}${V1_USERS_ENDPOINT}"
+
+# 使用登录获取的token调用用户列表接口
+temp_users_file=$(mktemp)
+users_status_code=$(curl -s -w "%{http_code}" -o "${temp_users_file}" \
+    -X GET "${users_url}" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${TOKEN}"  # 假设使用Bearer token认证
+    --max-time ${TIMEOUT})
+
+users_response=$(cat "${temp_users_file}")
+rm -f "${temp_users_file}"
+
+# 检查用户列表接口响应
+if [ "${users_status_code}" -eq 200 ]; then
+    # 简单验证响应是否为JSON格式（兼容对象或数组）
+    if echo "${users_response}" | grep -qE '^\{.*\}$' || echo "${users_response}" | grep -qE '^\[.*\]$'; then
+        echo -e "${GREEN}✅ 用户列表接口调用成功${NC}"
+        echo "状态码: ${users_status_code}"
+        # 打印完整用户列表内容
+        echo -e "\n${YELLOW}用户列表完整响应内容:${NC}"
+        echo "${users_response}" | python3 -m json.tool  # 使用Python内置工具格式化JSON（避免依赖jq）
+    else
+        echo -e "${YELLOW}⚠️ 用户列表响应格式异常（非JSON）${NC}"
+        echo "状态码: ${users_status_code}"
+        echo "响应内容: ${users_response}"
+        exit 1
+    fi
+else
+    echo -e "${RED}❌ 用户列表接口调用失败${NC}"
+    echo "状态码: ${users_status_code}"
+    echo "响应内容: ${users_response}"
     exit 1
 fi
 

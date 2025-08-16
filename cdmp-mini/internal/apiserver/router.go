@@ -7,6 +7,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/auth"
 
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
@@ -19,7 +20,7 @@ func initRouter(g *gin.Engine) {
 }
 
 func installMiddleware(g *gin.Engine) {
-	// log.Error("测试错误.............")
+
 }
 
 func installContorller(g *gin.Engine) *gin.Engine {
@@ -29,6 +30,7 @@ func installContorller(g *gin.Engine) *gin.Engine {
 	g.POST("/refresh", jwtStrategy.RefreshHandler)
 
 	auto := newAutoAuth()
+
 	g.NoRoute(auto.AuthFunc(), func(c *gin.Context) {
 		core.WriteResponse(c, errors.WithCode(code.ErrPageNotFound, "page not found"), nil)
 	})
@@ -37,8 +39,11 @@ func installContorller(g *gin.Engine) *gin.Engine {
 	{
 		userv1 := v1.Group("/users")
 		{
+			//找到厨。。最终的 UserController 持有这个厨师团队的引用（srv 字段），后续可以通过 u.srv.Users().List() 让厨师处理具体业务。
 			userController := user.NewUserController(storeIns)
+			log.Info("服务员通过厨房总调度拿到了厨师团队的引用,后续可以通过u.srv.Users()让厨师团队处理相关的业务")
 			userv1.GET("", userController.List)
+
 		}
 		v1.Use(auto.AuthFunc())
 

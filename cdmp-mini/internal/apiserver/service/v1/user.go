@@ -18,6 +18,8 @@ type UserSrv interface {
 	List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error)
 }
 
+// 是UserSrv接口的具体实现,专门处理用户相关业务,比如查询用户列表等.
+// 实现具体的业务逻辑 直接调用store 获取或者修改数据 就像厨师团队从仓库拿食材
 type userService struct {
 	store store.Factory
 }

@@ -18,7 +18,7 @@ import (
 )
 
 // UserController 定义用户资源的控制器，用于处理用户相关的 HTTP 请求。
-// 持有业务层服务实例，通过调用服务层方法完成业务逻辑。
+// 持有service业务层服务实例，通过调用服务层方法完成业务逻辑。
 type UserController struct {
 	srv srvv1.Service // 业务层服务实例，提供用户相关的业务逻辑接口
 }
