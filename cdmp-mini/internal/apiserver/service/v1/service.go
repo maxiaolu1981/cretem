@@ -22,7 +22,7 @@ type service struct {
 // NewService returns Service interface.
 // 确保具体业务处理着(userService)能够拿到食材(数据)
 func NewService(store store.Factory) Service {
-	log.Info("厨房调度拿到了仓库的食材")
+	log.Info("service:厨房调度拿到了仓库的食材")
 	return &service{
 		store: store,
 	}
@@ -30,5 +30,6 @@ func NewService(store store.Factory) Service {
 
 // 分配专业厨师团队
 func (s *service) Users() UserSrv {
+	log.Info("service:总调度说:好的,我让用户业务团队来处理用户相关业务")
 	return newUsers(s)
 }

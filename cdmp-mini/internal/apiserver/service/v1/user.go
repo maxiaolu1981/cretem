@@ -27,6 +27,7 @@ type userService struct {
 var _ UserSrv = (*userService)(nil)
 
 func newUsers(srv *service) *userService {
+	log.Info("service:厨师团队说:好，，我已经知道了")
 	return &userService{
 		store: srv.store,
 	}
@@ -34,6 +35,7 @@ func newUsers(srv *service) *userService {
 
 func (u *userService) List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error) {
 	users, err := u.store.Users().List(ctx, opts)
+	log.Info("service:食材已经送到.")
 	if err != nil {
 		log.L(ctx).Errorf("list users from storage failed: %s", err.Error())
 

@@ -6,6 +6,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/db"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/logger"
 	"gorm.io/gorm"
@@ -25,13 +26,14 @@ var (
 // 可测试性：在单元测试中，可以通过替换 datastore 中的 db 为 mock 实例（如 gorm.io/gorm/mock），方便模拟数据库行为。
 // 扩展性：若后续需要切换数据库（如从 MySQL 到 PostgreSQL），只需修改 datastore 内部的 db 初始化逻辑，业务层方法无需改动。
 // 职责单一：datastore 专注于数据库操作，业务逻辑层专注于业务处理，符合 “单一职责原则”。
+// 相当于仓库总调度,持有数据库连接核心资源 可理解为仓库的总钥匙 负责协调各类资源的访问入口
+// 通过Users()指派具体的资源管理员(users，，自己不直接处理具体资源的存取 而是作为统一入口分发任务.
 type datastore struct {
 	db *gorm.DB
 }
 
-// 作为 datastore 对外提供的 “入口”，通过调用它可以获取针对 “用户” 资源的操作接口，后续所有用户相关的数据库操作都通过这个接口进行，而无需直接操作 datastore 或 *gorm.DB。
-// Users() 返回UserStore接口
 func (db *datastore) Users() store.UserStore {
+	log.Info("mysql:仓库总调度说:好的，我知道了，我通知用户资源管理员")
 	return newUsers(db)
 }
 

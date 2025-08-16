@@ -5,6 +5,8 @@ import (
 
 	gormutil "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/util"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/fields"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -45,6 +47,7 @@ func (u *users) Get(ctx context.Context, username string, opts metav1.GetOptions
 // 这个 newUsers 函数是 users 结构体的构造函数，作用是基于已有的 datastore 实例创建 users 实例，实现了 datastore 与 users 之间的依赖传递，是典型的 “组合复用” 设计。
 // 通过 datastore 这个 “数据库连接管理器”，为 users 提供已初始化的 *gorm.DB 实例，使 users 可以专注于实现用户相关的数据库操作（如 GetByID、Create 等），而无需关心数据库连接的创建细节。
 func newUsers(ds *datastore) *users {
+	log.Info("mysql:仓库保管员说:好的,我知道了..")
 	return &users{ds.db}
 }
 
@@ -54,6 +57,7 @@ func (u *users) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOpt
 
 // List return all users.
 func (u *users) List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error) {
+	log.Info("store:好的 我来给你所需要的食材")
 	ret := &v1.UserList{}
 	ol := gormutil.Unpointer(opts.Offset, opts.Limit)
 

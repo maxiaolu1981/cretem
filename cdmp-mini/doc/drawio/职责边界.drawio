@@ -1,27 +1,38 @@
 <mxfile host="65bd71144e">
     <diagram id="mx85yH-HHNL1EZkZtxiU" name="第 1 页">
-        <mxGraphModel dx="1345" dy="413" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
+        <mxGraphModel dx="481" dy="344" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="827" pageHeight="1169" math="0" shadow="0">
             <root>
                 <mxCell id="0"/>
                 <mxCell id="1" parent="0"/>
-                <mxCell id="45" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" parent="1" target="44" edge="1">
-                    <mxGeometry relative="1" as="geometry">
-                        <mxPoint x="-20" y="430" as="sourcePoint"/>
-                    </mxGeometry>
+                <mxCell id="71" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.5;entryY=0;entryDx=0;entryDy=0;" edge="1" parent="1" source="68" target="69">
+                    <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="46" value="http响应" style="edgeLabel;html=1;align=center;verticalAlign=middle;resizable=0;points=[];" parent="45" vertex="1" connectable="0">
-                    <mxGeometry x="-0.14" y="-2" relative="1" as="geometry">
-                        <mxPoint as="offset"/>
-                    </mxGeometry>
+                <mxCell id="68" value="外部请求" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="200" y="70" width="150" height="40" as="geometry"/>
                 </mxCell>
-                <mxCell id="44" value="客户端" style="rounded=0;whiteSpace=wrap;html=1;" parent="1" vertex="1">
-                    <mxGeometry x="-80" y="510" width="120" height="60" as="geometry"/>
+                <mxCell id="69" value="userController&lt;div&gt;1.http参数解析&lt;/div&gt;&lt;div&gt;2.参数校验&lt;/div&gt;&lt;div&gt;3.返回响应结果&lt;/div&gt;&lt;div&gt;3.调用service层提供服务&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="133" y="140" width="280" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="47" value="客户端&lt;div&gt;GET /v1/users?page=1&amp;amp;limit=10&lt;/div&gt;" style="whiteSpace=wrap;html=1;aspect=fixed;" vertex="1" parent="1">
-                    <mxGeometry x="360" y="110" width="120" height="120" as="geometry"/>
+                <mxCell id="72" value="Service接口&lt;div&gt;1.定义大类业务规范&lt;/div&gt;&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="133" y="250" width="317" height="60" as="geometry"/>
                 </mxCell>
-                <mxCell id="48" value="control&lt;br&gt;&lt;div&gt;1.UserController&lt;/div&gt;&lt;div&gt;2.List(c *gin.Context&lt;/div&gt;" style="whiteSpace=wrap;html=1;aspect=fixed;" vertex="1" parent="1">
-                    <mxGeometry x="360" y="240" width="120" height="120" as="geometry"/>
+                <mxCell id="73" style="edgeStyle=none;html=1;entryX=0.44;entryY=-0.044;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="69" target="72">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="74" value="service是Service接口实现&lt;div&gt;持有store.Factory,通过User()建立userService.&lt;/div&gt;&lt;div&gt;依赖：通过NewService注入&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="133" y="360" width="177" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="75" style="edgeStyle=none;html=1;entryX=0.464;entryY=1.031;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="74" target="72">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="76" value="Usersrv接口 用户业务规范&lt;div&gt;&lt;br&gt;&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="150" y="460" width="210" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="77" style="edgeStyle=none;html=1;exitX=0.5;exitY=1;exitDx=0;exitDy=0;entryX=0.396;entryY=0.043;entryDx=0;entryDy=0;entryPerimeter=0;" edge="1" parent="1" source="74" target="76">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="78" value="userService(UserSrv接口实现&lt;div&gt;实现业务逻辑&lt;/div&gt;" style="rounded=0;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+                    <mxGeometry x="150" y="560" width="230" height="50" as="geometry"/>
                 </mxCell>
             </root>
         </mxGraphModel>
