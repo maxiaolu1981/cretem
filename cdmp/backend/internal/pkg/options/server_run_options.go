@@ -1,21 +1,3 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /*
 该包定义了通用 API 服务器的运行配置选项（ServerRunOptions），包含服务器运行模式、健康检查开关、中间件列表等核心参数，提供配置初始化、参数验证、命令行参数绑定等功能，是服务器运行配置的基础模块。
 函数流程详解
@@ -64,6 +46,7 @@ type ServerRunOptions struct {
 	Middlewares []string `json:"middlewares" mapstructure:"middlewares"` // 允许使用的中间件列表（逗号分隔）
 }
 
+// 默认值传递→用户配置→最终应用
 // NewServerRunOptions 创建带有默认参数的 ServerRunOptions 实例
 func NewServerRunOptions() *ServerRunOptions {
 	defaults := server.NewConfig() // 获取服务器默认配置

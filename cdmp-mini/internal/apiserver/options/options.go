@@ -3,7 +3,7 @@ package options
 import (
 	genericoptions "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
-	flag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
+	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 )
 
 // 定义Options参数结构
@@ -21,7 +21,7 @@ type Options struct {
 
 func NewOptions() *Options {
 	o := Options{
-		//GenericServerRunOptions: genericoptions.NewServerRunOptions(),
+		GenericServerRunOptions: genericoptions.NewServerRunOptions(),
 		//GRPCOptions:             genericoptions.NewGRPCOptions(),
 		//InsecureServing:         genericoptions.NewInsecureServingOptions(),
 		//SecureServing:           genericoptions.NewSecureServingOptions(),
@@ -35,7 +35,8 @@ func NewOptions() *Options {
 	return &o
 }
 
-func (o *Options) Flags() (fss flag.NamedFlagSets) {
+func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
+	o.GenericServerRunOptions.AddFlags(fss.FlagSet("generic"))
 	o.MySQLOptions.AddFlags(fss.FlagSet("mysql"))
 	o.Log.AddFlags(fss.FlagSet("logs"))
 	return

@@ -5,13 +5,14 @@ import (
 	"os"
 
 	"github.com/fatih/color"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	flag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag/globalflag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/term"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version/verflag"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
-	"github.com/maxiaolu1981/cretem/nexuscore/log"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -185,6 +186,7 @@ func (a *App) buildCommand() {
 	if !a.noVersion {
 		verflag.AddFlags(namedFlagSets.FlagSet("global"))
 	}
+	//加载配置文件
 	if !a.noConfig {
 		addConfigFlag(a.basename, namedFlagSets.FlagSet("global"))
 	}

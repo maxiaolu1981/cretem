@@ -5,6 +5,5 @@ import (
 )
 
 func main() {
-	// 初始化日志后立即输出一条Info日志
 	apiserver.NewApp("iam-apiserver").Run()
 }

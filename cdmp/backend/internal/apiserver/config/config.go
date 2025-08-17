@@ -25,7 +25,7 @@ package config
 
 import "github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/options"
 
-// 它嵌入了 options.Options 结构体，用于存储服务运行所需的所有配置项。
+// 它嵌入了 options.Options 结构体，用于存储api服务最终运行所需的所有配置项。
 type Config struct {
 	*options.Options
 }

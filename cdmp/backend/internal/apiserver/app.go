@@ -61,18 +61,20 @@ https://github.com/maxiaolu1981/cretem/blob/master/cdmp/doc/docs/guide/cmd/iam-a
 
 // NewApp 创建一个带有默认参数的应用实例
 // 参数 basename 为程序名称（可执行文件名）
+// 创建应用实例，配置基本信息和回调函数
+// 1.应用名称 2.程序名3. 选项 4.功能描述 5.默认的参数验证
+// 6. 绑定应用启动后的运行函数
 func NewApp(basename string) *app.App {
 	// 初始化命令行选项（包含默认配置和可解析的参数定义）
 	opts := options.NewOptions()
 
-	// 创建应用实例，配置基本信息和回调函数
 	application := app.NewApp(
-		"IAM API Server",                 // 应用名称
-		basename,                         // 程序名
-		app.WithOptions(opts),            // 绑定命令行选项
-		app.WithDescription(commandDesc), // 绑定功能描述
-		app.WithDefaultValidArgs(),       // 使用默认的参数验证规则,不允许有参数注入
-		app.WithRunFunc(run(opts)),       // 绑定应用启动后的运行函数
+		"IAM API Server",
+		basename,
+		app.WithOptions(opts),            //选项
+		app.WithDescription(commandDesc), // 绑定
+		app.WithDefaultValidArgs(),       // 使用规则,不允许有参数注入
+		app.WithRunFunc(run(opts)),       //
 	)
 
 	return application

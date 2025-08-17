@@ -30,11 +30,13 @@ func NewMySQLOptions() *MySQLOptions {
 	}
 }
 
+// Validate 校验参数是否正确
 func (o *MySQLOptions) Validate() []error {
-	errs := []error{}
-	return errs
+	return []error{}
 }
 
+// AddFlags 添加flag标志
+// Host Username  Password Database MaxIdleConnections
 func (o *MySQLOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&o.Host, "mysql.host", o.Host, ""+
 		"MySQL service host address. If left blank, the following related mysql options will be ignored.")
