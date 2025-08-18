@@ -11,12 +11,12 @@ type ServerRunOptions struct {
 	Middlewares []string `json:"middlewares" mapstructure:"middlewares"`
 }
 
-// ApplyTo将ServerRunOptions的值写回Config,完成最终配置
-func (s *ServerRunOptions) ApplyTo(c *server.Config) error {
-	c.Mode = s.Mode
-	c.Healthz = s.Healthz
-	c.Middlewares = s.Middlewares
-	return nil
+func(o *ServerRunOptions) AddFlags()(fs *pflag.FlagSet){
+	 fs.StringVarP(&o.Mode,"server.mode",o.Mode,"以指定的服务器模式启动服务器。支持的服务器模式：调试（debug）、测试（test）、发布（release）。
+")
+    fs.BoolVarP(&o.Healthz,"server.healthz",o.Healthz,"添加自身就绪性检查并安装 /healthz 路由")
+	fs.StringSliceVarP(&o.Middlewares,"server.middlewares",o.Middlewares,"服务器允许使用的中间件列表，以逗号分隔。若该列表为空，则将使用默认中间件")
+    
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -28,6 +28,4 @@ func NewServerRunOptions() *ServerRunOptions {
 	}
 }
 
-func (o *ServerRunOptions) AddFlags(fss *pflag.FlagSet) {
-	fss.StringVar(&o.Mode, "server.mode", o.Mode, "Start the server in a specified server mode. Supported server mode: debug, test, release")
-}
+func 

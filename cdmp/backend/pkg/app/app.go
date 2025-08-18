@@ -199,9 +199,20 @@ func (a *App) buildCommand() {
 		SilenceErrors: true,                       // 不自动打印错误（由应用自行处理）
 		Args:          a.args,                     // 位置参数验证函数
 	}
-	cmd.SetOut(os.Stdout)          // 标准输出
-	cmd.SetErr(os.Stderr)          // 错误输出
-	cmd.Flags().SortFlags = true   // 标志按名称排序
+	//显式设置的主要目的是代码可读性和可控性，而非功能上的必须。
+	cmd.SetOut(os.Stdout)        // 标准输出
+	cmd.SetErr(os.Stderr)        // 错误输出
+	cmd.Flags().SortFlags = true // 标志按名称排序
+	/*
+		//  cliflag.InitFlags
+		// 初始化flag标志，将go flag纳入cobra管理
+			//它的作用是配置标志集的基础行为，而非添加具体标志：
+			//SetNormalizeFunc：定义标志名称的解析规则（如允许--my-flag和--my_flag等价），这个配置需要在添加具体标志之前完成，否则后续添加的标志无法应用该规则。
+			//AddGoFlagSet：将 Go 标准库的全局标志（如--help）整合到当前标志集中，确保兼容性，这也是框架初始化的基础工作。
+			//后续标志的添加时机
+			//具体的业务标志（如版本、配置文件、全局标志等）会在这之后的代码中逐步添加：
+
+	*/
 	cliflag.InitFlags(cmd.Flags()) // 初始化标志
 
 	// 添加子命令
@@ -217,6 +228,12 @@ func (a *App) buildCommand() {
 		cmd.RunE = a.runCommand
 	}
 
+	/*
+		这几步是分层构建标志集的过程：
+		先添加用户自定义的业务标志（确保业务需求优先）；
+		再补充框架级全局标志（--version、--config、--help 等，确保基础功能完整）；
+		最后将全局标志合并到主集（确保所有标志生效）。
+	*/
 	// 处理命令行选项标志
 	var namedFlagSets cliflag.NamedFlagSets
 	if a.options != nil {
@@ -234,6 +251,7 @@ func (a *App) buildCommand() {
 	}
 
 	// 添加配置文件标志（如果启用）
+	//“命令行标志→环境变量→配置文件” 三级配置体系的核心实现
 	if !a.noConfig {
 		addConfigFlag(a.basename, namedFlagSets.FlagSet("global"))
 	}
@@ -267,6 +285,7 @@ func (a *App) runCommand(cmd *cobra.Command, args []string) error {
 	cliflag.PrintFlags(cmd.Flags()) // 打印所有标志配置
 
 	// 处理版本信息展示
+	// 所有命令行工具遵循查版本即退出” 的逻辑，避免多余操作。
 	if !a.noVersion {
 		verflag.PrintAndExitIfRequested() // 如果指定了版本标志，打印版本并退出
 	}

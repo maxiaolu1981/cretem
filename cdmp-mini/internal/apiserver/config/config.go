@@ -2,10 +2,10 @@ package config
 
 import "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 
-type Config struct {
+type config struct {
 	*options.Options
 }
 
-func CreateConfigFromOptions(opts *options.Options) (*Config, error) {
-	return &Config{opts}, nil
+func NewConfig(opt *options.Options) *config {
+	return &config{opt}
 }

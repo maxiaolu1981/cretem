@@ -6,12 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type InsecureServingInfo struct {
-	Address string
-}
-
-type Config struct {
-	InsecureServing *InsecureServingInfo
+type config struct {
 	Mode            string
 	Middlewares     []string
 	Healthz         bool
@@ -20,11 +15,11 @@ type Config struct {
 	Jwt             *JwtInfo
 }
 
-func NewConfig() *Config {
-	return &Config{
-		Healthz:         true,
+func NewConfig() *config {
+	return &config{
 		Mode:            gin.ReleaseMode,
 		Middlewares:     []string{},
+		Healthz:         true,
 		EnableProfiling: true,
 		EnableMetrics:   true,
 		Jwt: &JwtInfo{
@@ -33,29 +28,6 @@ func NewConfig() *Config {
 			MaxRefresh: 1 * time.Hour,
 		},
 	}
-}
-
-func (c *Config) Complete() CompletedConfig {
-	return CompletedConfig{c}
-}
-
-func (c CompletedConfig) New() (*GenericAPIServer, error) {
-	gin.SetMode(c.Mode)
-	s := &GenericAPIServer{
-		InsecureServingInfo: c.InsecureServing,
-		healthz:             c.Healthz,
-		enableMetrics:       c.EnableMetrics,
-		enableProfiling:     c.EnableProfiling,
-		middlewares:         c.Middlewares,
-		Engine:              gin.New(),
-	}
-	initGenericAPIServer(s)
-	return s, nil
-
-}
-
-type CompletedConfig struct {
-	*Config
 }
 
 // JwtInfo defines jwt fields used to create jwt authentication middleware.
