@@ -1,8 +1,9 @@
 package apiserver
 
 import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/app"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 )
 
 const commandDesc = `IAM API 服务器用于验证和配置 API 对象的数据，这些对象包括用户、策略、密钥等。该 API 服务器通过处理 REST 操作来实现对这些 API 对象的管理。`
@@ -31,5 +32,24 @@ run 函数返回一个 app.RunFunc 类型的回调函数，作为应用的核心
 
 func NewApp(basename string) *app.App {
 	opts := options.NewOptions()
-	app := app.NewApp(basename)
+	application := app.NewApp(basename, "iam apiserver",
+		app.WithOptions(opts),
+		app.WithDesriptions(commandDesc),
+		app.WithDefaultValidArgs(),
+		app.WithRunFunc(run(opts)),
+	)
+	return application
+}
+
+func run(opts *options.Options) app.RunFunc {
+	return func(basename string) error {
+		log.Init(opts.Log)
+		defer log.Flush()
+		//	cfg, err := config.CreateConfigFromOptions(opts)
+		//	if err != nil {
+		//		return err
+		//	}
+		//	return Run(cfg)
+		return nil
+	}
 }

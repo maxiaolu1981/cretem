@@ -13,7 +13,15 @@ type apiServer struct {
 	gRPCAPIServer    *grpcAPIServer
 }
 
-func createAPIServer(cfg *config.Config) (*apiServer, error) {
+type ExtraConfig struct {
+	mySQLOptions *genericoptions.MySQLOptions
+	Addr         string
+}
+type completedExtraConfig struct {
+	*ExtraConfig
+}
+
+func createApiServer(cfg *config.Config) (*apiServer, error) {
 	genericConfig, err := buildGenericConfig(cfg)
 	if err != nil {
 		return nil, err
@@ -22,7 +30,6 @@ func createAPIServer(cfg *config.Config) (*apiServer, error) {
 	if err != nil {
 		return nil, err
 	}
-
 	genericServer, err := genericConfig.Complete().New()
 	if err != nil {
 		return nil, err
@@ -39,27 +46,17 @@ func createAPIServer(cfg *config.Config) (*apiServer, error) {
 }
 
 func buildGenericConfig(cfg *config.Config) (genericConfig *genericapiserver.Config, lastErr error) {
-
 	genericConfig = genericapiserver.NewConfig()
 	if lastErr = cfg.GenericServerRunOptions.ApplyTo(genericConfig); lastErr != nil {
-		return
+		return nil, lastErr
 	}
-	if lastErr = cfg.FeatureOptions.ApplyTo(genericConfig); lastErr != nil {
-		return
-	}
-
 	if lastErr = cfg.InsecureServing.ApplyTo(genericConfig); lastErr != nil {
-		return
+		return nil, lastErr
 	}
 	return
 }
 
-type ExtraConfig struct {
-	mySQLOptions *genericoptions.MySQLOptions
-	Addr         string
-}
-
-func buildExtraConfig(cfg *config.Config) (*ExtraConfig, error) {
+func buildExtraConfig(cfg *config.Config) (extraConfig *ExtraConfig, lastErr error) {
 	return &ExtraConfig{
 		mySQLOptions: cfg.MySQLOptions,
 		Addr:         "127.0.0.1",
@@ -70,10 +67,6 @@ func (c *ExtraConfig) complete() *completedExtraConfig {
 	return &completedExtraConfig{
 		ExtraConfig: c,
 	}
-}
-
-type completedExtraConfig struct {
-	*ExtraConfig
 }
 
 func (c *completedExtraConfig) New() (*grpcAPIServer, error) {

@@ -25,10 +25,10 @@ Run()：启动服务器的核心方法，实际执行：
 启动 HTTP 服务（开始处理客户端请求）
 阻塞当前 goroutine，保持服务运行（直到收到中断信号，如 Ctrl+C）
 */
-func Run(cfg *config.Config) error {
-	server, err := createAPIServer(cfg)
+func Run(cfg *config.Config) {
+	server, err := createApiServer(cfg)
 	if err != nil {
-		return err
+		return
 	}
-	return server.PrepareRun().Run()
+	server.PrepareRun().Run()
 }

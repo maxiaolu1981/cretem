@@ -15,26 +15,25 @@ import (
 )
 
 type GenericAPIServer struct {
-	middlewares []string
+	middlewares         []string
+	InsecureServingInfo *InsecureServingInfo
+	healthz             bool
 	*gin.Engine
-	healthz                      bool
-	enableMetrics                bool
-	enableProfiling              bool
-	insecureServer, secureServer *http.Server
+	InsecureAPIServer *http.Server
+	enableProfiling   bool
+	enableMetrics     bool
 }
 
 func initGenericAPIServer(s *GenericAPIServer) {
-	//打印gin路由信息
-	s.Setup()
+	//	s.Setup()
 	s.InstallMiddlewares()
 	s.InstallAPIs()
-
 }
 
 // ）设置路由调试日志
-func (s *GenericAPIServer) Setup() {
+func (s *GenericAPIServer) setup() {
 	gin.DebugPrintRouteFunc = func(httpMethod, absolutePath, handlerName string, nuHandlers int) {
-		log.Infof("%-6s %-s --> %s (%d handlers)", httpMethod, absolutePath, handlerName, nuHandlers)
+		log.Infof("%-6s %s --> %s(%d handlers)", httpMethod, absolutePath, handlerName, nuHandlers)
 	}
 }
 

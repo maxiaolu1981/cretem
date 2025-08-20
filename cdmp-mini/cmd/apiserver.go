@@ -4,4 +4,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver"
 )
 
-   application := app.NewApp().Run()
+func main() {
+	apiserver.NewApp("iam-server").Run()
+}

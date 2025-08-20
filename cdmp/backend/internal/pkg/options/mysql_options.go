@@ -24,9 +24,11 @@ package options
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/db"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/spf13/pflag"
 	"gorm.io/gorm"
 )
@@ -58,38 +60,42 @@ func NewMySQLOptions() *MySQLOptions {
 }
 
 // Validate 验证传递给 MySQLOptions 的参数是否有效
-func (o *MySQLOptions) Validate() []error {
+func (m *MySQLOptions) Validate() []error {
 	errs := []error{}
-	// 校验主机地址（若为空，后续数据库连接必然失败）
-	if o.Host == "" {
-		errs = append(errs, fmt.Errorf("mysql.host 不能为空，请指定 MySQL 服务的主机地址（如 127.0.0.1:3306）"))
+
+	host := strings.TrimSpace(m.Host)
+	username := strings.TrimSpace(m.Username)
+	database := strings.TrimSpace(m.Database)
+
+	if host == "" {
+		return errs
+	}
+	if username == "" && m.Username != "" {
+		errs = append(errs, fmt.Errorf("用户名不能为纯空格"))
+	}
+	if err := validation.IsValidPassword(m.Password); err != nil {
+		errs = append(errs, err)
 	}
 
-	// 校验数据库名（若为空，无法确定要连接的具体数据库）
-	if o.Database == "" {
-		errs = append(errs, fmt.Errorf("mysql.database 不能为空，请指定要使用的数据库名称"))
+	if database == "" {
+		errs = append(errs, fmt.Errorf("%s:数据库名称不能为空", m.Database))
 	}
 
-	// 校验最大空闲连接数（不能为负数，0 表示不保留空闲连接）
-	if o.MaxIdleConnections < 0 {
-		errs = append(errs, fmt.Errorf("mysql.max-idle-connections 不能为负数，当前值: %d", o.MaxIdleConnections))
+	if m.MaxOpenConnections <= 0 {
+		errs = append(errs, fmt.Errorf("最大打开连接数不能小于等于零,当前值:%d", m.MaxOpenConnections))
 	}
-
-	// 校验最大打开连接数（不能为负数，0 表示无限制，需谨慎使用）
-	if o.MaxOpenConnections < 0 {
-		errs = append(errs, fmt.Errorf("mysql.max-open-connections 不能为负数，当前值: %d", o.MaxOpenConnections))
+	if m.MaxIdleConnections < 0 {
+		errs = append(errs, fmt.Errorf("空闲连接数不能小于零,当前值:%d", m.MaxIdleConnections))
 	}
-
-	// 校验连接最大生命周期（必须为正数，否则连接可能永久存活导致失效）
-	if o.MaxConnectionLifeTime <= 0 {
-		errs = append(errs, fmt.Errorf("mysql.max-connection-life-time 必须大于 0，当前值: %v", o.MaxConnectionLifeTime))
+	if m.MaxIdleConnections > m.MaxOpenConnections {
+		errs = append(errs, fmt.Errorf("最大空闲连接数(%d)不能大于最大连接数(%d)", m.MaxIdleConnections, m.MaxOpenConnections))
 	}
-
-	// 校验日志级别（GORM 日志级别通常为非负数，可根据实际定义范围调整）
-	if o.LogLevel < 0 {
-		errs = append(errs, fmt.Errorf("mysql.log-mode 不能为负数，当前值: %d", o.LogLevel))
+	if m.MaxConnectionLifeTime < 0 {
+		errs = append(errs, fmt.Errorf("最大生命链接周期不能小于0,当前值%d", m.MaxConnectionLifeTime))
 	}
-
+	if m.LogLevel < 0 || m.LogLevel > 4 {
+		errs = append(errs, fmt.Errorf("gorm日志级别必须在0-4之间,当前值%d", m.LogLevel))
+	}
 	return errs
 }
 

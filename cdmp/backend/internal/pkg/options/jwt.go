@@ -1,21 +1,3 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /*
 该包定义了 JWT（JSON Web Token）认证的配置选项（JwtOptions），包含令牌签名密钥、有效期、刷新策略等核心参数，提供配置初始化、与服务器核心配置的映射、命令行参数绑定及合法性校验功能，是 API 服务器身份认证的核心配置模块。
 函数流程详解
@@ -49,6 +31,8 @@ package options
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/asaskevich/govalidator"
@@ -90,14 +74,36 @@ func (s *JwtOptions) ApplyTo(c *server.Config) error {
 }
 
 // Validate 解析并校验程序启动时用户通过命令行输入的参数（主要校验签名密钥）
-func (s *JwtOptions) Validate() []error {
-	var errs []error
+func (j *JwtOptions) Validate() []error {
+	const (
+		secretKeyMinLen = 6
+		secretKeyMaxLen = 32
+	)
 
-	// 校验签名密钥长度是否在 6-32 字符之间（确保安全性和性能平衡）
-	if !govalidator.StringLength(s.Key, "6", "32") {
-		errs = append(errs, fmt.Errorf("--secret-key 长度必须大于 5 且小于 33（即 6-32 字符）"))
+	var errs []error
+	realm := strings.TrimSpace(j.Realm)
+	key := strings.TrimSpace(j.Key)
+	if realm == "" {
+		errs = append(errs, fmt.Errorf("领域名称(realm)不能为空或者包含空格."))
 	}
 
+	if j.Timeout <= 0 {
+		errs = append(errs, fmt.Errorf("JWT token超时时间必须大于0"))
+	}
+
+	if !govalidator.StringLength(key, strconv.Itoa(secretKeyMinLen), strconv.Itoa(secretKeyMaxLen)) {
+		errs = append(errs, fmt.Errorf("key最小的长度必须%d-%d之间,当前长度%d", secretKeyMinLen, secretKeyMaxLen, len(key)))
+	}
+
+	if j.MaxRefresh <= 0 {
+		errs = append(errs, fmt.Errorf("令牌可刷新的最长窗口期必须大于0"))
+	}
+	if j.MaxRefresh < j.Timeout {
+		errs = append(errs, fmt.Errorf(
+			"令牌最大刷新期限（%v）不能小于超时时间（%v）",
+			j.MaxRefresh, j.Timeout,
+		))
+	}
 	return errs
 }
 

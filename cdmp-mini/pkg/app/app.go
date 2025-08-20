@@ -7,10 +7,15 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	flag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/term"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version/verflag"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 var (
@@ -54,34 +59,25 @@ Use "%s --help" for more information about a command.{{end}}
 	)
 )
 
+type App struct {
+	basename    string
+	name        string
+	description string
+	commands    []Command
+	command     *cobra.Command
+	args        cobra.PositionalArgs
+	noVersion   bool
+	noConfig    bool
+	silence     bool
+	runFunc     RunFunc
+	cmd         *cobra.Command
+	options     CliOptions
+}
+
 type RunFunc func(basename string) error
 type Option func(app *App)
 
 // 程序运行的主结构，对cobra进行进一步封装，用于构建命令行应用程序框架
-type App struct {
-	// 应用二进制文件名
-	basename string
-	// 应用名称
-	name string
-	// 应用描述
-	description string
-	// 命令行配置选项
-	options CliOptions
-	// 应用运行的核心函数
-	runFunc RunFunc
-	// 是否静默模式（不输出日志信息）
-	silence bool
-	// 是否禁用版本信息
-	noVersion bool
-	// 是否禁用配置文件
-	noConfig bool
-	// 子命令集合
-	commands []*Command
-	// 位置参数验证函数
-	args cobra.PositionalArgs
-	// 底层cobra命令对象
-	cmd *cobra.Command
-}
 
 func WithDesriptions(desc string) Option {
 	return func(app *App) {
@@ -89,7 +85,7 @@ func WithDesriptions(desc string) Option {
 	}
 }
 
-func WithOptions(opts options.Options) Option {
+func WithOptions(opts *options.Options) Option {
 	return func(app *App) {
 		app.options = opts
 	}
@@ -170,13 +166,79 @@ func (a *App) buildCommand() {
 		cmd.SetHelpCommand(helpCommand(FormatBaseName(a.basename)))
 	}
 	if a.runFunc != nil {
-		cmd.RunE = a.runCommand()
-	}
-	var namedFlagSets cliFlag.NamedFlagSets
-	if a.options != nil {
-		namedFlagSets = options.Options.FLags()
+		cmd.RunE = a.runCommand
 	}
 
+	var namedFlagSets cliFlag.NamedFlagSets
+	if a.options != nil {
+		fs := cmd.Flags()
+		for _, f := range namedFlagSets.FlagSets {
+			fs.AddFlagSet(f)
+		}
+	}
+	if !a.noVersion {
+		verflag.AddFlags(namedFlagSets.FlagSet("global"))
+	}
+	if !a.noConfig {
+		addConfigFlag(a.basename, namedFlagSets.FlagSet("global"))
+	}
+	cmd.SetHelpCommand(helpCommand(cmd.Name()))
+	addCmdTemplate(&cmd, namedFlagSets)
+	a.cmd = &cmd
+}
+
+func (a *App) runCommand(cmd *cobra.Command, args []string) error {
+	printWorkingDir()
+	cliFlag.PrintFlags(cmd.Flags())
+	if !a.noVersion {
+		verflag.PrintAndExitIfRequested()
+	}
+	if !a.noVersion {
+		if err := viper.BindPFlags(cmd.Flags()); err != nil {
+			return err
+		}
+		if err := viper.Unmarshal(a.options); err != nil {
+			return err
+		}
+	}
+	if !a.silence {
+		log.Infof("%vStarting %s", progressMessage, a.name)
+		if !a.noVersion {
+			log.Infof("%vVersion:%s", progressMessage, version.Get().ToJSON())
+		}
+		if !a.noConfig {
+			log.Infof("%v Config file used:%s", progressMessage, viper.ConfigFileUsed())
+		}
+		if a.options != nil {
+			if err := a.applyOptionRules(); err != nil {
+				return err
+			}
+		}
+
+	}
+	if a.runFunc != nil {
+		return a.runFunc(a.basename)
+	}
+
+	return nil
+}
+
+func (a *App) applyOptionRules() error {
+	if completeableOptions, ok := a.options.(CompleteableOptions); ok {
+		completeableOptions.Complete()
+	}
+	if errs := a.options.Validate(); len(errs) > 0 {
+		return errors.NewAggregate(errs)
+	}
+	if printableOptions, ok := a.options.(PrintableOptions); ok && !a.silence {
+		log.Infof("%v Config:%s", progressMessage, printableOptions.String())
+	}
+	return nil
+}
+
+func printWorkingDir() {
+	wd, _ := os.Getwd()
+	log.Infof("%v当前工作目录:%s", progressMessage, wd)
 }
 
 func addCmdTemplate(cmd *cobra.Command, namedFlagSets flag.NamedFlagSets) {
@@ -194,6 +256,9 @@ func addCmdTemplate(cmd *cobra.Command, namedFlagSets flag.NamedFlagSets) {
 	})
 }
 
-// 检查并补充缺失的参数（如果需要）。
-// 验证所有参数是否合法（比如端口号不能是负数）。
-// （可选）打印最终的配置信息，让用户知道程序用了哪些参数。
+func (a *App) Run() {
+	if err := a.cmd.Execute(); err != nil {
+		fmt.Printf("%v %v", color.RedString("Error="), err)
+		os.Exit(1)
+	}
+}
