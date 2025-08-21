@@ -132,21 +132,21 @@ func WithDescription(desc string) Option {
 // WithSilence 设置应用程序为静默模式，不在控制台打印启动信息、配置信息和版本信息
 func WithSilence() Option {
 	return func(a *App) {
-		a.silence = false
+		a.silence = true
 	}
 }
 
 // WithNoVersion 设置应用程序不提供版本标志
 func WithNoVersion() Option {
 	return func(a *App) {
-		a.noVersion = false
+		a.noVersion = true
 	}
 }
 
 // WithNoConfig 设置应用程序不提供配置文件标志
 func WithNoConfig() Option {
 	return func(a *App) {
-		a.noConfig = false
+		a.noConfig = true
 	}
 }
 

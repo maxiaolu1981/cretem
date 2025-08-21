@@ -1,23 +1,3 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-// package apiserver
-// app.go
 // 该包实现了 IAM API 服务器的核心启动逻辑，负责初始化应用配置、解析命令行参数、设置日志系统，并最终启动 //API 服务以处理用户、策略、密钥等 API 对象的 REST 操作。
 /*
 设计思路:
@@ -36,7 +16,6 @@ type Config struct {
     CacheConfig  *cache.Config     // 转换后配置
     Validated    bool              // 验证标记
 }
-
 转换过程中可以加入配置校验、数据清洗等逻辑，确保 cfg 是可用且安全的配置
 依赖注入优化
 后续代码（如 Run(cfg)）依赖的是 config.Config 接口而非具体的 options.Options
@@ -59,11 +38,6 @@ const commandDesc = `IAM API 服务器负责验证和配置 API 对象的数据�
 如需了解更多关于 iam-apiserver 的信息，请访问：
 https://github.com/maxiaolu1981/cretem/blob/master/cdmp/doc/docs/guide/cmd/iam-apiserver.md`
 
-// NewApp 创建一个带有默认参数的应用实例
-// 参数 basename 为程序名称（可执行文件名）
-// 创建应用实例，配置基本信息和回调函数
-// 1.应用名称 2.程序名3. 选项 4.功能描述 5.默认的参数验证
-// 6. 绑定应用启动后的运行函数
 func NewApp(basename string) *app.App {
 	// 初始化命令行选项（包含默认配置和可解析的参数定义）
 	opts := options.NewOptions()
@@ -71,7 +45,9 @@ func NewApp(basename string) *app.App {
 	application := app.NewApp(
 		"IAM API Server",
 		basename,
-		app.WithOptions(opts),            //选项
+		app.WithOptions(opts),
+		app.WithNoConfig(),
+		app.WithNoVersion(),              //选项
 		app.WithDescription(commandDesc), // 绑定
 		app.WithDefaultValidArgs(),       // 使用规则,不允许有参数注入
 		app.WithRunFunc(run(opts)),       //

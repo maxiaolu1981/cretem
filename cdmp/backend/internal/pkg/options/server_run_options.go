@@ -1,17 +1,17 @@
 /*
 该包定义了通用 API 服务器的运行配置选项（ServerRunOptions），包含服务器运行模式、健康检查开关、中间件列表等核心参数，提供配置初始化、参数验证、命令行参数绑定等功能，是服务器运行配置的基础模块。
 函数流程详解
-ServerRunOptions 结构体
+1.ServerRunOptions 结构体
 存储服务器运行的核心配置参数：
 Mode：服务器运行模式（如 debug、test、release）
 Healthz：是否启用健康检查（/healthz 路由）
 Middlewares：允许使用的中间件列表（逗号分隔）
 字段通过 json 和 mapstructure 标签支持从配置文件解析。
-NewServerRunOptions 函数
+2.NewServerRunOptions 函数
 功能：创建带有默认值的 ServerRunOptions 实例。
 流程：先通过 server.NewConfig() 获取服务器默认配置，再将默认配置中的模式、健康检查状态、中间件列表赋值给新实例，确保初始配置合理。
-ApplyTo 函数
-功能：将当前配置应用到服务器核心配置（server.Config）。
+3.ApplyTo 函数
+功能：将当前配置应用到最终服务器核心配置（server.Config）。
 流程：将 ServerRunOptions 的字段（Mode/Healthz/Middlewares）直接赋值给目标配置对象，完成配置映射。
 Validate 函数
 功能：验证配置的合法性。
@@ -22,11 +22,7 @@ AddFlags 函数
 为 Mode 绑定 --server.mode 命令行参数，说明支持的运行模式。
 为 Healthz 绑定 --server.healthz 参数，控制健康检查开关。
 为 Middlewares 绑定 --server.middlewares 参数，指定允许的中间件列表。
-
 */
-
-// options 包定义了通用 API 服务器的运行配置选项，包含服务器模式、健康检查、中间件等核心参数，
-// 提供配置初始化、参数绑定和验证功能。
 package options
 
 import (
@@ -67,7 +63,7 @@ func (s *ServerRunOptions) ApplyTo(c *server.Config) error {
 	return nil
 }
 
-// Validate 验证配置的合法性（当前未实现具体校验逻辑）
+// Validate 验证配置的合法性
 func (s *ServerRunOptions) Validate() []error {
 	var errores []error
 

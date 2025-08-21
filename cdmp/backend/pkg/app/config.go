@@ -79,6 +79,25 @@ func addConfigFlag(basename string, fs *pflag.FlagSet) {
 			_, _ = fmt.Fprintf(os.Stderr, "错误：读取配置文件失败(%s)：%v\n", cfgFile, err)
 			os.Exit(1)
 		}
+		// 在 viper.ReadInConfig() 成功后添加以下代码
+		// 遍历所有配置项，替换 ${xxx} 占位符
+		for _, key := range viper.AllKeys() {
+			val := viper.GetString(key)
+			// 检查值是否为 ${环境变量} 格式
+			if strings.HasPrefix(val, "${") && strings.HasSuffix(val, "}") {
+				// 提取环境变量名（去掉 ${}）
+				envKey := strings.Trim(val, "${}")
+				// 读取环境变量值
+				envVal := os.Getenv(envKey)
+				if envVal != "" {
+					// 用环境变量值替换配置项
+					viper.Set(key, envVal)
+				} else {
+					// 可选：如果环境变量未设置，可使用默认值或报错
+					fmt.Printf("警告：环境变量 %s 未设置，使用默认值\n", envKey)
+				}
+			}
+		}
 	})
 }
 

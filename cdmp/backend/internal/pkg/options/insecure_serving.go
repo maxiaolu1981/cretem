@@ -1,33 +1,15 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /*
 该包定义了非安全 HTTP 服务的配置选项（InsecureServingOptions），包含服务绑定的 IP 地址、端口等参数，提供配置初始化、与服务器核心配置的映射、命令行参数绑定及合法性校验功能，用于管理未加密、未认证的 HTTP 服务运行设置（注意：该配置不建议在生产环境使用）
 函数流程详解
-InsecureServingOptions 结构体
+1.InsecureServingOptions 结构体
 存储非安全 HTTP 服务的核心配置参数：
 BindAddress：服务绑定的 IP 地址（默认 127.0.0.1，即仅本地可访问）。
 BindPort：服务监听的端口（默认 8080，设置为 0 可禁用该服务）。
 字段通过 json 和 mapstructure 标签支持从配置文件解析。
-NewInsecureServingOptions 函数
+2.NewInsecureServingOptions 函数
 功能：创建带有默认值的 InsecureServingOptions 实例。
 流程：初始化结构体并设置默认参数（绑定地址 127.0.0.1、端口 8080），确保服务启动时有基础的非安全访问配置（默认仅本地可访问，降低安全风险）。
-ApplyTo 函数
+3.ApplyTo 函数
 功能：将当前非安全服务配置映射到服务器核心配置（server.Config）。
 流程：通过 net.JoinHostPort 拼接 BindAddress 和 BindPort 为完整地址（如 127.0.0.1:8080），并赋值给 server.Config 的 InsecureServing 字段，完成配置的传递。
 Validate 函数

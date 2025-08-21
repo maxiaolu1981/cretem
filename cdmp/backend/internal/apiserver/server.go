@@ -184,6 +184,12 @@ func (c *ExtraConfig) complete() *completedExtraConfig {
 
 // New 基于完善后的配置创建gRPC服务器实例
 func (c *completedExtraConfig) New() (*grpcAPIServer, error) {
+
+	// 关键：生成证书（若不存在）
+	if err := c.ServerCert.GenerateCertIfNotExist(); err != nil {
+		log.Fatalf("生成/加载TLS证书失败: %s", err.Error())
+	}
+
 	// 加载TLS证书，用于gRPC安全连接
 	creds, err := credentials.NewServerTLSFromFile(c.ServerCert.CertKey.CertFile, c.ServerCert.CertKey.KeyFile)
 	if err != nil {

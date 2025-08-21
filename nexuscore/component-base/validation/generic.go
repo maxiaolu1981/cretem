@@ -262,7 +262,7 @@ const (
 
 // IsValidPassword 验证密码是否合法，返回具体错误信息
 func IsValidPassword(password string) error {
-	var hasUpper bool      // 是否包含大写字母
+	//var hasUpper bool      // 是否包含大写字母
 	var hasLower bool      // 是否包含小写字母
 	var hasNumber bool     // 是否包含数字
 	var hasSpecial bool    // 是否包含特殊字符（标点或符号）
@@ -276,7 +276,7 @@ func IsValidPassword(password string) error {
 			hasNumber = true
 			passLen++
 		case unicode.IsUpper(ch):
-			hasUpper = true
+			//	hasUpper = true
 			passLen++
 		case unicode.IsLower(ch):
 			hasLower = true
@@ -300,9 +300,9 @@ func IsValidPassword(password string) error {
 	if !hasLower {
 		appendError("缺少小写字母")
 	}
-	if !hasUpper {
-		appendError("缺少大写字母")
-	}
+	//	if !hasUpper {
+	//		appendError("缺少大写字母")
+	//	}
 	if !hasNumber {
 		appendError("至少需要一个数字")
 	}

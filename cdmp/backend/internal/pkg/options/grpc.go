@@ -1,31 +1,12 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /*
 该包定义了 gRPC 服务的配置选项（GRPCOptions），包含 gRPC 服务的绑定地址、端口、最大消息大小等参数，提供配置初始化、命令行参数绑定及合法性校验功能，用于管理 gRPC 服务的基础运行设置。
 函数流程详解
-GRPCOptions 结构体
+1.GRPCOptions 结构体
 存储 gRPC 服务的核心配置参数：
 BindAddress：gRPC 服务绑定的 IP 地址（默认 0.0.0.0，即监听所有 IPv4 接口）。
 BindPort：gRPC 服务监听的端口（默认 8081，设置为 0 可禁用）。
 MaxMsgSize：gRPC 消息的最大字节数（默认 4*1024*1024，即 4MB）。
-字段通过 json 和 mapstructure 标签支持从配置文件解析。
-NewGRPCOptions 函数
+2.NewGRPCOptions 函数
 功能：创建带有默认值的 GRPCOptions 实例。
 流程：初始化结构体并设置默认参数（绑定地址 0.0.0.0、端口 8081、最大消息大小 4MB），确保服务启动时有合理的基础配置。
 Validate 函数

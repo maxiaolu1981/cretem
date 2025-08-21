@@ -1,31 +1,13 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /*
 该包定义了安全 HTTPS 服务的配置选项（SecureServingOptions）及相关结构体，用于管理 HTTPS 服务的绑定地址、端口、TLS 证书等核心参数。包含配置初始化、与服务器核心配置的映射、命令行参数绑定、合法性校验及证书路径补全功能，是安全 HTTP 服务（带认证和授权）的核心配置模块。
 核心结构体说明
-SecureServingOptions
+1.SecureServingOptions
 安全 HTTPS 服务的主配置，包含服务绑定信息和 TLS 证书配置：
 BindAddress：HTTPS 服务绑定的 IP 地址（默认 0.0.0.0，即所有 IPv4 接口）。
 BindPort：HTTPS 服务监听的端口（默认 8443，Required 为 true 时不可为 0）。
 Required：标记端口是否为必需（true 时端口必须在 1-65535 之间，不可为 0）。
 ServerCert：TLS 证书相关配置（类型为 GeneratableKeyCert）。
-CertKey
+2.CertKey
 存储 TLS 证书和私钥文件的路径：
 CertFile：PEM 编码的证书文件路径（可包含完整证书链）。
 KeyFile：与证书匹配的 PEM 编码私钥文件路径。
@@ -81,9 +63,17 @@ PairName：证书文件名前缀（与 CertDirectory 配合生成路径：<dir>/
 package options
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net"
+	"os"
 	"path"
+	"time"
 
 	"github.com/maxiaolu1981/cretem/cdmp/backend/internal/pkg/server"
 	"github.com/spf13/pflag"
@@ -103,7 +93,14 @@ type CertKey struct {
 	KeyFile  string `json:"private-key-file" mapstructure:"private-key-file"` // 包含与 CertFile 匹配的 PEM 编码私钥的文件
 }
 
-// GeneratableKeyCert 包含可生成的 TLS 证书相关配置（支持显式指定文件或自动生成）
+/*
+GeneratableKeyCert 结构体是一个非常方便的设计，它提供了两种证书管理策略：
+显式指定 (生产模式)：追求安全和信任，使用权威CA签发的证书。
+自动生成 (开发模式)：追求方便和快速，使用自签名的证书用于加密，但身份需要额外配置信任。
+这样做的好处是：
+对于运维人员：只需配置好正式的证书路径，应用就能以最高安全标准运行。
+对于开发者：无需任何复杂配置，直接启动应用就能得到一个开箱即用的HTTPS服务器（尽管浏览器会报警告），极大简化了开发测试流程。整个HTTPS的传输流程（握手、加密通信）和之前解释的完全一样，唯一的区别在于客户端对服务器证书“身份”的验证结果。
+*/
 type GeneratableKeyCert struct {
 	CertKey       CertKey `json:"cert-key" mapstructure:"cert-key"`   // 显式指定的证书和私钥文件（优先使用）
 	CertDirectory string  `json:"cert-dir"  mapstructure:"cert-dir"`  // 生成证书的目录（若未显式指定证书文件，将在此目录生成）
@@ -248,4 +245,81 @@ func CreateListener(addr string) (net.Listener, int, error) {
 	}
 
 	return ln, tcpAddr.Port, nil
+}
+
+// generateCertIfNotExist 自动生成自签名证书（修正语法错误后）
+func (g *GeneratableKeyCert) GenerateCertIfNotExist() error {
+	// 若已指定证书文件且存在，直接返回
+	if g.CertKey.CertFile != "" && g.CertKey.KeyFile != "" {
+		// 分别检查证书和私钥文件是否存在
+		_, errCert := os.Stat(g.CertKey.CertFile)
+		_, errKey := os.Stat(g.CertKey.KeyFile)
+		// 只有两个文件都存在时，才认为有效
+		if errCert == nil && errKey == nil {
+			return nil
+		}
+	}
+
+	// 创建证书目录（确保目录存在）
+	if err := os.MkdirAll(g.CertDirectory, 0755); err != nil {
+		return fmt.Errorf("创建证书目录失败: %v", err)
+	}
+
+	// 生成证书和私钥路径
+	certPath := path.Join(g.CertDirectory, g.PairName+".crt")
+	keyPath := path.Join(g.CertDirectory, g.PairName+".key")
+
+	// 生成私钥（2048位RSA）
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fmt.Errorf("生成私钥失败: %v", err)
+	}
+
+	// 证书模板（自签名）
+	template := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject: pkix.Name{
+			CommonName:   "localhost",
+			Organization: []string{"IAM Service"},
+		},
+		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback}, // 允许本地访问
+		NotBefore:   time.Now(),
+		NotAfter:    time.Now().Add(365 * 24 * time.Hour), // 有效期1年
+		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		IsCA:        true, // 自签名证书需标记为CA
+	}
+
+	// 生成证书内容
+	certBytes, err := x509.CreateCertificate(
+		rand.Reader, &template, &template, &privateKey.PublicKey, privateKey,
+	)
+	if err != nil {
+		return fmt.Errorf("生成证书失败: %v", err)
+	}
+
+	// 写入证书文件（PEM格式）
+	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{
+		Type:  "CERTIFICATE",
+		Bytes: certBytes,
+	}), 0644); err != nil { // 证书文件权限：可读
+		return fmt.Errorf("写入证书文件失败: %v", err)
+	}
+
+	// 编码并写入私钥文件（PEM格式）
+	keyBytes, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		return fmt.Errorf("编码私钥失败: %v", err)
+	}
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: keyBytes,
+	}), 0600); err != nil { // 私钥文件权限：仅所有者可读写
+		return fmt.Errorf("写入私钥文件失败: %v", err)
+	}
+
+	// 更新结构体中的证书路径
+	g.CertKey.CertFile = certPath
+	g.CertKey.KeyFile = keyPath
+	return nil
 }

@@ -68,13 +68,14 @@ func (u *users) DeleteCollection(ctx context.Context, usernames []string, opts m
 
 // Get return an user by the user identifier.
 func (u *users) Get(ctx context.Context, username string, opts metav1.GetOptions) (*v1.User, error) {
-	if opts.Kind != "User" {
-		return nil, errors.WithCode(code.ErrInvalidResourceKind, "资源类型不匹配,期望:User,实际:%s", opts.Kind)
-	}
-	if opts.APIVersion != "v1" {
-		return nil, errors.WithCode(code.ErrInvalidAPIVersion, "API版本不支持,期望:v1,实际:%s", opts.APIVersion)
-	}
-
+	/*
+		if opts.Kind != "User" {
+			return nil, errors.WithCode(code.ErrInvalidResourceKind, "资源类型不匹配,期望:User,实际:%s", opts.Kind)
+		}
+		if opts.APIVersion != "v1" {
+			return nil, errors.WithCode(code.ErrInvalidAPIVersion, "API版本不支持,期望:v1,实际:%s", opts.APIVersion)
+		}
+	*/
 	user := &v1.User{}
 	err := u.db.Where("name = ? and status = 1", username).First(&user).Error
 	if err != nil {
