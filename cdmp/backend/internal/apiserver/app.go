@@ -46,8 +46,8 @@ func NewApp(basename string) *app.App {
 		"IAM API Server",
 		basename,
 		app.WithOptions(opts),
-		app.WithNoConfig(),
-		app.WithNoVersion(),              //选项
+		//app.WithNoConfig(),
+		//app.WithNoVersion(),              //选项
 		app.WithDescription(commandDesc), // 绑定
 		app.WithDefaultValidArgs(),       // 使用规则,不允许有参数注入
 		app.WithRunFunc(run(opts)),       //
