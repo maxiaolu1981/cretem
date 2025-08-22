@@ -1,22 +1,3 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 // package flag
 // flags:flags.go
 // 提供命令行参数（flag）的增强处理功能，基于 spf13/pflag 库扩展，
@@ -41,11 +22,10 @@ import (
 // WordSepNormalizeFunc 用于规范化命令行标志（flag）的名称，将包含"_"分隔符的标志名转换为"-"分隔符
 // 例如：将"log_level"转换为"log-level"，符合Unix命令行参数的命名习惯
 func WordSepNormalizeFunc(f *pflag.FlagSet, name string) pflag.NormalizedName {
-	if strings.Contains(name, "_") {
-		// 将所有下划线替换为连字符
-		return pflag.NormalizedName(strings.ReplaceAll(name, "_", "-"))
-	}
-	return pflag.NormalizedName(name)
+
+	normalized := strings.ReplaceAll(name, "_", ".")
+	normalized = strings.ReplaceAll(normalized, "-", ".")
+	return pflag.NormalizedName(normalized)
 }
 
 // WarnWordSepNormalizeFunc 与WordSepNormalizeFunc功能类似，但会对包含"_"的标志名发出警告

@@ -15,6 +15,7 @@ import (
 	"os"
 
 	"github.com/fatih/color"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	cliflag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag/globalflag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/term"
@@ -265,12 +266,6 @@ func (a *App) runCommand(cmd *cobra.Command, args []string) error {
 	printWorkingDir()               // 打印工作目录
 	cliflag.PrintFlags(cmd.Flags()) // 打印所有标志配置
 
-	// 处理版本信息展示
-	// 所有命令行工具遵循查版本即退出” 的逻辑，避免多余操作。
-	if !a.noVersion {
-		verflag.PrintAndExitIfRequested() // 如果指定了版本标志，打印版本并退出
-	}
-
 	// 处理配置文件绑定
 	if !a.noConfig {
 		if err := viper.BindPFlags(cmd.Flags()); err != nil { // 绑定命令行标志到 viper
@@ -336,20 +331,9 @@ func printWorkingDir() {
 }
 
 // addCmdTemplate 设置命令的用法和帮助模板，整合标志集信息
-func addCmdTemplate(cmd *cobra.Command, namedFlagSets cliflag.NamedFlagSets) {
-	usageFmt := "Usage:\n  %s\n"
-	cols, _, _ := term.TerminalSize(cmd.OutOrStdout()) // 获取终端宽度
-
-	// 自定义用法函数
-	cmd.SetUsageFunc(func(cmd *cobra.Command) error {
-		fmt.Fprintf(cmd.OutOrStderr(), usageFmt, cmd.UseLine())
-		cliflag.PrintSections(cmd.OutOrStderr(), namedFlagSets, cols) // 按终端宽度打印标志 sections
-		return nil
-	})
-
-	// 自定义帮助函数
+func addCmdTemplate(cmd *cobra.Command, namedFlagSets flag.NamedFlagSets) {
+	cols, _, _ := term.TerminalSize(cmd.OutOrStdout())
 	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\n\n"+usageFmt, cmd.Long, cmd.UseLine())
-		cliflag.PrintSections(cmd.OutOrStdout(), namedFlagSets, cols) // 按终端宽度打印标志 sections
+		flag.PrintSections(cmd.OutOrStdout(), namedFlagSets, cols)
 	})
 }

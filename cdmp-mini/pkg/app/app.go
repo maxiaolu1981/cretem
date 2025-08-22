@@ -4,14 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/fatih/color"
-
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
-	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
-	flag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/term"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
+
+	"github.com/fatih/color"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
+	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag/globalflag"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/term"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version/verflag"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/cobra"
@@ -74,23 +74,6 @@ Use "%s --help" for more information about a command.{{end}}
 	)
 )
 
-type App struct {
-	basename    string
-	name        string
-	description string
-	options     CliOptions
-	runFunc     RunFunc
-	commands    []*Command
-	args        cobra.PositionalArgs
-	cmd         *cobra.Command
-	silence     bool
-	noVersion   bool
-	noConfig    bool
-}
-
-type RunFunc func(basename string) error
-type Option func(app *App)
-
 func WithDescription(description string) Option {
 	return func(a *App) {
 		a.description = description
@@ -137,17 +120,33 @@ func WithDefaultValidArgs() Option {
 	return func(a *App) {
 		a.args = func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
-				return fmt.Errorf("%q does not take any arguments, got %q", cmd.CommandPath(), args)
+				return fmt.Errorf("不允许输入参数:%v", args)
 			}
 			return nil
 		}
 	}
 }
 
-func NewApp(basename string, name string, opts ...Option) *App {
+type Option func(a *App)
+type RunFunc func(basename string) error
+
+type App struct {
+	basename    string
+	name        string
+	description string
+	options     CliOptions
+	cmd         *cobra.Command
+	runFunc     RunFunc
+	args        cobra.PositionalArgs
+	noVersion   bool
+	noConfig    bool
+	silence     bool
+}
+
+func NewApp(basename, name string, opts ...Option) *App {
 	app := &App{
 		basename: basename,
-		name:     "api server",
+		name:     name,
 	}
 	for _, o := range opts {
 		o(app)
@@ -157,8 +156,8 @@ func NewApp(basename string, name string, opts ...Option) *App {
 }
 
 func (a *App) buildCommand() {
-	cmd := cobra.Command{
-		Use:           a.basename,
+	cmd := &cobra.Command{
+		Use:           FormatBaseName(a.basename),
 		Short:         a.name,
 		Long:          a.description,
 		Example:       example,
@@ -168,6 +167,7 @@ func (a *App) buildCommand() {
 	}
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
+	cliFlag.InitFlags(cmd.Flags())
 
 	if a.runFunc != nil {
 		cmd.RunE = a.runCommand
@@ -180,89 +180,87 @@ func (a *App) buildCommand() {
 		for _, f := range namedFlagSets.FlagSets {
 			fs.AddFlagSet(f)
 		}
-
 	}
 
 	if !a.noVersion {
 		verflag.AddFlags(namedFlagSets.FlagSet("global"))
-		verflag.PrintAndExitIfRequested()
 	}
+	if !a.noConfig {
+		addConfigFlag(a.basename, namedFlagSets.FlagSet("global"))
+	}
+	globalflag.AddGlobalFlags(namedFlagSets.FlagSet("global"), a.basename)
 
-	a.cmd = &cmd
+	addCmdTemplete(cmd, &namedFlagSets)
+	a.cmd = cmd
 }
 
 func (a *App) runCommand(cmd *cobra.Command, args []string) error {
 	printWorkingDir()
-	cliFlag.PrintFlags(cmd.Flags())
-	if !a.noVersion {
-		verflag.PrintAndExitIfRequested()
-	}
-	if !a.noVersion {
+	cliFlag.PrintFlags(a.cmd.Flags())
+
+	if !a.noConfig {
 		if err := viper.BindPFlags(cmd.Flags()); err != nil {
 			return err
 		}
+
 		if err := viper.Unmarshal(a.options); err != nil {
 			return err
 		}
 	}
+
 	if !a.silence {
-		log.Infof("%vStarting %s", progressMessage, a.name)
 		if !a.noVersion {
-			log.Infof("%vVersion:%s", progressMessage, version.Get().ToJSON())
+			log.Infof("%v版本信息[%v]", progressMessage, version.Get().ToJSON())
 		}
 		if !a.noConfig {
-			log.Infof("%v Config file used:%s", progressMessage, viper.ConfigFileUsed())
-		}
-		if a.options != nil {
-			if err := a.applyOptionRules(); err != nil {
-				return err
-			}
+			log.Infof("%v配置文件[%v]", progressMessage, viper.ConfigFileUsed())
 		}
 
 	}
+
+	if a.options != nil {
+		if err := a.prepareOptions(); err != nil {
+			return err
+		}
+	}
+
 	if a.runFunc != nil {
 		return a.runFunc(a.basename)
 	}
-
 	return nil
 }
 
-func (a *App) applyOptionRules() error {
+func (a *App) prepareOptions() error {
+
 	if completeableOptions, ok := a.options.(CompleteableOptions); ok {
 		completeableOptions.Complete()
 	}
-	if errs := a.options.Validate(); len(errs) > 0 {
+
+	if errs := a.options.Validate(); errs != nil {
 		return errors.NewAggregate(errs)
 	}
 	if printableOptions, ok := a.options.(PrintableOptions); ok && !a.silence {
-		log.Infof("%v Config:%s", progressMessage, printableOptions.String())
+		log.Infof("%v配置文件[%v]:", progressMessage, printableOptions.String())
 	}
+
 	return nil
 }
 
 func printWorkingDir() {
 	wd, _ := os.Getwd()
-	log.Infof("%v当前工作目录:%s", progressMessage, wd)
+	log.Infof("%v当前工作目录[%v]", progressMessage, wd)
 }
 
-func addCmdTemplate(cmd *cobra.Command, namedFlagSets flag.NamedFlagSets) {
-	usageFmt := "Usage:\n  %s\n"
-	cols, _, _ := term.TerminalSize(cmd.OutOrStdout())
-	cmd.SetUsageFunc(func(cmd *cobra.Command) error {
-		fmt.Fprintf(cmd.OutOrStderr(), usageFmt, cmd.UseLine())
-		flag.PrintSections(cmd.OutOrStderr(), namedFlagSets, cols)
-
-		return nil
-	})
+func addCmdTemplete(cmd *cobra.Command, namedFlagSets *cliFlag.NamedFlagSets) {
+	col, _, _ := term.TerminalSize(cmd.OutOrStdout())
 	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		fmt.Fprintf(cmd.OutOrStdout(), "%s\n\n"+usageFmt, cmd.Long, cmd.UseLine())
-		flag.PrintSections(cmd.OutOrStdout(), namedFlagSets, cols)
+		cliFlag.PrintSections(cmd.OutOrStdout(), *namedFlagSets, col)
 	})
 }
 
 func (a *App) Run() {
 	if err := a.cmd.Execute(); err != nil {
-		fmt.Printf("%v %v", color.RedString("Error="), err)
+		fmt.Printf("%v %v", color.RedString("error="), err)
 		os.Exit(1)
 	}
 }

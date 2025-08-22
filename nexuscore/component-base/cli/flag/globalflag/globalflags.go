@@ -40,7 +40,7 @@ import (
 //   - name: 组件/命令名称，用于帮助信息的格式化
 func AddGlobalFlags(fs *pflag.FlagSet, name string) {
 	// 注册一个 "--help" 或 "-h" 标志，用于显示当前组件的帮助信息
-	fs.BoolP("help", "h", false, fmt.Sprintf("help for %s", name))
+	fs.BoolP("help", "h", false, fmt.Sprintf("帮助 %s", name))
 }
 
 // normalize 标准化标志名：将下划线 "_" 替换为连字符 "-"，
