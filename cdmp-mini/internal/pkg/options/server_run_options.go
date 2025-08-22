@@ -30,7 +30,7 @@ func (s *ServerRunOptions) Validate() []error {
 		"test":    {},
 		"release": {},
 	}
-	if _, ok := allowModes[s.Mode]; ok {
+	if _, ok := allowModes[s.Mode]; !ok {
 		errs = append(errs, fmt.Errorf("不支持mode输入:%s,输入必须在`debug,test,release`之间."))
 	}
 

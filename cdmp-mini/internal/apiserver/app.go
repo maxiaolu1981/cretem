@@ -1,6 +1,7 @@
 package apiserver
 
 import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/config"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/app"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -45,11 +46,11 @@ func run(opts *options.Options) app.RunFunc {
 	return func(basename string) error {
 		log.Init(opts.Log)
 		defer log.Flush()
-		//	cfg, err := config.CreateConfigFromOptions(opts)
-		//	if err != nil {
-		//		return err
-		//	}
-		//	return Run(cfg)
-		return nil
+		cfg, err := config.CreateConfigFromOptions(opts)
+		if err != nil {
+			return err
+		}
+		return Run(cfg)
+
 	}
 }
