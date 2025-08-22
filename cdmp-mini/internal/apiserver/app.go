@@ -34,8 +34,8 @@ run 函数返回一个 app.RunFunc 类型的回调函数，作为应用的核心
 func NewApp(basename string) *app.App {
 	opts := options.NewOptions()
 	application := app.NewApp(basename, "iam apiserver",
+		app.WithDescription(commandDesc),
 		app.WithOptions(opts),
-		app.WithDesriptions(commandDesc),
 		app.WithDefaultValidArgs(),
 		app.WithRunFunc(run(opts)),
 	)
@@ -50,7 +50,7 @@ func run(opts *options.Options) app.RunFunc {
 		if err != nil {
 			return err
 		}
+		log.Warnf("目前log.debug=%s", cfg.Options.Log.Level)
 		return Run(cfg)
-
 	}
 }

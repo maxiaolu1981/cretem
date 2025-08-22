@@ -18,6 +18,21 @@ import (
 	"github.com/spf13/viper"
 )
 
+const example = `  # 基础启动（使用默认配置）
+  iam-apiserver
+
+  # 配置MySQL和Redis连接
+  iam-apiserver --mysql-host=127.0.0.1 --mysql-port=3306 --redis-url=redis://localhost:6379
+
+  # 启用安全服务并设置GRPC端口
+  iam-apiserver --secure-serving-bind-port=443 --grpc-port=9000
+
+  # 调整日志级别并启用特定功能
+  iam-apiserver --logs-level=debug --features=enable-beta
+
+  # 查看所有配置项（按分组展示）
+  iam-server --help`
+
 var (
 	progressMessage = color.GreenString("==>")
 
@@ -63,80 +78,76 @@ type App struct {
 	basename    string
 	name        string
 	description string
-	commands    []Command
-	command     *cobra.Command
+	options     CliOptions
+	runFunc     RunFunc
+	commands    []*Command
 	args        cobra.PositionalArgs
+	cmd         *cobra.Command
+	silence     bool
 	noVersion   bool
 	noConfig    bool
-	silence     bool
-	runFunc     RunFunc
-	cmd         *cobra.Command
-	options     CliOptions
 }
 
 type RunFunc func(basename string) error
 type Option func(app *App)
 
-// 程序运行的主结构，对cobra进行进一步封装，用于构建命令行应用程序框架
-
-func WithDesriptions(desc string) Option {
-	return func(app *App) {
-		app.description = desc
+func WithDescription(description string) Option {
+	return func(a *App) {
+		a.description = description
 	}
 }
 
-func WithOptions(opts *options.Options) Option {
-	return func(app *App) {
-		app.options = opts
+func WithOptions(opt *options.Options) Option {
+	return func(a *App) {
+		a.options = opt
+	}
+}
+
+func WithRunFunc(runFunc RunFunc) Option {
+	return func(a *App) {
+		a.runFunc = runFunc
+	}
+}
+
+func WithSilence() Option {
+	return func(a *App) {
+		a.silence = true
+	}
+}
+
+func WithNoVersion() Option {
+	return func(a *App) {
+		a.noVersion = true
+	}
+}
+
+func WithNoConfig() Option {
+	return func(a *App) {
+		a.noConfig = true
+	}
+}
+
+func WithArgs(args cobra.PositionalArgs) Option {
+	return func(a *App) {
+		a.args = args
 	}
 }
 
 func WithDefaultValidArgs() Option {
-	return func(app *App) {
-		app.args = func(cmd *cobra.Command, args []string) error {
+	return func(a *App) {
+		a.args = func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
-				return fmt.Errorf("%s不允许存在参数", cmd.Name())
-
+				return fmt.Errorf("%q does not take any arguments, got %q", cmd.CommandPath(), args)
 			}
 			return nil
 		}
 	}
 }
 
-func WithRunFunc(runFunc RunFunc) Option {
-	return func(app *App) {
-		app.runFunc = runFunc
-	}
-}
-
-func WithSilence() Option {
-	return func(app *App) {
-		app.silence = true
-	}
-}
-
-func WithNoVersion() Option {
-	return func(app *App) {
-		app.noVersion = true
-	}
-}
-
-func WithNoConfig() Option {
-	return func(app *App) {
-		app.noConfig = true
-	}
-}
-
-func WithValidate(args cobra.PositionalArgs) Option {
-	return func(app *App) {
-		app.args = args
-	}
-}
-
-func NewApp(basename, name string, opts ...Option) *App {
+func NewApp(basename string, name string, opts ...Option) *App {
 	app := &App{
 		basename: basename,
-		name:     name,
+		name:     "api server",
 	}
 	for _, o := range opts {
 		o(app)
@@ -150,40 +161,33 @@ func (a *App) buildCommand() {
 		Use:           a.basename,
 		Short:         a.name,
 		Long:          a.description,
+		Example:       example,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          a.args,
 	}
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
-	cmd.Flags().SortFlags = true
-	cliFlag.InitFlags(cmd.Flags())
 
-	if len(a.commands) > 0 {
-		for _, command := range a.commands {
-			cmd.AddCommand(command.cobraCommand())
-		}
-		cmd.SetHelpCommand(helpCommand(FormatBaseName(a.basename)))
-	}
 	if a.runFunc != nil {
 		cmd.RunE = a.runCommand
 	}
 
 	var namedFlagSets cliFlag.NamedFlagSets
 	if a.options != nil {
+		namedFlagSets = a.options.Flags()
 		fs := cmd.Flags()
 		for _, f := range namedFlagSets.FlagSets {
 			fs.AddFlagSet(f)
 		}
+
 	}
+
 	if !a.noVersion {
 		verflag.AddFlags(namedFlagSets.FlagSet("global"))
+		verflag.PrintAndExitIfRequested()
 	}
-	if !a.noConfig {
-		addConfigFlag(a.basename, namedFlagSets.FlagSet("global"))
-	}
-	cmd.SetHelpCommand(helpCommand(cmd.Name()))
-	addCmdTemplate(&cmd, namedFlagSets)
+
 	a.cmd = &cmd
 }
 

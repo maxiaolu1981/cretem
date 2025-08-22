@@ -23,10 +23,9 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"os"
 	"sync"
 
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log/klog"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log/klog"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -96,7 +95,7 @@ type Logger interface {
 	Flush()
 }
 
-var _ Logger = &zapLogger{}
+//var _ Logger = &zapLogger{}
 
 // noopInfoLogger is a logr.InfoLogger that's always disabled, and does nothing.
 type noopInfoLogger struct{}
@@ -211,23 +210,22 @@ func Init(opts *Options) {
 	std = New(opts)
 }
 
-// New 创建日志器（修复正常日志文件输出）
+// New create logger by opts which can custmoized by command arguments.
 func New(opts *Options) *zapLogger {
 	if opts == nil {
 		opts = NewOptions()
 	}
 
-	// 1. 解析基础日志级别
-	var baseLevel zapcore.Level
-	if err := baseLevel.UnmarshalText([]byte(opts.Level)); err != nil {
-		baseLevel = zapcore.InfoLevel
+	var zapLevel zapcore.Level
+	if err := zapLevel.UnmarshalText([]byte(opts.Level)); err != nil {
+		zapLevel = zapcore.InfoLevel
 	}
-
-	// 2. 编码器配置（复用原有逻辑）
 	encodeLevel := zapcore.CapitalLevelEncoder
+	// when output to local path, with color is forbidden
 	if opts.Format == consoleFormat && opts.EnableColor {
 		encodeLevel = zapcore.CapitalColorLevelEncoder
 	}
+
 	encoderConfig := zapcore.EncoderConfig{
 		MessageKey:     "message",
 		LevelKey:       "level",
@@ -242,120 +240,37 @@ func New(opts *Options) *zapLogger {
 		EncodeCaller:   zapcore.ShortCallerEncoder,
 	}
 
-	// 3. 定义所有输出目标（关键：新增正常日志文件）
-	// 3.1 标准输出（所有级别都可能输出到这里）
-	stdoutSyncer := zapcore.AddSync(os.Stdout)
-
-	// 3.2 正常日志文件（INFO-WARN级别）
-	var normalFileSyncer zapcore.WriteSyncer
-	if len(opts.OutputPaths) > 0 {
-		// 从配置获取正常日志路径（如"app.log"）
-		normalFile, err := os.OpenFile(opts.OutputPaths[0], os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			panic(fmt.Sprintf("初始化正常日志文件失败: %v", err))
-		}
-		normalFileSyncer = zapcore.AddSync(normalFile)
-	} else {
-		// 默认正常日志文件
-		normalFile, err := os.OpenFile("app.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			panic(fmt.Sprintf("创建默认正常日志文件失败: %v", err))
-		}
-		normalFileSyncer = zapcore.AddSync(normalFile)
+	loggerConfig := &zap.Config{
+		Level:             zap.NewAtomicLevelAt(zapLevel),
+		Development:       opts.Development,
+		DisableCaller:     opts.DisableCaller,
+		DisableStacktrace: opts.DisableStacktrace,
+		Sampling: &zap.SamplingConfig{
+			Initial:    100,
+			Thereafter: 100,
+		},
+		Encoding:         opts.Format,
+		EncoderConfig:    encoderConfig,
+		OutputPaths:      opts.OutputPaths,
+		ErrorOutputPaths: opts.ErrorOutputPaths,
 	}
 
-	// 3.3 错误日志文件（ERROR及以上级别）
-	var errorFileSyncer zapcore.WriteSyncer
-	if len(opts.ErrorOutputPaths) > 0 {
-		errorFile, err := os.OpenFile(opts.ErrorOutputPaths[0], os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			panic(fmt.Sprintf("初始化错误日志文件失败: %v", err))
-		}
-		errorFileSyncer = zapcore.AddSync(errorFile)
-	} else {
-		errorFile, err := os.OpenFile("error.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			panic(fmt.Sprintf("创建默认错误日志文件失败: %v", err))
-		}
-		errorFileSyncer = zapcore.AddSync(errorFile)
+	var err error
+	l, err := loggerConfig.Build(zap.AddStacktrace(zapcore.PanicLevel), zap.AddCallerSkip(1))
+	if err != nil {
+		panic(err)
 	}
-
-	// 4. 创建编码器
-	var encoder zapcore.Encoder
-	if opts.Format == consoleFormat {
-		encoder = zapcore.NewConsoleEncoder(encoderConfig)
-	} else {
-		encoder = zapcore.NewJSONEncoder(encoderConfig)
-	}
-
-	// 5. 构建4个Core（关键修复）
-	// 5.1 正常日志到标准输出（INFO-WARN）
-	normalToStdoutCore := zapcore.NewCore(
-		encoder,
-		stdoutSyncer,
-		zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl >= baseLevel && lvl < zapcore.ErrorLevel
-		}),
-	)
-
-	// 5.2 正常日志到文件（INFO-WARN）
-	normalToFileCore := zapcore.NewCore(
-		encoder,
-		normalFileSyncer, // 输出到正常日志文件
-		zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl >= baseLevel && lvl < zapcore.ErrorLevel
-		}),
-	)
-
-	// 5.3 错误日志到标准输出（ERROR及以上）
-	errorToStdoutCore := zapcore.NewCore(
-		encoder,
-		stdoutSyncer,
-		zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl >= zapcore.ErrorLevel && lvl >= baseLevel
-		}),
-	)
-
-	// 5.4 错误日志到文件（ERROR及以上）
-	errorToFileCore := zapcore.NewCore(
-		encoder,
-		errorFileSyncer,
-		zap.LevelEnablerFunc(func(lvl zapcore.Level) bool {
-			return lvl >= zapcore.ErrorLevel && lvl >= baseLevel
-		}),
-	)
-
-	// 6. 组合所有Core（日志会分发到符合条件的所有Core）
-	combinedCore := zapcore.NewTee(
-		normalToStdoutCore, // 正常日志→标准输出
-		normalToFileCore,   // 正常日志→文件（新增，解决缺失问题）
-		errorToStdoutCore,  // 错误日志→标准输出
-		errorToFileCore,    // 错误日志→文件
-	)
-
-	// 7. 构建Logger（兼容不同Zap版本的开发模式）
-	var options []zap.Option
-	options = append(options,
-		zap.AddStacktrace(zapcore.PanicLevel),
-		zap.AddCallerSkip(1),
-	)
-	if opts.Development {
-		// 兼容旧版本Zap的开发模式配置
-		options = append(options, zap.AddCaller(), zap.AddStacktrace(zapcore.ErrorLevel))
-	}
-	l := zap.New(combinedCore, options...)
-
-	// 8. 初始化关联组件
-	klog.InitLogger(l)
-	zap.RedirectStdLog(l)
-
-	return &zapLogger{
+	logger := &zapLogger{
 		zapLogger: l.Named(opts.Name),
 		infoLogger: infoLogger{
 			log:   l,
-			level: baseLevel,
+			level: zap.InfoLevel,
 		},
 	}
+	klog.InitLogger(l)
+	zap.RedirectStdLog(l)
+
+	return logger
 }
 
 // SugaredLogger returns global sugared logger.
@@ -413,9 +328,9 @@ func (l *zapLogger) Write(p []byte) (n int, err error) {
 func WithValues(keysAndValues ...interface{}) Logger { return std.WithValues(keysAndValues...) }
 
 func (l *zapLogger) WithValues(keysAndValues ...interface{}) Logger {
-	newLogger := l.zapLogger.With(handleFields(l.zapLogger, keysAndValues)...)
-
-	return NewLogger(newLogger)
+	//newLogger := l.zapLogger.With(handleFields(l.zapLogger, keysAndValues)...)
+	return nil
+	//return NewLogger(newLogger)
 }
 
 // WithName adds a new path segment to the logger's name. Segments are joined by
@@ -423,9 +338,9 @@ func (l *zapLogger) WithValues(keysAndValues ...interface{}) Logger {
 func WithName(s string) Logger { return std.WithName(s) }
 
 func (l *zapLogger) WithName(name string) Logger {
-	newLogger := l.zapLogger.Named(name)
-
-	return NewLogger(newLogger)
+	//newLogger := l.zapLogger.Named(name)
+	return nil
+	//return NewLogger(newLogger)
 }
 
 // Flush calls the underlying Core's Sync method, flushing any buffered
@@ -437,6 +352,7 @@ func (l *zapLogger) Flush() {
 }
 
 // NewLogger creates a new logr.Logger using the given Zap Logger to log.
+/*
 func NewLogger(l *zap.Logger) Logger {
 	return &zapLogger{
 		zapLogger: l,
@@ -446,7 +362,7 @@ func NewLogger(l *zap.Logger) Logger {
 		},
 	}
 }
-
+*/
 // ZapLogger used for other log wrapper such as klog.
 func ZapLogger() *zap.Logger {
 	return std.zapLogger

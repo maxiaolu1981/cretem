@@ -1,22 +1,3 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 // Package version
 // version.go
 //
@@ -27,6 +8,7 @@ package version
 
 import (
 	"fmt"
+	"os"
 	"runtime"
 
 	"github.com/gosuri/uitable" // 用于创建格式化的表格输出
@@ -101,5 +83,19 @@ func Get() Info {
 		GoVersion:    runtime.Version(),                                  // 从Go运行时获取编译版本（如 go1.21.0）
 		Compiler:     runtime.Compiler,                                   // 从Go运行时获取编译器（通常为 "gc"）
 		Platform:     fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH), // 构建目标平台（如 linux/amd64）
+	}
+}
+
+func CheckVersionAndExit() {
+	for _, arg := range os.Args {
+		switch {
+		case arg == "--version" || arg == "--version=true":
+			version, _ := Get().Text()
+			println(string(version))
+			os.Exit(0)
+		case arg == "--version=raw":
+			println(Get().ToJSON()) // 输出JSON格式
+			os.Exit(0)
+		}
 	}
 }

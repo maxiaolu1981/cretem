@@ -107,6 +107,7 @@ func AddFlags(fs *flag.FlagSet) {
 // 2. 若标志为VersionTrue → 打印人类可读的版本信息
 // 3. 打印完成后调用os.Exit(0)退出程序
 func PrintAndExitIfRequested() {
+
 	if *versionFlag == VersionRaw {
 		fmt.Printf("%#v\n", version.Get()) // 原始格式（适合机器解析）
 		os.Exit(0)

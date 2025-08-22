@@ -7,11 +7,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	ginprometheus "github.com/zsais/go-gin-prometheus"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
-	"github.com/maxiaolu1981/cretem/nexuscore/log"
 )
 
 type GenericAPIServer struct {
@@ -25,7 +25,7 @@ type GenericAPIServer struct {
 }
 
 func initGenericAPIServer(s *GenericAPIServer) {
-	//	s.Setup()
+	s.setup()
 	s.InstallMiddlewares()
 	s.InstallAPIs()
 }
