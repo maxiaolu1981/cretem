@@ -50,7 +50,6 @@ func run(opts *options.Options) app.RunFunc {
 		if err != nil {
 			return err
 		}
-		log.Warnf("目前log.level=%s", cfg.Options.Log.Level)
 		return Run(cfg)
 	}
 }

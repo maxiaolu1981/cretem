@@ -28,7 +28,7 @@ Run()：启动服务器的核心方法，实际执行：
 func Run(cfg *config.Config) error {
 	server, err := createApiServer(cfg)
 	if err != nil {
-		return err
+		return nil
 	}
 	return server.PrepareRun().Run()
 }
