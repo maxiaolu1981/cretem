@@ -5,99 +5,100 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+
 	"strings"
 	"time"
 
 	"github.com/gin-contrib/pprof"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
-	ginprometheus "github.com/zsais/go-gin-prometheus"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
+	ginprometheus "github.com/zsais/go-gin-prometheus"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type GenericAPIServer struct {
-	middlewares         []string
 	InsecureServingInfo *InsecureServingInfo
-	healthz             bool
+	Jwt                 *JwtInfo
 	*gin.Engine
-	insecureServer  *http.Server
-	enableProfiling bool
-	enableMetrics   bool
+	InsecureServer  *http.Server
+	Mode            string
+	EnableProfiling bool
+	EnableMetrics   bool
+	Healthz         bool
+	Middlewares     []string
 }
 
 func initGenericAPIServer(s *GenericAPIServer) {
-	s.setup()
-	s.InstallMiddlewares()
+	s.Setup()
+	s.InstallMiddles()
 	s.InstallAPIs()
 }
 
-// ）设置路由调试日志
-func (s *GenericAPIServer) setup() {
+func (s *GenericAPIServer) Setup() {
 	gin.DebugPrintRouteFunc = func(httpMethod, absolutePath, handlerName string, nuHandlers int) {
-		log.Infof("%-6s %s --> %s(%d handlers)", httpMethod, absolutePath, handlerName, nuHandlers)
+		log.Infof("%-6s %-s==> %s %d(handers)", httpMethod, absolutePath, handlerName, nuHandlers)
 	}
 }
 
-func (s *GenericAPIServer) InstallMiddlewares() {
+func (s *GenericAPIServer) InstallMiddles() {
 	s.Use(middleware.RequestID())
 	s.Use(middleware.Context())
 
-	for _, m := range s.middlewares {
-		mw, ok := middleware.Middlewares[m]
+	for _, mw := range s.Middlewares {
+		m, ok := middleware.Middlewares[mw]
 		if !ok {
-			log.Warnf("找不到中间件:%s", m)
+			log.Warnf("安装中间件失败.%s", m)
 			continue
 		}
-		log.Infof("安装中间件%s", m)
-		s.Use(mw)
+		log.Infof("安装中间件成功%s", m)
+		s.Use(m)
 	}
-
 }
 
 func (s *GenericAPIServer) InstallAPIs() {
-	if s.healthz {
-		s.GET("/healthz", func(c *gin.Context) {
-			core.WriteResponse(c, nil, map[string]string{"status": "ok"})
+	if s.Healthz {
+		s.GET("/healthz", func(ctx *gin.Context) {
+			core.WriteResponse(ctx, nil, map[string]string{"status": "ok"})
 		})
 	}
-	if s.enableMetrics {
+	if s.EnableProfiling {
 		prometheus := ginprometheus.NewPrometheus("gin")
 		prometheus.Use(s.Engine)
 	}
-
-	if s.enableProfiling {
-		pprof.Register(s.Engine)
+	if s.EnableMetrics {
+		pprof.Register(s)
 	}
-
-	s.GET("/version", func(c *gin.Context) {
-		core.WriteResponse(c, nil, version.Get())
+	s.GET("/version", func(ctx *gin.Context) {
+		core.WriteResponse(ctx, nil, version.Get())
 	})
-
 }
 
 func (s *GenericAPIServer) Run() error {
-	s.insecureServer = &http.Server{
-		Addr:    s.insecureServer.Addr,
-		Handler: s,
+	s.InsecureServer = &http.Server{
+		Handler:        s,
+		Addr:           s.InsecureServingInfo.Address,
+		ReadTimeout:    10 * time.Second,
+		WriteTimeout:   30 * time.Second,
+		MaxHeaderBytes: 1 << 20,
 	}
 	var eg errgroup.Group
 	eg.Go(func() error {
-		log.Infof("开始启动http服务器,地址%s", s.InsecureServingInfo.Address)
-		if err := s.insecureServer.ListenAndServe(); err != nil && errors.Is(err, http.ErrServerClosed) {
-			log.Fatal(err.Error())
+		log.Infof("开始启动api服务在端口:%s", s.InsecureServingInfo.Address)
+		if err := s.InsecureServer.ListenAndServe(); err != nil && errors.Is(err, http.ErrServerClosed) {
+			log.Fatalf("api服务在%s启动失败", err.Error())
 			return err
 		}
-		log.Infof("server on %s stoped", s.InsecureServingInfo.Address)
+		log.Infof("停止服务器在%s", s.InsecureServingInfo.Address)
 		return nil
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if s.healthz {
+	ctx, canel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer canel()
+	if s.Healthz {
 		if err := s.ping(ctx); err != nil {
 			return err
 		}
@@ -107,10 +108,11 @@ func (s *GenericAPIServer) Run() error {
 	}
 	return nil
 }
+
 func (s *GenericAPIServer) ping(ctx context.Context) error {
-	url := fmt.Sprintf("http://%s/healthz", s.insecureServer.Addr)
+	url := fmt.Sprintf("http://%s/healthz", s.InsecureServer.Addr)
 	if strings.Contains(url, "0.0.0.0") {
-		url = fmt.Sprintf("http://127.0.0.1:%s/healthz", strings.Split(s.insecureServer.Addr, ":")[1])
+		url = fmt.Sprintf("http://1271.0.0.1:%s/healthz", strings.Split(s.InsecureServer.Addr, ":")[1])
 	}
 	for {
 		requ, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -119,16 +121,19 @@ func (s *GenericAPIServer) ping(ctx context.Context) error {
 		}
 		resp, err := http.DefaultClient.Do(requ)
 		if err == nil && resp.StatusCode == http.StatusOK {
-			log.Info("路由器已经正确部署.")
+			log.Info("路由已经正确部署")
 			resp.Body.Close()
 			return nil
 		}
-		log.Info("等待服务器路由部署,等待一秒钟")
+		log.Info("等待路由部署,1秒钟重试")
 		time.Sleep(1 * time.Second)
+
 		select {
 		case <-ctx.Done():
-			log.Fatal("在指定时间内无法联系服务器")
+			log.Fatal("不能连接到服务器")
 		default:
 		}
+
 	}
+
 }

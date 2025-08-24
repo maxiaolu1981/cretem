@@ -4,14 +4,13 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
-
 	"github.com/fatih/color"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag/globalflag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/term"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version/verflag"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/cobra"
@@ -74,73 +73,70 @@ Use "%s --help" for more information about a command.{{end}}
 	)
 )
 
+type App struct {
+	basename   string
+	name       string
+	desription string
+	options    CliOptions
+	noVersion  bool
+	noConfig   bool
+	silence    bool
+	cmd        *cobra.Command
+	runFunc    RunFunc
+	args       cobra.PositionalArgs
+}
+
 func WithDescription(description string) Option {
-	return func(a *App) {
-		a.description = description
+	return func(app *App) {
+		app.desription = description
 	}
 }
-
-func WithOptions(opt *options.Options) Option {
-	return func(a *App) {
-		a.options = opt
-	}
-}
-
-func WithRunFunc(runFunc RunFunc) Option {
-	return func(a *App) {
-		a.runFunc = runFunc
-	}
-}
-
-func WithSilence() Option {
-	return func(a *App) {
-		a.silence = true
-	}
-}
-
-func WithNoVersion() Option {
-	return func(a *App) {
-		a.noVersion = true
-	}
-}
-
-func WithNoConfig() Option {
-	return func(a *App) {
-		a.noConfig = true
-	}
-}
-
-func WithArgs(args cobra.PositionalArgs) Option {
-	return func(a *App) {
-		a.args = args
+func WithOptions(opts *options.Options) Option {
+	return func(app *App) {
+		app.options = opts
 	}
 }
 
 func WithDefaultValidArgs() Option {
-	return func(a *App) {
-		a.args = func(cmd *cobra.Command, args []string) error {
+	return func(app *App) {
+
+		app.args = func(cmd *cobra.Command, args []string) error {
 			if len(args) > 0 {
-				return fmt.Errorf("不允许输入参数:%v", args)
+				return fmt.Errorf("不允许输入任何参数.")
 			}
 			return nil
 		}
 	}
 }
 
-type Option func(a *App)
-type RunFunc func(basename string) error
+func WithNoVersion() Option {
+	return func(app *App) {
+		app.noVersion = true
+	}
+}
 
-type App struct {
-	basename    string
-	name        string
-	description string
-	options     CliOptions
-	cmd         *cobra.Command
-	runFunc     RunFunc
-	args        cobra.PositionalArgs
-	noVersion   bool
-	noConfig    bool
-	silence     bool
+func WithValidArgs(args cobra.PositionalArgs) Option {
+	return func(app *App) {
+		app.args = args
+	}
+}
+
+func WithNoConfig() Option {
+	return func(app *App) {
+		app.noConfig = true
+	}
+}
+
+func WithNoSilence() Option {
+	return func(app *App) {
+		app.silence = true
+	}
+}
+
+func WithRunFunc(runFunc RunFunc) Option {
+	return func(app *App) {
+		app.runFunc = runFunc
+	}
 }
 
 func NewApp(basename, name string, opts ...Option) *App {
@@ -155,112 +151,114 @@ func NewApp(basename, name string, opts ...Option) *App {
 	return app
 }
 
-func (a *App) buildCommand() {
+func (app *App) buildCommand() {
 	cmd := &cobra.Command{
-		Use:           FormatBaseName(a.basename),
-		Short:         a.name,
-		Long:          a.description,
-		Example:       example,
+		Use:           app.basename,
+		Short:         app.name,
+		Long:          app.desription,
+		Args:          app.args,
 		SilenceUsage:  true,
 		SilenceErrors: true,
-		Args:          a.args,
 	}
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
+	cmd.Flags().SortFlags = true
 	cliFlag.InitFlags(cmd.Flags())
 
-	if a.runFunc != nil {
-		cmd.RunE = a.runCommand
-	}
-
 	var namedFlagSets cliFlag.NamedFlagSets
-	if a.options != nil {
-		namedFlagSets = a.options.Flags()
+	if app.options != nil {
+		namedFlagSets = app.options.Flags()
 		fs := cmd.Flags()
 		for _, f := range namedFlagSets.FlagSets {
 			fs.AddFlagSet(f)
 		}
 	}
-
-	if !a.noVersion {
+	if !app.noVersion {
 		verflag.AddFlags(namedFlagSets.FlagSet("global"))
-	}
-	if !a.noConfig {
-		addConfigFlag(a.basename, namedFlagSets.FlagSet("global"))
-	}
-	globalflag.AddGlobalFlags(namedFlagSets.FlagSet("global"), a.basename)
 
-	addCmdTemplete(cmd, &namedFlagSets)
-	a.cmd = cmd
+	}
+	if !app.noConfig {
+		addConfigFlag(app.basename, namedFlagSets.FlagSet("global"))
+	}
+
+	globalflag.AddGlobalFlags(namedFlagSets.FlagSet("global"), cmd.Name())
+
+	addCmdTemplate(cmd, &namedFlagSets)
+
+	if app.runFunc != nil {
+		cmd.RunE = app.runCommand
+	}
+	app.cmd = cmd
 }
 
-func (a *App) runCommand(cmd *cobra.Command, args []string) error {
+func addCmdTemplate(cmd *cobra.Command, fss *cliFlag.NamedFlagSets) {
+	col, _, _ := term.TerminalSize(cmd.OutOrStdout())
+	cmd.SetHelpFunc(func(c *cobra.Command, s []string) {
+		cliFlag.PrintSections(cmd.OutOrStdout(), *fss, col)
+	})
+}
+
+func (app *App) runCommand(cmd *cobra.Command, args []string) error {
 	printWorkingDir()
-	cliFlag.PrintFlags(a.cmd.Flags())
+	cliFlag.PrintFlags(cmd.Flags())
 
-	if !a.noConfig {
-		if err := viper.BindPFlags(cmd.Flags()); err != nil {
+	if !app.noConfig {
+		err := viper.BindPFlags(cmd.Flags())
+		if err != nil {
 			return err
 		}
-
-		if err := viper.Unmarshal(a.options); err != nil {
-			return err
-		}
-	}
-
-	if !a.silence {
-		if !a.noVersion {
-			log.Infof("%v版本信息[%v]", progressMessage, version.Get().ToJSON())
-		}
-		if !a.noConfig {
-			log.Infof("%v配置文件[%v]", progressMessage, viper.ConfigFileUsed())
-		}
-
-	}
-
-	if a.options != nil {
-		if err := a.prepareOptions(); err != nil {
+		err = viper.Unmarshal(app.options)
+		if err != nil {
 			return err
 		}
 	}
 
-	if a.runFunc != nil {
-		return a.runFunc(a.basename)
+	if !app.silence {
+		log.Infof("%v 开始 %s....", progressMessage, app.name)
+		if !app.noConfig {
+			printConfig()
+		}
+		if !app.noVersion {
+			version.Get().PrintVersionWithLog()
+		}
+
+		fmt.Printf("%v打印Options....%s", progressMessage, app.options)
+
+	}
+
+	if app.options != nil {
+		if err := app.applyOptionRules(); err != nil {
+			return err
+		}
+	}
+
+	if app.runFunc != nil {
+		app.runFunc(app.basename)
 	}
 	return nil
 }
 
-func (a *App) prepareOptions() error {
-
-	if completeableOptions, ok := a.options.(CompleteableOptions); ok {
-		completeableOptions.Complete()
+func (app *App) applyOptionRules() error {
+	if completeableOptions, ok := app.options.(CompleteableOptions); ok {
+		if err := completeableOptions.Complete(); err != nil {
+			return err
+		}
 	}
-
-	if errs := a.options.Validate(); errs != nil {
+	if errs := app.options.Validate(); errs != nil {
 		return errors.NewAggregate(errs)
 	}
-	if printableOptions, ok := a.options.(PrintableOptions); ok && !a.silence {
-		log.Infof("%v配置文件[%v]:", progressMessage, printableOptions.String())
-	}
-
 	return nil
 }
 
 func printWorkingDir() {
-	wd, _ := os.Getwd()
-	log.Infof("%v当前工作目录[%v]", progressMessage, wd)
+	pwd, _ := os.Getwd()
+	log.Infof("%v当前工作目录:%s", progressMessage, pwd)
 }
 
-func addCmdTemplete(cmd *cobra.Command, namedFlagSets *cliFlag.NamedFlagSets) {
-	col, _, _ := term.TerminalSize(cmd.OutOrStdout())
-	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
-		cliFlag.PrintSections(cmd.OutOrStdout(), *namedFlagSets, col)
-	})
-}
-
-func (a *App) Run() {
-	if err := a.cmd.Execute(); err != nil {
-		fmt.Printf("%v %v", color.RedString("error="), err)
+func (app *App) Run() error {
+	if err := app.cmd.Execute(); err != nil {
+		fmt.Printf("%v %v", color.RedString("错误="), err.Error())
 		os.Exit(1)
 	}
+	return nil
 }

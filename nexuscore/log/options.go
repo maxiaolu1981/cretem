@@ -68,7 +68,7 @@ type Options struct {
 // 创建带有默认值的配置实例
 func NewOptions() *Options {
 	return &Options{
-		Level:            zapcore.DebugLevel.String(),
+		Level:            zapcore.InfoLevel.String(),
 		Format:           consoleFormat,
 		EnableColor:      false,
 		EnableCaller:     false,

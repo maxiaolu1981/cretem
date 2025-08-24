@@ -31,7 +31,7 @@ func NewInsecureServingOptions() *InsecureServingOptions {
 
 // ApplyTo applies the run options to the method receiver and returns self.
 func (s *InsecureServingOptions) ApplyTo(c *server.Config) error {
-	c.InsecureServingInfo = &server.InsecureServingInfo{
+	c.InsecureServing = &server.InsecureServingInfo{
 		Address: net.JoinHostPort(s.BindAddress, strconv.Itoa(s.BindPort)),
 	}
 

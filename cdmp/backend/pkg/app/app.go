@@ -280,7 +280,7 @@ func (a *App) runCommand(cmd *cobra.Command, args []string) error {
 	if !a.silence {
 		log.Infof("%v Starting %s ...", progressMessage, a.name)
 		if !a.noVersion {
-			log.Infof("%v Version: `%s`", progressMessage, version.Get().ToJSON()) // 打印版本信息
+			version.Get().PrintVersionWithLog()
 		}
 		if !a.noConfig {
 			log.Infof("%v Config file used: `%s`", progressMessage, viper.ConfigFileUsed()) // 打印使用的配置文件

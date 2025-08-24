@@ -32,7 +32,7 @@ func installContorller(g *gin.Engine) *gin.Engine {
 	auto := newAutoAuth()
 
 	g.NoRoute(auto.AuthFunc(), func(c *gin.Context) {
-		core.WriteResponse(c, errors.WithCode(code.ErrPageNotFound, "page not found"), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrPageNotFound, "路由注册失败"), nil)
 	})
 	storeIns, _ := mysql.GetMySQLFactoryOr(nil)
 	v1 := g.Group("/v1")

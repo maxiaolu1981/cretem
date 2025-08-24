@@ -129,8 +129,11 @@ func (s *GenericAPIServer) InstallMiddlewares() {
 func (s *GenericAPIServer) Run() error {
 	// 初始化 HTTP 服务器（非安全）
 	s.insecureServer = &http.Server{
-		Addr:    s.InsecureServingInfo.Address, // 绑定的地址（如 "0.0.0.0:8080"）
-		Handler: s,                             // 处理请求的处理器（即当前 GenericAPIServer，继承自 Gin.Engine）
+		Addr:           s.InsecureServingInfo.Address, // 绑定的地址（如 "0.0.0.0:8080"）
+		Handler:        s,                             // 处理请求的处理器（即当前 GenericAPIServer，继承自 Gin.Engine）
+		ReadTimeout:    10 * time.Second,              //限制从客户端建立连接到服务器读完整个请求（包括请求体） 的最大时间，防止恶意客户端长时间保持连接不发送数据，耗尽服务器资源。
+		WriteTimeout:   30 * time.Second,              //限制从服务器读完请求到发送完整个响应（包括响应体） 的最大时间，防止处理耗时过长的请求阻塞服务器（如复杂计算、慢查询导致的响应延迟）。
+		MaxHeaderBytes: 1 << 20,                       //限制 HTTP 请求头的总大小，防止恶意客户端发送超大请求头（如 Cookie、自定义头）导致内存溢出或 DoS 攻击。
 	}
 
 	// 初始化 HTTPS 服务器（安全）

@@ -33,13 +33,13 @@ run 函数返回一个 app.RunFunc 类型的回调函数，作为应用的核心
 
 func NewApp(basename string) *app.App {
 	opts := options.NewOptions()
-	application := app.NewApp(basename, "iam apiserver",
+	app := app.NewApp(basename, "iam apiserver",
 		app.WithDescription(commandDesc),
 		app.WithOptions(opts),
 		app.WithDefaultValidArgs(),
 		app.WithRunFunc(run(opts)),
 	)
-	return application
+	return app
 }
 
 func run(opts *options.Options) app.RunFunc {

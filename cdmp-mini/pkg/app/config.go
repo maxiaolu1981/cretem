@@ -99,6 +99,7 @@ func printConfig() {
 
 		fmt.Printf("%v", table) // 打印表格
 	}
+	fmt.Println()
 }
 
 /*

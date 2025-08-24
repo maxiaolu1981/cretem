@@ -6,20 +6,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type Config struct {
-	Mode                string
-	InsecureServingInfo *InsecureServingInfo
-	Healthz             bool
-	EnableProfiling     bool
-	EnableMetrics       bool
-	Middlewares         []string
-	Jwt                 *JwtInfo
-}
-
-func (c *Config) Complete() CompletedConfig {
-	return CompletedConfig{c}
-}
-
 type JwtInfo struct {
 	Realm      string
 	Key        string
@@ -27,39 +13,52 @@ type JwtInfo struct {
 	MaxRefresh time.Duration
 }
 
+type InsecureServingInfo struct {
+	Address string
+}
+
+type Config struct {
+	InsecureServing *InsecureServingInfo
+	Jwt             *JwtInfo
+	Mode            string
+	EnableMetrics   bool
+	EnableProfiling bool
+	Healthz         bool
+	Middlewares     []string
+}
+
 func NewConfig() *Config {
 	return &Config{
 		Mode:            gin.ReleaseMode,
-		Middlewares:     []string{},
-		Healthz:         true,
-		EnableProfiling: true,
 		EnableMetrics:   true,
+		EnableProfiling: true,
 		Jwt: &JwtInfo{
-			Realm:      "iam-server",
+			Realm:      "iam jwt",
 			Timeout:    1 * time.Hour,
 			MaxRefresh: 1 * time.Hour,
 		},
+		Healthz: true,
 	}
 }
 
-type CompletedConfig struct {
+func (c *Config) Complete() CompleteConfig {
+	return CompleteConfig{c}
+}
+
+type CompleteConfig struct {
 	*Config
 }
 
-func (c CompletedConfig) New() (*GenericAPIServer, error) {
+func (c CompleteConfig) New() (*GenericAPIServer, error) {
 	gin.SetMode(c.Mode)
 	s := &GenericAPIServer{
-		InsecureServingInfo: c.InsecureServingInfo,
-		healthz:             c.Healthz,
-		middlewares:         c.Middlewares,
-		enableProfiling:     c.EnableProfiling,
-		enableMetrics:       c.EnableMetrics,
+		EnableProfiling:     c.EnableProfiling,
+		InsecureServingInfo: c.InsecureServing,
+		EnableMetrics:       c.EnableMetrics,
+		Healthz:             c.Healthz,
+		Middlewares:         c.Middlewares,
 		Engine:              gin.New(),
 	}
 	initGenericAPIServer(s)
 	return s, nil
-}
-
-type InsecureServingInfo struct {
-	Address string
 }
