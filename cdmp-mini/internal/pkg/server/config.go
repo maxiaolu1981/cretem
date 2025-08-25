@@ -6,59 +6,64 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type JwtInfo struct {
+type InsecureServingInfo struct {
+	BindAddress string
+	BindPort    int
+}
+
+type jwtInfo struct {
 	Realm      string
 	Key        string
 	Timeout    time.Duration
 	MaxRefresh time.Duration
 }
 
-type InsecureServingInfo struct {
-	Address string
-}
-
 type Config struct {
-	InsecureServing *InsecureServingInfo
-	Jwt             *JwtInfo
-	Mode            string
-	EnableMetrics   bool
-	EnableProfiling bool
-	Healthz         bool
-	Middlewares     []string
+	InsecureServingInfo *InsecureServingInfo
+	Mode                string
+	EnableProfiling     bool
+	EnableMetrics       bool
+	Middlewares         []string
+	Healthz             bool
+	Jwt                 *jwtInfo
 }
 
 func NewConfig() *Config {
 	return &Config{
 		Mode:            gin.ReleaseMode,
-		EnableMetrics:   true,
+		Healthz:         true,
 		EnableProfiling: true,
-		Jwt: &JwtInfo{
+		EnableMetrics:   true,
+		Middlewares:     []string{},
+		Jwt: &jwtInfo{
 			Realm:      "iam jwt",
-			Timeout:    1 * time.Hour,
-			MaxRefresh: 1 * time.Hour,
+			Timeout:    1 * time.Second,
+			MaxRefresh: 1 * time.Second,
 		},
-		Healthz: true,
 	}
-}
-
-func (c *Config) Complete() CompleteConfig {
-	return CompleteConfig{c}
 }
 
 type CompleteConfig struct {
 	*Config
 }
 
-func (c CompleteConfig) New() (*GenericAPIServer, error) {
+func (c *Config) Complete() *CompleteConfig {
+	return &CompleteConfig{c}
+}
+
+func (c *CompleteConfig) New() (*GenericAPIServer, error) {
 	gin.SetMode(c.Mode)
-	s := &GenericAPIServer{
-		EnableProfiling:     c.EnableProfiling,
-		InsecureServingInfo: c.InsecureServing,
-		EnableMetrics:       c.EnableMetrics,
-		Healthz:             c.Healthz,
-		Middlewares:         c.Middlewares,
+	genericAPIServer := &GenericAPIServer{
+		middlewares:         c.Middlewares,
+		healthz:             c.Healthz,
+		enableMetrics:       c.EnableMetrics,
+		enableProfiling:     c.EnableProfiling,
+		insecureServingInfo: c.InsecureServingInfo,
 		Engine:              gin.New(),
 	}
-	initGenericAPIServer(s)
-	return s, nil
+	err := initGenericAPIServer(genericAPIServer)
+	if err != nil {
+		return nil, err
+	}
+	return genericAPIServer, nil
 }

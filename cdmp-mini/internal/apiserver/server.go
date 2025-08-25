@@ -7,50 +7,49 @@ import (
 	genericapiserver "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
 )
 
-type apiserver struct {
+type apiServer struct {
 	genericapiserver *genericapiserver.GenericAPIServer
 }
-type prepareAPIServer struct {
-	*apiserver
+
+type preparedAPIServer struct {
+	*apiServer
 }
 
-func (a *apiserver) prepareRun() prepareAPIServer {
+func (a *apiServer) PrepareRun() preparedAPIServer {
 	initRouter(a.genericapiserver.Engine)
-	return prepareAPIServer{a}
+	return preparedAPIServer{a}
 }
 
-func (p prepareAPIServer) Run() error {
+func (p preparedAPIServer) Run() error {
 	return p.genericapiserver.Run()
 }
 
-func createAPIServer(cfg *config.Config) (*apiserver, error) {
+func createAPIServer(cfg *config.Config) (*apiServer, error) {
 	storeIns, err := mysql.GetMySQLFactoryOr(cfg.MySQLOptions)
 	if err != nil {
 		return nil, err
 	}
 	store.SetClient(storeIns)
 
-	genericapiserverConfig, err := buildGenericConfig(cfg)
+	genericServerConig, err := buildGenericConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
-	genericapiserver, err := genericapiserverConfig.Complete().New()
+	genericAPIServer, err := genericServerConig.Complete().New()
 	if err != nil {
 		return nil, err
 	}
-	server := &apiserver{
-		genericapiserver: genericapiserver,
+	apiServer := &apiServer{
+		genericapiserver: genericAPIServer,
 	}
-	return server, nil
+	return apiServer, nil
 }
 
-func buildGenericConfig(cfg *config.Config) (genericConfig *genericapiserver.Config, lasterr error) {
+func buildGenericConfig(cfg *config.Config) (genericConfig *genericapiserver.Config, lastErr error) {
 	genericConfig = genericapiserver.NewConfig()
-	if lasterr = cfg.GenericServerRunOptions.ApplyTo(genericConfig); lasterr != nil {
-		return
-	}
-	if lasterr = cfg.InsecureServing.ApplyTo(genericConfig); lasterr != nil {
+	if lastErr = cfg.InsecureServing.ApplyTo(genericConfig); lastErr != nil {
 		return
 	}
 	return
+
 }
