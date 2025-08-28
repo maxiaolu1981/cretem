@@ -4,35 +4,23 @@
 核心结构
 1. InsecureServingInfo
 处理非安全HTTP服务的配置：
-
 # BindAddress - 绑定地址
-
 # BindPort - 绑定端口
 
 2. jwtInfo
 JWT 认证配置：
-
 # Realm - JWT 领域名称
-
 # Key - JWT 密钥
-
 # Timeout - JWT 超时时间
-
 # MaxRefresh - 最大刷新时间
 
 3. Config
 主配置结构，包含：
-
 服务器模式（Mode）
-
 性能分析开关（EnableProfiling）
-
 指标收集开关（EnableMetrics）
-
 中间件列表（Middlewares）
-
 健康检查开关（Healthz）
-
 JWT 配置（Jwt）
 
 服务配置（InsecureServingInfo）

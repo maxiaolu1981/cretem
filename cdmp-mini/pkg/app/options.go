@@ -106,7 +106,7 @@ import (
 
 // 命令行选项接口
 type CliOptions interface {
-	Flags() *cliFlag.NamedFlagSets
+	Flags() cliFlag.NamedFlagSets
 	Validate() []error
 }
 

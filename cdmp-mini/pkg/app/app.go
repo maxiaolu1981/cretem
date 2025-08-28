@@ -117,6 +117,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 
 	"github.com/spf13/cobra"
@@ -267,14 +268,14 @@ func (a *App) buildCommand() {
 	if a.runFunc != nil {
 		cmd.RunE = a.runCommand
 	}
+	var namedFlagSets cliFlag.NamedFlagSets
 	if a.options != nil {
-		namedFlagSets := a.options.Flags()
+		namedFlagSets = a.options.Flags()
 		fs := cmd.Flags()
 		for _, fss := range namedFlagSets.FlagSets {
 			fs.AddFlagSet(fss)
 		}
 	}
-
 	a.command = cmd
 }
 

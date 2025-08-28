@@ -47,13 +47,18 @@ func (s *InsecureServingOptions) ApplyTo(c *server.Config) error
 
 使用场景
 适用于需要提供不加密、无认证的 HTTP 服务的内部应用或开发环境，生产环境建议使用安全的 HTTPS 服务。
-
+原始配置 → Complete()（补全默认值） → Validate()（验证合法性） → ApplyTo(target)（应用到目标） → 目标生效。
 
 */
 
 package options
 
 import (
+	"net"
+	"strconv"
+
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/pflag"
 )
 
@@ -71,4 +76,25 @@ func NewInsecureServingOptions() *InsecureServingOptions {
 
 func (i *InsecureServingOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVarP(&i.BindAddress, "insecure.bind-address", "b", i.BindAddress, "用于监听 --insecure.bind-port（不安全绑定端口）的 IP 地址（若需监听所有 IPv4 接口，设为 0.0.0.0；若需监听所有 IPv6 接口，设为 ::）")
+	fs.IntVarP(&i.BindPort, "insecure.bind-port", "p", i.BindPort, "用于提供未加密、未认证访问的端口。默认假设已配置防火墙规则，确保该端口无法从部署机器外部访问，且 IAM 公网地址的 443 端口会被代理到该端口（默认配置下由 nginx 实现此代理）。设为 0 可禁用该端口。")
+}
+
+func (i *InsecureServingOptions) Validate() []error {
+	var errs = []error{}
+	if i.BindAddress == "" {
+		errs = append(errs, errors.WithCode(code.ErrValidation, "绑定的地址不能为空"))
+	}
+	if net.ParseIP(i.BindAddress) == nil {
+		errs = append(errs, errors.WithCode(code.ErrValidation, "无效的ip地址%s", i.BindAddress))
+	}
+	if i.BindPort < 0 || i.BindPort > 65535 {
+		errs = append(errs, errors.WithCode(code.ErrValidation, "端口必须在0-65535之间"))
+	}
+	if i.BindPort != 0 {
+		address := net.JoinHostPort(i.BindAddress, strconv.Itoa(i.BindPort))
+		if _, err := net.ResolveTCPAddr("tcp", address); err != nil {
+			errs = append(errs, errors.WithCode(code.ErrValidation, "地址+端口组合无效%v", err))
+		}
+	}
+	return errs
 }

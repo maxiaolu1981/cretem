@@ -39,11 +39,17 @@ type Options struct {
 	InsecureServingOptions *options.InsecureServingOptions
 }
 
+func NewOptions() *Options {
+	return &Options{
+		InsecureServingOptions: options.NewInsecureServingOptions(),
+	}
+}
+
 func (o *Options) Validate() []error {
 	return nil
 }
 
-func (o *Options) Flags() (fss *cliFlag.NamedFlagSets) {
+func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.InsecureServingOptions.AddFlags(fss.FlagSet("insecure serving"))
 	return fss
 }
