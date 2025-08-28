@@ -10,8 +10,7 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-// List list the users in the storage.
-// Only administrator can call this function.
+// 服务员的技能
 func (u *UserController) List(c *gin.Context) {
 	log.L(c).Info("control:服务员接到顾客需求,转身告诉后厨总调度,需要处理用户相关业务...")
 	var r metav1.ListOptions

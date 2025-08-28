@@ -1,25 +1,40 @@
+/*
+实现了基于 JWT 和 Basic 认证的双重认证策略，提供完整的身份验证和授权功能。
+1. 认证策略工厂
+//创建JWT认证策略
+// 创建Basic认证策略
+// 创建自动选择策略（JWT优先，Basic备用）
+2.JWT 认证核心组件
+1.) 基础配置：初始化核心参数
+realm signingAlgorithm  key timeout maxRefresh identityKey
+2.) 令牌解析配置：定义令牌的获取位置和格式
+决定框架从哪里读取令牌（请求头/查询参数/ Cookie）
+tokenLoopup tokenHeadName sendCookie
+3.) 时间函数配置：定义时间获取方式（影响令牌有效期计算） timeFunc
+4.) 认证核心函数：用户登录验证逻辑authenticatorFunc
+这是认证流程的入口，验证用户凭据（用户名/密码）
+5.)载荷生成函数：定义JWT中存储的用户信息 payloadFunc
+认证成功后，生成令牌时需要的用户身份信息
+6.) 身份提取函数：从JWT中解析用户身份identityHandler
+用于后续请求中识别用户（如权限验证）
+7.) 权限验证函数：验证用户是否有权限访问资源authorizatorFunc
+在身份识别后执行，判断用户是否能访问当前接口
+8.)响应处理函数：定义各种场景的响应格式
+包括登录成功、刷新令牌、注销、认证失败等
+loginResponse()      // 登录成功响应
+refreshResponse()    // 令牌刷新响应
+logoutResponse()     // 注销响应
+unauthorizedFunc()   // 认证失败响应
+
+3. 凭据解析器
+// 支持多种认证方式
+parseWithHeader()    // 从HTTP Header解析Basic认证
+parseWithBody()      // 从请求体解析JSON凭据
+*/
 package apiserver
 
 import (
-	"context"
-	"encoding/base64"
-	"fmt"
-	"net/http"
-	"strings"
-	"time"
-
-	jwt "github.com/appleboy/gin-jwt/v2"
-	"github.com/gin-gonic/gin"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/auth"
-
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	_ "github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator"
-
-	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
-	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
-	"github.com/spf13/viper"
 )
 
 const (
@@ -29,164 +44,3 @@ const (
 	// APIServerIssuer defines the value of jwt issuer field.
 	APIServerIssuer = "iam-apiserver"
 )
-
-func newJWTAuth() middleware.AuthStrategy {
-	ginJwt, _ := jwt.New(&jwt.GinJWTMiddleware{
-		Realm:            viper.GetString("jwt.realm"),
-		SigningAlgorithm: "HS256",
-		Key:              []byte(viper.GetString("jwt.key")),
-		Timeout:          viper.GetDuration("jwt.timeout"),
-		MaxRefresh:       viper.GetDuration("jwt.max-refresh"),
-		Authenticator:    authenticator(),
-		LogoutResponse: func(c *gin.Context, code int) {
-			c.JSON(http.StatusOK, nil)
-		},
-		RefreshResponse: refreshResponse(),
-		PayloadFunc:     payloadFunc(),
-		IdentityHandler: func(c *gin.Context) interface{} {
-			claims := jwt.ExtractClaims(c)
-			return claims[jwt.IdentityKey]
-		},
-		IdentityKey:  middleware.UsernameKey,
-		Authorizator: authorizator(),
-		Unauthorized: func(c *gin.Context, code int, message string) {
-			c.JSON(code, gin.H{
-				"message": message,
-			})
-		},
-		TokenLookup:   "header: Authorization, query: token, cookie: jwt",
-		TokenHeadName: "Bearer",
-		SendCookie:    true,
-		TimeFunc:      time.Now,
-	})
-	return auth.NewJWTStrategy(*ginJwt)
-}
-
-func authenticator() func(c *gin.Context) (interface{}, error) {
-	return func(c *gin.Context) (interface{}, error) {
-		var login loginInfo
-		var err error
-		if c.Request.Header.Get("Authorization") != "" {
-			login, err = parseWithHeader(c)
-		} else {
-			login, err = parseWithBody(c)
-		}
-		if err != nil {
-			return "", jwt.ErrFailedAuthentication
-		}
-
-		user, err := store.Client().Users().Get(c, login.Username, metav1.GetOptions{})
-		if err != nil {
-			log.Errorf("查询用户信息失败:%s", err.Error())
-			return "", jwt.ErrFailedAuthentication
-		}
-		if err := user.Compare(login.Password); err != nil {
-			return "", jwt.ErrFailedAuthentication
-		}
-		user.LoginedAt = time.Now()
-		_ = store.Client().Users().Update(c, user, metav1.UpdateOptions{})
-
-		c.Set(middleware.UsernameKey, login.Username)
-		fmt.Println("context username:", c.GetString(middleware.UsernameKey))
-		return user, nil
-	}
-
-}
-
-func parseWithHeader(c *gin.Context) (loginInfo, error) {
-	auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
-	if len(auth) != 2 || auth[0] != "Basic" {
-		log.Errorf("从头解析Basic失败")
-		return loginInfo{}, jwt.ErrFailedAuthentication
-	}
-	payload, err := base64.StdEncoding.DecodeString(auth[1])
-	if err != nil {
-		log.Errorf("decode basic string:%s", err.Error())
-		return loginInfo{}, jwt.ErrEmptyAuthHeader
-	}
-	pair := strings.SplitN(string(payload), ":", 2)
-	if len(pair) != 2 {
-		log.Errorf("用户名密码解析失败")
-		return loginInfo{}, jwt.ErrFailedAuthentication
-	}
-	return loginInfo{
-		Username: pair[0],
-		Password: pair[1],
-	}, nil
-}
-
-func parseWithBody(c *gin.Context) (loginInfo, error) {
-	var login loginInfo
-	if err := c.ShouldBindJSON(&login); err != nil {
-		log.Errorf("解析用户名密码错误,%s", err.Error())
-		return loginInfo{}, jwt.ErrFailedAuthentication
-	}
-	return login, nil
-}
-
-type loginInfo struct {
-	Username string `form:"username" json:"username" binding:"required,username"`
-	Password string `form:"password" json:"password" binding:"required,password"`
-}
-
-func refreshResponse() func(c *gin.Context, code int, token string, expire time.Time) {
-	return func(c *gin.Context, code int, token string, expire time.Time) {
-		c.JSON(http.StatusOK, gin.H{
-			"token":  token,
-			"expire": expire.Format(time.RFC3339),
-		})
-	}
-}
-
-func payloadFunc() func(data interface{}) jwt.MapClaims {
-	return func(data interface{}) jwt.MapClaims {
-		claims := jwt.MapClaims{
-			"iss": APIServerIssuer,
-			"aud": APIServerAudience,
-		}
-		if u, ok := data.(*v1.User); ok {
-			claims[jwt.IdentityKey] = u.Name
-			claims["sub"] = u.Name
-		}
-		return claims
-	}
-}
-
-func authorizator() func(data interface{}, c *gin.Context) bool {
-	//log.Error("已经触发了authorizator)_")
-	return func(data interface{}, c *gin.Context) bool {
-		fmt.Println("......................", data)
-		if v, ok := data.(string); ok {
-
-			log.L(c).Infof("user `%s` is authenticated.", v)
-			return true
-		}
-		return false
-	}
-}
-
-func newAutoAuth() middleware.AuthStrategy {
-	return auth.NewAutoStrategy(newBasicAuth().(auth.BasicStrategy), newJWTAuth().(auth.JWTStrategy))
-}
-
-func newBasicAuth() middleware.AuthStrategy {
-	return auth.NewBasicStrategy(func(username string, password string) bool {
-
-		log.Info("我在用basic验证........")
-		// fetch user from database
-		user, err := store.Client().Users().Get(context.TODO(), username, metav1.GetOptions{})
-		if err != nil {
-			return false
-		}
-
-		// Compare the login password with the user password.
-		if err := user.Compare(password); err != nil {
-			return false
-		}
-
-		user.LoginedAt = time.Now()
-		_ = store.Client().Users().Update(context.TODO(), user, metav1.UpdateOptions{})
-
-		return true
-	})
-}

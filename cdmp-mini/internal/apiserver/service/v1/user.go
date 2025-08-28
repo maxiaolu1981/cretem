@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"regexp"
 	"sync"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
@@ -16,6 +17,7 @@ import (
 
 type UserSrv interface {
 	List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error)
+	Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error
 }
 
 // 是UserSrv接口的具体实现,专门处理用户相关业务,比如查询用户列表等.
@@ -92,4 +94,16 @@ func (u *userService) List(ctx context.Context, opts metav1.ListOptions) (*v1.Us
 	log.L(ctx).Debugf("get %d users from backend storage.", len(infos))
 
 	return &v1.UserList{ListMeta: users.ListMeta, Items: infos}, nil
+}
+
+func (u *userService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error {
+	if err := u.store.Users().Create(ctx, user, opts); err != nil {
+		if match, _ := regexp.MatchString("Duplicate entry '.*' for key 'idx_name'", err.Error()); match {
+			return errors.WithCode(code.ErrUserAlreadyExist, err.Error())
+		}
+
+		return errors.WithCode(code.ErrDatabase, err.Error())
+	}
+
+	return nil
 }

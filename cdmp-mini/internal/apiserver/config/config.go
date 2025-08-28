@@ -1,11 +1,16 @@
+/*
+这个包是IAM项目的配置管理模块，负责处理API服务器的配置相关功能。以下是包摘要：
+1.包功能
+配置结构定义: 提供运行时的配置结构体
+配置创建: 从命令行选项创建运行配置实例
+2.设计特点
+简单封装: Config结构体直接嵌入options.Options，保持配置一致性
+无转换逻辑: 当前版本直接将选项作为配置返回，无额外处理
+错误处理: 预留错误返回接口供未来扩展使用
+依赖注入: 接收options参数，便于测试和模块化
+3.使用场景
+服务器启动时从命令行选项生成运行配置
+为后续的服务器初始化提供统一的配置对象
+这个包作为配置管理的轻量级包装层，为未来可能的配置验证、转换和扩展提供了接口。
+*/
 package config
-
-import "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
-
-type Config struct {
-	*options.Options
-}
-
-func CreateConfigFromOptions(opts *options.Options) (*Config, error) {
-	return &Config{opts}, nil
-}

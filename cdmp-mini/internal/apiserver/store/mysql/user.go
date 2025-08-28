@@ -74,3 +74,8 @@ func (u *users) List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList
 
 	return ret, d.Error
 }
+
+// Create creates a new user account.
+func (u *users) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error {
+	return u.db.Create(&user).Error
+}

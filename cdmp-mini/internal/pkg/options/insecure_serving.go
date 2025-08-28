@@ -1,68 +1,54 @@
-// Copyright 2020 Lingfei Kong <colin404@foxmail.com>. All rights reserved.
-// Use of this source code is governed by a MIT style
-// license that can be found in the LICENSE file.
+/*
+这个 Go 代码包 options 提供了不安全 HTTP 服务端口的配置选项。以下是主要功能的摘要：
+
+核心结构体
+go
+type InsecureServingOptions struct {
+    BindAddress string `json:"bind-address" mapstructure:"bind-address"`
+    BindPort    int    `json:"bind-port"    mapstructure:"bind-port"`
+}
+BindAddress: 绑定 IP 地址（默认：127.0.0.1）
+
+BindPort: 绑定端口号（默认：8080）
+
+主要方法
+1. 构造函数
+go
+func NewInsecureServingOptions() *InsecureServingOptions
+创建带有默认值的配置选项实例。
+
+2. 参数验证
+go
+func (s *InsecureServingOptions) Validate() []error
+验证端口号是否在有效范围内（0-65535），0 表示禁用不安全端口。
+
+3. 命令行标志
+go
+func (s *InsecureServingOptions) AddFlags(fs *pflag.FlagSet)
+添加命令行参数：
+
+--insecure.bind-address: 绑定 IP 地址
+
+--insecure.bind-port: 绑定端口号
+
+4. 配置应用
+go
+func (s *InsecureServingOptions) ApplyTo(c *server.Config) error
+将选项配置应用到服务器的配置结构中。
+
+设计特点
+安全性提醒: 明确标注这是不安全的服务端口，不建议使用
+
+灵活性: 支持通过命令行参数覆盖默认配置
+
+验证机制: 确保端口号在合法范围内
+
+配置映射: 支持 JSON 和 mapstructure 标签，便于配置解析
+
+使用场景
+适用于需要提供不加密、无认证的 HTTP 服务的内部应用或开发环境，生产环境建议使用安全的 HTTPS 服务。
+
+
+*/
 
 package options
-
-import (
-	"fmt"
-
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
-	"github.com/spf13/pflag"
-)
-
-// InsecureServingOptions are for creating an unauthenticated, unauthorized, insecure port.
-// No one should be using these anymore.
-type InsecureServingOptions struct {
-	BindAddress string `json:"bind-address" mapstructure:"bind-address"`
-	BindPort    int    `json:"bind-port"    mapstructure:"bind-port"`
-}
-
-// NewInsecureServingOptions is for creating an unauthenticated, unauthorized, insecure port.
-// No one should be using these anymore.
-func NewInsecureServingOptions() *InsecureServingOptions {
-	return &InsecureServingOptions{
-		BindAddress: "127.0.0.1",
-		BindPort:    8080,
-	}
-}
-
-// Validate is used to parse and validate the parameters entered by the user at
-// the command line when the program starts.
-func (s *InsecureServingOptions) Validate() []error {
-	var errors []error
-
-	if s.BindPort < 0 || s.BindPort > 65535 {
-		errors = append(
-			errors,
-			fmt.Errorf(
-				"--insecure.bind-port %v must be between 0 and 65535, inclusive. 0 for turning off insecure (HTTP) port",
-				s.BindPort,
-			),
-		)
-	}
-
-	return errors
-}
-
-// AddFlags adds flags related to features for a specific api server to the
-// specified FlagSet.
-func (s *InsecureServingOptions) AddFlags(fs *pflag.FlagSet) {
-	fs.StringVar(&s.BindAddress, "insecure.bind-address", s.BindAddress, ""+
-		"The IP address on which to serve the --insecure.bind-port "+
-		"(set to 0.0.0.0 for all IPv4 interfaces and :: for all IPv6 interfaces).")
-	fs.IntVar(&s.BindPort, "insecure.bind-port", s.BindPort, ""+
-		"The port on which to serve unsecured, unauthenticated access. It is assumed "+
-		"that firewall rules are set up such that this port is not reachable from outside of "+
-		"the deployed machine and that port 443 on the iam public address is proxied to this "+
-		"port. This is performed by nginx in the default setup. Set to zero to disable.")
-}
-
-// ApplyTo applies the run options to the method receiver and returns self.
-func (s *InsecureServingOptions) ApplyTo(c *server.Config) error {
-	c.InsecureServingInfo = &server.InsecureServingInfo{
-		BindAddress: s.BindAddress,
-		BindPort:    s.BindPort,
-	}
-	return nil
-}

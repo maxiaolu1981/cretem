@@ -322,3 +322,210 @@ plaintext
 ┌─────────────────────────────────────────────────┐
 │ 程序执行结束                                    │
 └─────────────────────────────────────────────────┘
+
+metrics.AuthFailureCounter.Inc() 后期如何查看？
+
+很好的问题！metrics.AuthFailureCounter.Inc() 是监控系统的关键部分，后期需要通过不同的方式来查看和分析这些指标。
+
+🎯 查看指标的几种方式
+1. Prometheus 监控系统（最常用）
+配置 Prometheus 抓取
+yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: 'my-app'
+    scrape_interval: 15s
+    static_configs:
+      - targets: ['localhost:9091']  # 你的应用 metrics 端口
+在 Prometheus Web UI 查看
+text
+http://localhost:9090
+查询示例：
+
+text
+# 查看认证失败总数
+auth_failure_counter_total
+
+# 按时间范围查看
+rate(auth_failure_counter_total[5m])
+
+# 查看最近1小时的趋势
+increase(auth_failure_counter_total[1h])
+2. Grafana 仪表盘（可视化）
+创建监控面板
+sql
+-- 认证失败率面板
+SELECT
+  rate(auth_failure_counter_total[5m]) * 100 as failure_rate
+典型 Grafana 面板包括：
+
+认证失败次数/分钟
+
+认证成功率
+
+失败类型分布
+
+时间趋势图
+
+3. 命令行工具查询
+使用 curl 直接查看
+bash
+# 直接访问 metrics 端点
+curl http://localhost:9091/metrics | grep auth_failure_counter
+
+# 输出示例：
+# auth_failure_counter_total 42
+使用 promtool
+bash
+promtool query instant http://localhost:9090 'auth_failure_counter_total'
+🔧 完整的实现示例
+1. 定义指标
+go
+import (
+    "github.com/prometheus/client_golang/prometheus"
+    "github.com/prometheus/client_golang/prometheus/promauto"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+var (
+    AuthFailureCounter = promauto.NewCounterVec(
+        prometheus.CounterOpts{
+            Name: "auth_failure_counter_total",
+            Help: "Total number of authentication failures",
+        },
+        []string{"reason", "method"}, // 标签：失败原因和认证方法
+    )
+    
+    AuthSuccessCounter = promauto.NewCounter(
+        prometheus.CounterOpts{
+            Name: "auth_success_counter_total",
+            Help: "Total number of successful authentications",
+        },
+    )
+)
+2. 在代码中使用
+go
+func parseWithHeader(c *gin.Context) (loginInfo, error) {
+	auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
+	if len(auth) != 2 || auth[0] != "Basic" {
+		// 记录指标（带标签）
+		AuthFailureCounter.WithLabelValues("invalid_header", "basic").Inc()
+		return loginInfo{}, jwt.ErrFailedAuthentication
+	}
+
+	payload, err := base64.StdEncoding.DecodeString(auth[1])
+	if err != nil {
+		AuthFailureCounter.WithLabelValues("base64_error", "basic").Inc()
+		return loginInfo{}, jwt.ErrFailedAuthentication
+	}
+
+	pair := strings.SplitN(string(payload), ":", 2)
+	if len(pair) != 2 {
+		AuthFailureCounter.WithLabelValues("invalid_format", "basic").Inc()
+		return loginInfo{}, jwt.ErrFailedAuthentication
+	}
+
+	// 认证成功
+	AuthSuccessCounter.Inc()
+	
+	return loginInfo{
+		Username: pair[0],
+		Password: pair[1],
+	}, nil
+}
+3. 暴露 metrics 端点
+go
+func main() {
+    // 注册 Prometheus 指标路由
+    http.Handle("/metrics", promhttp.Handler())
+    go func() {
+        http.ListenAndServe(":9091", nil)
+    }()
+
+    // 启动 Gin 服务
+    r := gin.Default()
+    r.Run(":8080")
+}
+📊 高级查询示例
+1. 查看失败原因分布
+promql
+# 按失败原因分组
+sum by (reason) (auth_failure_counter_total)
+
+# 输出：
+# {reason="invalid_header"} 15
+# {reason="base64_error"} 8
+# {reason="invalid_format"} 12
+2. 计算认证成功率
+promql
+# 成功率 = 成功数 / (成功数 + 失败数)
+auth_success_counter_total 
+/ 
+(auth_success_counter_total + sum(auth_failure_counter_total))
+3. 查看失败趋势
+promql
+# 最近1小时每分钟失败次数
+rate(auth_failure_counter_total[1m])
+
+# 失败次数同比（与1小时前比较）
+auth_failure_counter_total - auth_failure_counter_total offset 1h
+4. 设置告警规则
+yaml
+# alert.rules.yml
+groups:
+- name: auth-alerts
+  rules:
+  - alert: HighAuthFailureRate
+    expr: rate(auth_failure_counter_total[5m]) > 10
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "High authentication failure rate"
+      description: "Authentication failure rate is {{ $value }} per second"
+🖥️ 可视化效果
+在 Grafana 中，你可以创建这样的面板：
+
+认证监控仪表盘：
+
+📈 实时认证成功率
+
+🚨 失败原因饼图
+
+📊 认证次数时序图
+
+🔔 异常告警面板
+
+🔍 实际运维中的使用
+1. 故障排查
+bash
+# 查看最近认证失败情况
+promql query 'auth_failure_counter_total{reason="invalid_header"}'
+
+# 发现 invalid_header 错误激增
+# ⇒ 检查客户端是否发送了错误的 Authorization 头
+2. 性能优化
+bash
+# 查看认证延迟
+histogram_quantile(0.95, rate(auth_duration_seconds_bucket[5m]))
+
+# 如果延迟过高，可能需要优化数据库查询或缓存
+3. 安全监控
+bash
+# 检测暴力破解
+rate(auth_failure_counter_total{username="admin"}[5m]) > 20
+
+# 如果某个用户频繁失败，可能遭受攻击
+💡 最佳实践
+使用有意义的标签：方便分组和筛选
+
+添加文档注释：说明每个指标的含义
+
+设置合适的抓取间隔：通常15-30秒
+
+配置告警：及时发现异常
+
+定期清理数据：设置数据保留策略
+
+这样，通过 metrics.AuthFailureCounter.Inc() 收集的数据就能在后期通过 Prometheus、Grafana 等工具进行全面的监控和分析。
+
