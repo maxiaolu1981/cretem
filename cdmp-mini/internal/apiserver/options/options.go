@@ -31,16 +31,19 @@ JSON序列化: 支持配置的JSON格式输出
 package options
 
 import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 )
 
 type Options struct {
+	InsecureServingOptions *options.InsecureServingOptions
 }
 
 func (o *Options) Validate() []error {
 	return nil
 }
 
-func (o *Options) Flags() *cliFlag.NamedFlagSets {
-	return nil
+func (o *Options) Flags() (fss *cliFlag.NamedFlagSets) {
+	o.InsecureServingOptions.AddFlags(fss.FlagSet("insecure serving"))
+	return fss
 }

@@ -69,6 +69,6 @@ func NewInsecureServingOptions() *InsecureServingOptions {
 	}
 }
 
-func(i *InsecureServingOptions) (i *InsecureServingOptions) AddFlags(fs *pflag.FlagSet) {
-    fs.StringVarP()
+func (i *InsecureServingOptions) AddFlags(fs *pflag.FlagSet) {
+	fs.StringVarP(&i.BindAddress, "insecure.bind-address", "b", i.BindAddress, "用于监听 --insecure.bind-port（不安全绑定端口）的 IP 地址（若需监听所有 IPv4 接口，设为 0.0.0.0；若需监听所有 IPv6 接口，设为 ::）")
 }

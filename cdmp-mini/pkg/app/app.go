@@ -267,6 +267,14 @@ func (a *App) buildCommand() {
 	if a.runFunc != nil {
 		cmd.RunE = a.runCommand
 	}
+	if a.options != nil {
+		namedFlagSets := a.options.Flags()
+		fs := cmd.Flags()
+		for _, fss := range namedFlagSets.FlagSets {
+			fs.AddFlagSet(fss)
+		}
+	}
+
 	a.command = cmd
 }
 
