@@ -22,4 +22,21 @@
 
 package apiserver
 
+import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/app"
+)
+
 const commandDesc = `IAM API 服务器用于验证和配置 API 对象的数据，这些对象包括用户、策略、密钥等。该 API 服务器通过处理 REST 操作来实现对这些 API 对象的管理。`
+
+func NewApp(basename string) *app.App {
+	opts := &options.Options{}
+	application, _ := app.NewApp(basename, "api server", app.WithDefaultValidArgs(), app.WithRunFunc(run(opts)), app.WithDescription(commandDesc))
+	return application
+}
+
+func run(opt *options.Options) app.Runfunc {
+	return func(basename string) error {
+		return nil
+	}
+}

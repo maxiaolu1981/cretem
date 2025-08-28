@@ -66,7 +66,8 @@ var defaultLogFormatter = func(param gin.LogFormatterParams) string {
 
 // Logger 创建一个日志中间件，默认将日志写入 gin.DefaultWriter（标准输出）
 func Logger() gin.HandlerFunc {
-	return LoggerWithConfig(GetLoggerConfig(nil, nil, nil))
+	//return LoggerWithConfig(GetLoggerConfig(nil, nil, nil))
+	return nil
 }
 
 // LoggerWithFormatter 创建一个日志中间件，使用指定的日志格式化函数

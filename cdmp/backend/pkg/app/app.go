@@ -15,6 +15,7 @@ import (
 	"os"
 
 	"github.com/fatih/color"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	cliflag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag/globalflag"
@@ -143,10 +144,12 @@ func WithValidArgs(args cobra.PositionalArgs) Option {
 func WithDefaultValidArgs() Option {
 	return func(a *App) {
 		a.args = func(cmd *cobra.Command, args []string) error {
-			for _, arg := range args {
-				if len(arg) > 0 {
-					return fmt.Errorf("%q 不接受任何参数，但传入了 %q", cmd.CommandPath(), args)
-				}
+			if len(args) > 0 {
+				return errors.WithCode(code.ErrValidation, "参数验证失败:该命令不接受任何参数\n"+
+					"使用方法:%s\n"+
+					"实际提供了%d个参数:%v", cmd.UseLine(),
+					len(args),
+					args)
 			}
 			return nil
 		}

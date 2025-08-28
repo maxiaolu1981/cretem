@@ -29,3 +29,18 @@ JSON序列化: 支持配置的JSON格式输出
 这个包作为配置管理的核心，为IAM API服务器提供了完整的配置选项管理和命令行接口支持。
 */
 package options
+
+import (
+	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
+)
+
+type Options struct {
+}
+
+func (o *Options) Validate() []error {
+	return nil
+}
+
+func (o *Options) Flags() *cliFlag.NamedFlagSets {
+	return nil
+}

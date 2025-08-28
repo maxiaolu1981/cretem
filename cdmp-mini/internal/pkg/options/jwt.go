@@ -51,3 +51,12 @@ Validate(): 验证配置的合法性，包括：
 */
 
 package options
+
+import "time"
+
+type JwtOptions struct {
+	Realm      string        `json:"realm"       mapstructure:"realm"`
+	Key        string        `json:"key"         mapstructure:"key"`
+	Timeout    time.Duration `json:"timeout"     mapstructure:"timeout"`
+	MaxRefresh time.Duration `json:"max-refresh" mapstructure:"max-refresh"`
+}

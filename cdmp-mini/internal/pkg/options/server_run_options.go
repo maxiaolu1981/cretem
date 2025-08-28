@@ -66,3 +66,9 @@ Mode - 服务器运行模式（debug/test/release）
 这个包体现了 Go 语言中常见的配置管理模式，结合了命令行标志绑定和配置验证的良好实践。
 */
 package options
+
+type ServerRunOptions struct {
+	Mode        string   `json:"mode"        mapstructure:"mode"`
+	Healthz     bool     `json:"healthz"     mapstructure:"healthz"`
+	Middlewares []string `json:"middlewares" mapstructure:"middlewares"`
+}
