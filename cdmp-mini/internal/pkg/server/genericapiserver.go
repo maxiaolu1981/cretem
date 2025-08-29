@@ -4,21 +4,13 @@
 核心结构
 GenericAPIServer
 通用 API 服务器结构体，包含：
-
 insecureServingInfo - HTTP 服务配置信息
-
 insecureServer - HTTP 服务器实例
-
 middlewares - 中间件列表
-
 mode - 服务器模式
-
 enableMetrics - 指标收集开关
-
 enableProfiling - 性能分析开关
-
 healthz - 健康检查开关
-
 *gin.Engine - Gin 引擎实例（继承）
 
 主要方法
@@ -141,3 +133,20 @@ errgroup - 并发控制
 这个包提供了一个完整、健壮的企业级 API 服务器框架，适合构建微服务和 RESTful API。
 */
 package server
+
+import (
+	"net/http"
+
+	"github.com/gin-gonic/gin"
+)
+
+type genericAPIServer struct {
+	middleware          []string
+	insecureServingInfo *insecureServingInfo
+	mode                string
+	insecureServer      http.Server
+	*gin.Engine
+	enableProfiling bool
+	enableMetrics   bool
+	healthz         bool
+}

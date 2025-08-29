@@ -57,6 +57,7 @@ import (
 	"net"
 	"strconv"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/pflag"
@@ -97,4 +98,9 @@ func (i *InsecureServingOptions) Validate() []error {
 		}
 	}
 	return errs
+}
+
+func (i *InsecureServingOptions) ApplyTo(s *server.Config) {
+	s.InsecureServingInfo.BindAdress = i.BindAddress
+	s.InsecureServingInfo.BindPort = i.BindPort
 }

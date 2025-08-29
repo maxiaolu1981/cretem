@@ -1,6 +1,213 @@
-// Copyright 2020 Lingfei Kong <colin404@foxmail.com>. All rights reserved.
-// Use of this source code is governed by a MIT style
-// license that can be found in the LICENSE file.
+/*
+这是一个 sets.String 包的实现，提供了高效的字符串集合操作。以下是详细的包摘要和使用说明：
+
+包摘要
+sets.String 是一个基于 map[string]struct{} 实现的高效字符串集合，具有最小内存消耗和丰富的集合操作功能，特别适合处理字符串数据的去重和集合运算。
+
+核心功能和使用方式
+1. 创建集合
+go
+// 创建空集合
+set1 := sets.NewString()
+
+// 创建并初始化集合
+set2 := sets.NewString("apple", "banana", "orange")
+
+// 从 map 的键创建集合
+configMap := map[string]interface{}{"host": "localhost", "port": 8080, "debug": true}
+configKeys := sets.StringKeySet(configMap) // 包含 "host", "port", "debug"
+2. 基本操作
+go
+set := sets.NewString("apple", "banana", "orange")
+
+// 添加元素
+set.Insert("grape", "melon")          // 现在包含 5 种水果
+
+// 删除元素
+set.Delete("apple", "banana")         // 现在包含 "orange", "grape", "melon"
+
+// 检查元素是否存在
+exists := set.Has("orange")           // true
+
+// 检查所有元素是否存在
+allExist := set.HasAll("orange", "grape") // true
+
+// 检查任一元素是否存在
+anyExist := set.HasAny("melon", "peach")  // true (因为"melon"存在)
+3. 集合运算
+go
+setA := sets.NewString("a", "b", "c", "d")
+setB := sets.NewString("c", "d", "e", "f")
+
+// 差集：在A中但不在B中的元素
+diff := setA.Difference(setB) // {"a", "b"}
+
+// 并集：A和B的所有元素
+union := setA.Union(setB)     // {"a", "b", "c", "d", "e", "f"}
+
+// 交集：A和B的共同元素
+intersection := setA.Intersection(setB) // {"c", "d"}
+
+// 判断超集
+isSuperset := setA.IsSuperset(sets.NewString("a", "b")) // true
+
+// 判断集合相等
+isEqual := setA.Equal(setB) // false
+4. 遍历和转换
+go
+set := sets.NewString("zebra", "apple", "monkey", "banana")
+
+// 获取有序列表（按字母顺序排序）
+sortedList := set.List() // ["apple", "banana", "monkey", "zebra"]
+
+// 获取无序列表（性能更好）
+unsortedList := set.UnsortedList() // 顺序随机
+
+// 获取集合大小
+size := set.Len() // 4
+
+// 弹出任意一个元素
+elem, exists := set.PopAny() // 返回一个元素和是否存在
+业务场景
+场景1：标签和分类系统
+go
+// 文章标签管理
+articleTags := sets.NewString("golang", "backend", "database", "performance")
+
+// 用户感兴趣的标签
+userInterests := sets.NewString("golang", "frontend", "ui/ux")
+
+// 推荐相关文章（基于共同标签）
+commonTags := articleTags.Intersection(userInterests)
+if commonTags.Len() > 0 {
+    fmt.Println("推荐原因：共同标签", commonTags.List()) // ["golang"]
+}
+
+// 用户可能感兴趣的新标签
+suggestedTags := articleTags.Difference(userInterests) // ["backend", "database", "performance"]
+场景2：权限和角色管理
+go
+// 用户拥有的权限
+userPermissions := sets.NewString("read:posts", "write:posts", "delete:posts")
+
+// 操作需要的权限
+requiredPermissions := sets.NewString("write:posts", "moderate:comments")
+
+// 权限检查
+if userPermissions.HasAll(requiredPermissions.List()...) {
+    // 允许操作
+} else {
+    missing := requiredPermissions.Difference(userPermissions)
+    fmt.Println("缺少权限:", missing.List()) // ["moderate:comments"]
+}
+场景3：配置管理和验证
+go
+// 系统支持的配置项
+supportedConfigs := sets.NewString("host", "port", "timeout", "retries")
+
+// 用户提供的配置
+userConfigs := sets.StringKeySet(map[string]interface{}{
+    "host":    "localhost",
+    "port":    8080,
+    "unknown": "value",
+    "timeout": 30,
+})
+
+// 验证配置有效性
+invalidConfigs := userConfigs.Difference(supportedConfigs)
+if invalidConfigs.Len() > 0 {
+    fmt.Println("无效配置项:", invalidConfigs.List()) // ["unknown"]
+}
+场景4：数据清洗和去重
+go
+// 从多个来源收集的数据（可能有重复）
+rawEmails := []string{
+    "alice@example.com", "bob@example.com",
+    "alice@example.com", "charlie@example.com",
+    "bob@example.com",
+}
+
+// 快速去重
+uniqueEmails := sets.NewString(rawEmails...)
+fmt.Printf("唯一邮箱数量: %d\n", uniqueEmails.Len()) // 3
+
+// 黑名单过滤
+blacklist := sets.NewString("spam@example.com", "bob@example.com")
+cleanEmails := uniqueEmails.Difference(blacklist)
+fmt.Println("有效邮箱:", cleanEmails.List()) // ["alice@example.com", "charlie@example.com"]
+场景5：API 路由和端点管理
+go
+// 已注册的API端点
+registeredEndpoints := sets.NewString(
+    "/api/v1/users",
+    "/api/v1/posts",
+    "/api/v1/comments",
+    "/api/v2/users",
+)
+
+// 请求的端点
+requestedEndpoint := "/api/v1/products"
+
+// 端点存在性检查
+if registeredEndpoints.Has(requestedEndpoint) {
+    // 处理请求
+} else {
+    // 返回404
+    fmt.Println("端点不存在")
+}
+
+// 按版本分组端点
+v1Endpoints := sets.NewString()
+for endpoint := range registeredEndpoints {
+    if strings.HasPrefix(endpoint, "/api/v1/") {
+        v1Endpoints.Insert(endpoint)
+    }
+}
+场景6：内容过滤和审核
+go
+// 敏感词库
+sensitiveWords := sets.NewString("badword1", "badword2", "spam", "fraud")
+
+// 用户输入内容
+userContent := "这是一段包含spam和正常内容的内容"
+
+// 检查是否包含敏感词
+words := extractWords(userContent) // 提取单词的函数
+contentWords := sets.NewString(words...)
+
+foundSensitiveWords := contentWords.Intersection(sensitiveWords)
+if foundSensitiveWords.Len() > 0 {
+    fmt.Println("发现敏感词:", foundSensitiveWords.List()) // ["spam"]
+}
+性能优势
+O(1) 时间复杂度：字符串查找、插入、删除操作
+
+内存高效：使用空结构体 struct{} 作为值
+
+字符串优化：特别适合处理字符串集合操作
+
+丰富的API：完整的集合运算功能
+
+自动排序：提供有序列表输出
+
+适用场景
+标签和分类系统
+
+权限管理和访问控制
+
+配置验证和管理
+
+数据清洗和去重
+
+内容过滤和审核
+
+API 路由管理
+
+关键词匹配和过滤
+
+这个实现特别适合处理字符串集合操作，在Web开发、API服务、数据处理等场景中非常有用。
+
+*/
 
 package sets
 
