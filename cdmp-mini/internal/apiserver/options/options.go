@@ -37,11 +37,17 @@ import (
 
 type Options struct {
 	InsecureServingOptions *options.InsecureServingOptions
+	JwtOptions             *options.JwtOptions
+	MysqlOptions           *options.MySQLOptions
+	ServerRunOptions       *options.ServerRunOptions
 }
 
 func NewOptions() *Options {
 	return &Options{
 		InsecureServingOptions: options.NewInsecureServingOptions(),
+		JwtOptions:             options.NewJwtOptions(),
+		MysqlOptions:           options.NewMySQLOptions(),
+		ServerRunOptions:       options.NewServerRunOptions(),
 	}
 }
 
@@ -51,5 +57,8 @@ func (o *Options) Validate() []error {
 
 func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.InsecureServingOptions.AddFlags(fss.FlagSet("insecure serving"))
+	o.MysqlOptions.AddFlags(fss.FlagSet("mysql"))
+	o.JwtOptions.AddFlags(fss.FlagSet("jwt"))
+	o.ServerRunOptions.AddFlags(fss.FlagSet("server"))
 	return fss
 }

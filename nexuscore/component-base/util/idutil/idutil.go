@@ -83,17 +83,69 @@ Hashids 配置: GetInstanceID 和 GetUUID36 使用了固定的盐（Salt: "x20k5
 
 错误处理: 当前实现中，大部分函数在出错时会直接 panic。在实际应用中，你可能希望根据具体情况调整错误处理策略（例如返回错误而不是 panic）。
 
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
+)
+
+func main() {
+	// 示例1: 生成密钥并使用 bcrypt 哈希
+	secretKey := idutil.NewSecretKey()
+	fmt.Printf("原始密钥: %s\n", secretKey)
+
+	hashedBcrypt, err := idutil.HashWithBcrypt(secretKey)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Bcrypt 哈希: %s\n", hashedBcrypt)
+
+	// 验证
+	isValid := idutil.VerifyWithBcrypt(secretKey, hashedBcrypt)
+	fmt.Printf("Bcrypt 验证结果: %v\n", isValid)
+
+	// 示例2: 使用 Argon2 哈希
+	hashedArgon2, err := idutil.HashWithArgon2(secretKey, nil)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Argon2 哈希: %s\n", hashedArgon2)
+
+	// 验证
+	isValidArgon2, err := idutil.VerifyWithArgon2(secretKey, hashedArgon2)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("Argon2 验证结果: %v\n", isValidArgon2)
+
+	// 示例3: 一次性生成并哈希
+	original, hashed, err := idutil.NewHashedSecretKey("bcrypt")
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("新生成的密钥: %s\n", original)
+	fmt.Printf("直接哈希后的密钥: %s\n", hashed)
+}
 */
 
 package idutil
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
+	"encoding/base64"
+	"fmt"
+	"strings"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/iputil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/stringutil"
 	"github.com/sony/sonyflake"
 	hashids "github.com/speps/go-hashids"
+	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Defiens alphabet.
@@ -101,6 +153,24 @@ const (
 	Alphabet62 = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890"
 	Alphabet36 = "abcdefghijklmnopqrstuvwxyz1234567890"
 )
+
+// Argon2Params 包含 Argon2 哈希算法的参数
+type Argon2Params struct {
+	Memory      uint32
+	Iterations  uint32
+	Parallelism uint8
+	SaltLength  uint32
+	KeyLength   uint32
+}
+
+// DefaultArgon2Params 提供默认的 Argon2 参数
+var DefaultArgon2Params = &Argon2Params{
+	Memory:      64 * 1024, // 64MB
+	Iterations:  3,
+	Parallelism: 2,
+	SaltLength:  16,
+	KeyLength:   32,
+}
 
 var sf *sonyflake.Sonyflake
 
@@ -200,4 +270,110 @@ func NewSecretID() string {
 // NewSecretKey returns a secretKey or password.
 func NewSecretKey() string {
 	return randString(Alphabet62, 32)
+}
+
+// HashWithBcrypt 使用 bcrypt 对密钥进行加盐哈希处理
+func HashWithBcrypt(secretKey string) (string, error) {
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(secretKey), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+	return string(hashedBytes), nil
+}
+
+// VerifyWithBcrypt 验证密钥是否与 bcrypt 哈希匹配
+func VerifyWithBcrypt(secretKey, hashedKey string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hashedKey), []byte(secretKey))
+	return err == nil
+}
+
+// HashWithArgon2 使用 Argon2 对密钥进行加盐哈希处理
+func HashWithArgon2(secretKey string, params *Argon2Params) (string, error) {
+	if params == nil {
+		params = DefaultArgon2Params
+	}
+
+	// 生成随机盐
+	salt := make([]byte, params.SaltLength)
+	if _, err := rand.Read(salt); err != nil {
+		return "", err
+	}
+
+	// 使用 Argon2id 生成哈希
+	hash := argon2.IDKey(
+		[]byte(secretKey),
+		salt,
+		params.Iterations,
+		params.Memory,
+		params.Parallelism,
+		params.KeyLength,
+	)
+
+	// 将参数、盐和哈希编码为字符串
+	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
+	b64Hash := base64.RawStdEncoding.EncodeToString(hash)
+
+	// 格式: $argon2id$v=19$m=65536,t=3,p=2$salt$hash
+	encoded := fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
+		params.Memory, params.Iterations, params.Parallelism,
+		b64Salt, b64Hash)
+
+	return encoded, nil
+}
+
+// VerifyWithArgon2 验证密钥是否与 Argon2 哈希匹配
+func VerifyWithArgon2(secretKey, encoded string) (bool, error) {
+	// 解析编码的字符串
+	parts := strings.Split(encoded, "$")
+	if len(parts) != 6 {
+		return false, fmt.Errorf("invalid encoded hash format")
+	}
+
+	// 解析参数
+	var params Argon2Params
+	_, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d",
+		&params.Memory, &params.Iterations, &params.Parallelism)
+	if err != nil {
+		return false, err
+	}
+
+	// 解码盐和哈希
+	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+	if err != nil {
+		return false, err
+	}
+
+	expectedHash, err := base64.RawStdEncoding.DecodeString(parts[5])
+	if err != nil {
+		return false, err
+	}
+
+	// 使用相同的参数重新计算哈希
+	actualHash := argon2.IDKey(
+		[]byte(secretKey),
+		salt,
+		params.Iterations,
+		params.Memory,
+		params.Parallelism,
+		uint32(len(expectedHash)),
+	)
+
+	// 使用恒定时间比较来防止时序攻击
+	return subtle.ConstantTimeCompare(actualHash, expectedHash) == 1, nil
+}
+
+// NewHashedSecretKey 生成新的密钥并立即进行哈希处理
+func NewHashedSecretKey(algorithm string) (originalKey, hashedKey string, err error) {
+	originalKey = NewSecretKey()
+
+	switch algorithm {
+	case "bcrypt":
+		hashedKey, err = HashWithBcrypt(originalKey)
+	case "argon2":
+		hashedKey, err = HashWithArgon2(originalKey, DefaultArgon2Params)
+	default:
+		hashedKey, err = HashWithBcrypt(originalKey) // 默认使用 bcrypt
+	}
+
+	return originalKey, hashedKey, err
 }

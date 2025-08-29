@@ -1,16 +1,287 @@
 /*
 包摘要
-该包 validation 提供了一系列数据验证工具函数，用于校验各类输入数据的合法性，包括用户名、标签值、DNS 格式、端口号、IP 地址、百分比格式及密码等。验证逻辑基于正则表达式和规则判断，返回具体的错误信息，适用于需要严格数据校验的场景（如 API 接口参数验证）。
-核心功能与流程
-包内主要通过正则匹配和规则校验实现数据验证，核心流程如下：
-定义校验规则：针对不同数据类型（如用户名、密码、DNS 标签等），定义正则表达式（如 qualifiedNameRegexp 用于用户名校验）和长度限制（如密码长度 8-16 位）。
-实现验证函数：每个函数接收待验证值，通过正则匹配或逻辑判断检查是否符合规则，返回错误信息列表（或单个错误）。
-错误信息处理：通过辅助函数（如 RegexError、MaxLenError）生成标准化的错误提示，明确告知校验失败原因
+该包提供了一系列数据验证工具函数，用于校验各类输入数据的合法性，包括用户名、标签值、DNS格式、端口号、IP地址、百分比格式及密码等。验证逻辑基于正则表达式和规则判断，返回具体的错误信息，适用于需要严格数据校验的场景。
 
+核心功能
+1. 名称和标签验证
+合格名称验证：支持带DNS前缀的名称格式
+
+标签值验证：Kubernetes风格的标签验证
+
+DNS标签验证：DNS-1123标准标签验证
+
+2. 网络相关验证
+IP地址验证：IPv4和IPv6地址验证
+
+端口号验证：1-65535范围验证
+
+DNS子域名验证：完整的域名验证
+
+3. 格式验证
+百分比格式验证：数字+%格式验证
+
+密码强度验证：复杂度要求验证
+
+4. 辅助功能
+错误信息生成：标准化的错误提示生成
+
+范围验证：数值范围验证
+
+函数使用方法
+1. 基本名称验证
+go
+// 合格名称验证（支持前缀）
+errs := validation.IsQualifiedName("example.com/my-app")
+if len(errs) > 0 {
+    fmt.Println("验证失败:", strings.Join(errs, "; "))
+}
+
+// 标签值验证
+errs := validation.IsValidLabelValue("my_label-value123")
+if len(errs) > 0 {
+    fmt.Println("标签值无效:", errs)
+}
+2. DNS相关验证
+go
+// DNS标签验证
+errs := validation.IsDNS1123Label("my-service")
+if len(errs) > 0 {
+    fmt.Println("DNS标签无效:", errs)
+}
+
+// DNS子域名验证
+errs := validation.IsDNS1123Subdomain("test.example.com")
+if len(errs) > 0 {
+    fmt.Println("子域名无效:", errs)
+}
+3. 网络配置验证
+go
+// 端口号验证
+errs := validation.IsValidPortNum(8080)
+if len(errs) > 0 {
+    fmt.Println("端口号无效:", errs)
+}
+
+// IP地址验证
+errs := validation.IsValidIP("192.168.1.1")
+if len(errs) > 0 {
+    fmt.Println("IP地址无效:", errs)
+}
+
+// 带字段路径的IP验证（返回field.ErrorList）
+fldPath := field.NewPath("network", "ip")
+errs := validation.IsValidIPv4Address(fldPath, "192.168.1.1")
+if len(errs) > 0 {
+    fmt.Println("IPv4地址无效:", errs.ToAggregate())
+}
+4. 格式验证
+go
+// 百分比验证
+errs := validation.IsValidPercent("50%")
+if len(errs) > 0 {
+    fmt.Println("百分比格式无效:", errs)
+}
+
+// 密码强度验证
+err := validation.IsValidPassword("StrongPass123!")
+if err != nil {
+    fmt.Println("密码不符合要求:", err)
+}
+
+// 数值范围验证
+errs := validation.IsInRange(25, 1, 100)
+if len(errs) > 0 {
+    fmt.Println("数值超出范围:", errs)
+}
+5. 错误信息生成
+go
+// 生成标准错误信息
+maxLenErr := validation.MaxLenError(63)
+fmt.Println(maxLenErr) // "长度不能超过63个字符"
+
+rangeErr := validation.InclusiveRangeError(1, 100)
+fmt.Println(rangeErr) // "必须在1到100之间（包含边界）"
+
+regexErr := validation.RegexError(
+    "必须由字母数字组成",
+    "[A-Za-z0-9]+",
+    "example",
+    "test123"
+)
+fmt.Println(regexErr)
+使用的业务场景
+1. Kubernetes资源验证
+go
+func ValidatePodSpec(spec *PodSpec) field.ErrorList {
+    var allErrors field.ErrorList
+    fldPath := field.NewPath("spec")
+
+    // 验证容器名称
+    for i, container := range spec.Containers {
+        containerPath := fldPath.Child("containers").Index(i).Child("name")
+        if errs := validation.IsQualifiedName(container.Name); len(errs) > 0 {
+            for _, err := range errs {
+                allErrors = append(allErrors, field.Invalid(containerPath, container.Name, err))
+            }
+        }
+    }
+
+    return allErrors
+}
+2. API请求参数验证
+go
+func ValidateCreateRequest(req *CreateRequest) error {
+    var errors []string
+
+    // 验证名称格式
+    errors = append(errors, validation.IsQualifiedName(req.Name)...)
+
+    // 验证标签
+    for key, value := range req.Labels {
+        if errs := validation.IsValidLabelValue(value); len(errs) > 0 {
+            errors = append(errors, fmt.Sprintf("标签%s的值无效: %s", key, strings.Join(errs, ", ")))
+        }
+    }
+
+    // 验证端口
+    if errs := validation.IsValidPortNum(req.Port); len(errs) > 0 {
+        errors = append(errors, errs...)
+    }
+
+    if len(errors) > 0 {
+        return fmt.Errorf("请求参数验证失败: %s", strings.Join(errors, "; "))
+    }
+
+    return nil
+}
+3. 配置文件中验证
+go
+func ValidateAppConfig(config *Config) field.ErrorList {
+    var allErrors field.ErrorList
+    basePath := field.NewPath("config")
+
+    // 验证域名配置
+    if errs := validation.IsDNS1123Subdomain(config.Domain); len(errs) > 0 {
+        for _, err := range errs {
+            allErrors = append(allErrors, field.Invalid(
+                basePath.Child("domain"),
+                config.Domain,
+                err
+            ))
+        }
+    }
+
+    // 验证端口范围
+    if errs := validation.IsInRange(config.Timeout, 1, 300); len(errs) > 0 {
+        for _, err := range errs {
+            allErrors = append(allErrors, field.Invalid(
+                basePath.Child("timeout"),
+                config.Timeout,
+                err
+            ))
+        }
+    }
+
+    return allErrors
+}
+4. 用户注册验证
+go
+func ValidateUserRegistration(user *User) []string {
+    var errors []string
+
+    // 验证用户名
+    errors = append(errors, validation.IsQualifiedName(user.Username)...)
+
+    // 验证密码强度
+    if err := validation.IsValidPassword(user.Password); err != nil {
+        errors = append(errors, "密码强度不足: "+err.Error())
+    }
+
+    // 验证邮箱格式（使用DNS验证）
+    if parts := strings.Split(user.Email, "@"); len(parts) == 2 {
+        if errs := validation.IsDNS1123Subdomain(parts[1]); len(errs) > 0 {
+            errors = append(errors, "邮箱域名无效: "+strings.Join(errs, ", "))
+        }
+    }
+
+    return errors
+}
+5. 网络配置验证
+go
+func ValidateNetworkConfig(netConfig *NetworkConfig) field.ErrorList {
+    var allErrors field.ErrorList
+    fldPath := field.NewPath("network")
+
+    // 验证IP地址
+    if netConfig.IP != "" {
+        ipErrors := validation.IsValidIPv4Address(fldPath.Child("ip"), netConfig.IP)
+        allErrors = append(allErrors, ipErrors...)
+    }
+
+    // 验证子网掩码格式
+    if netConfig.Subnet != "" {
+        if errs := validation.IsValidIP(netConfig.Subnet); len(errs) > 0 {
+            for _, err := range errs {
+                allErrors = append(allErrors, field.Invalid(
+                    fldPath.Child("subnet"),
+                    netConfig.Subnet,
+                    err
+                ))
+            }
+        }
+    }
+
+    return allErrors
+}
+6. 监控配置验证
+go
+func ValidateMonitoringConfig(monConfig *MonitoringConfig) []string {
+    var errors []string
+
+    // 验证百分比格式的阈值
+    if errs := validation.IsValidPercent(monConfig.CPUThreshold); len(errs) > 0 {
+        errors = append(errors, "CPU阈值格式错误: "+strings.Join(errs, ", "))
+    }
+
+    if errs := validation.IsValidPercent(monConfig.MemoryThreshold); len(errs) > 0 {
+        errors = append(errors, "内存阈值格式错误: "+strings.Join(errs, ", "))
+    }
+
+    return errors
+}
+优势特点
+标准化验证：遵循Kubernetes和DNS标准
+
+详细错误信息：提供具体的错误原因和建议
+
+灵活的输出格式：支持字符串数组和field.ErrorList
+
+全面的覆盖：覆盖常见的验证场景
+
+易于集成：可以轻松集成到各种验证框架中
+
+这个包特别适合需要严格数据验证的云原生应用、API服务和配置管理系统。
+IsQualifiedName:验证字符串是否为合法的"合格名称"格式，支持可选DNS前缀 适用于用户名、资源名称等需要命名规范的场景
+IsValidLabelValue:验证字符串是否为合法的标签值，允许为空或符合特定格式 适用于Kubernetes标签、配置标签等键值对场景
+IsDNS1123Label:验证字符串是否符合DNS-1123标签格式（小写字母、数字、连字符） 适用于域名标签、主机名等DNS相关命名场景
+IsDNS1123Subdomain:验证字符串是否符合DNS-1123子域名格式 适用于完整域名、子域名验证场景
+IsValidPortNum:验证端口号是否合法（0-65535范围） 适用于网络服务端口配置验证场景
+IsInRange:验证数值是否在指定范围内 适用于各种数值范围限制验证场景
+IsValidIP:验证字符串是否为合法IP地址（IPv4或IPv6） 适用于IP地址配置验证场景
+IsValidIPv4Address:验证字符串是否为合法IPv4地址 适用于需要严格IPv4地址验证的场景
+IsValidIPv6Address:验证字符串是否为合法IPv6地址 适用于需要严格IPv6地址验证的场景
+IsValidPercent:验证字符串是否为合法的百分比格式 适用于百分比配置、进度表示等场景
+MaxLenError:生成"长度超限"的错误提示信息 适用于验证错误信息生成场景
+RegexError:生成正则匹配失败的错误提示，包含示例 适用于正则验证失败时的友好错误提示场景
+EmptyError:生成"不能为空"的错误提示 适用于必填字段验证场景
+prefixEach:给错误信息列表中的每个信息添加前缀 适用于错误信息批量处理场景
+InclusiveRangeError:生成"数值范围"的错误提示（包含边界值） 适用于范围验证错误提示场景
+IsValidPassword:验证密码是否合法，检查长度、字符类型等复杂度要求 适用于用户密码强度验证场景
 
 */
 
 // Package validation 提供各类数据合法性校验工具，用于验证用户名、密码、DNS格式等输入数据。
+
 package validation
 
 import (
@@ -156,7 +427,7 @@ func IsDNS1123Subdomain(value string) []string {
 
 // IsValidPortNum 验证端口号是否合法（1-65535之间）
 func IsValidPortNum(port int) []string {
-	if 1 <= port && port <= 65535 {
+	if port == 0 || (1 <= port && port <= 65535) {
 		return nil
 	}
 	return []string{InclusiveRangeError(1, 65535)}
@@ -262,7 +533,7 @@ const (
 
 // IsValidPassword 验证密码是否合法，返回具体错误信息
 func IsValidPassword(password string) error {
-	//var hasUpper bool      // 是否包含大写字母
+	var hasUpper bool      // 是否包含大写字母
 	var hasLower bool      // 是否包含小写字母
 	var hasNumber bool     // 是否包含数字
 	var hasSpecial bool    // 是否包含特殊字符（标点或符号）
@@ -276,7 +547,7 @@ func IsValidPassword(password string) error {
 			hasNumber = true
 			passLen++
 		case unicode.IsUpper(ch):
-			//	hasUpper = true
+			hasUpper = true
 			passLen++
 		case unicode.IsLower(ch):
 			hasLower = true
@@ -300,9 +571,9 @@ func IsValidPassword(password string) error {
 	if !hasLower {
 		appendError("缺少小写字母")
 	}
-	//	if !hasUpper {
-	//		appendError("缺少大写字母")
-	//	}
+	if !hasUpper {
+		appendError("缺少大写字母")
+	}
 	if !hasNumber {
 		appendError("至少需要一个数字")
 	}

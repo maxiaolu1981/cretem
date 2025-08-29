@@ -34,9 +34,14 @@ NewJwtOptions()（从默认配置初始化）→ 接收用户修改（如命令�
 package options
 
 import (
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
+	"github.com/spf13/pflag"
 )
 
 type JwtOptions struct {
@@ -44,6 +49,7 @@ type JwtOptions struct {
 	Key        string        `json:"key"         mapstructure:"key"`
 	Timeout    time.Duration `json:"timeout"     mapstructure:"timeout"`
 	MaxRefresh time.Duration `json:"max-refresh" mapstructure:"max-refresh"`
+	KeyHash    string        `json:"-" mapstructure:"-"` // 不序列化到配置文件
 }
 
 /*
@@ -51,14 +57,60 @@ NewJwtOptions()：让 JWT 配置以系统默认值server.Config为起点，确�
 ApplyTo()：将经过外部修改后的最终配置同步回主配置，确保服务运行时使用正确的配置。
 这种 “读取默认值 → 中间修改 → 回写主配置” 的流程，是复杂系统中 “分层配置管理” 的典型实践，兼顾了灵活性（支持多来源修改）和一致性（最终聚合到主配置）
 */
+
 func NewJwtOptions() *JwtOptions {
-	defaults := server.NewConfig()
+	defaults := getServerDefaults()
 	return &JwtOptions{
 		Realm:      defaults.Jwt.Realm,
 		Key:        defaults.Jwt.Key,
 		Timeout:    defaults.Jwt.Timeout,
 		MaxRefresh: defaults.Jwt.MaxRefresh,
 	}
+}
+
+func (j *JwtOptions) Complete() {
+	defaults := getServerDefaults()
+	if j.Realm == "" {
+		j.Realm = defaults.Jwt.Realm
+	}
+	if j.Timeout == 0 {
+		j.Timeout = defaults.Jwt.Timeout
+	}
+	if j.MaxRefresh == 0 {
+		j.MaxRefresh = defaults.Jwt.MaxRefresh
+	}
+	if j.Key == "" {
+		j.ensureKey()
+	}
+
+}
+
+func (j *JwtOptions) Validate() []error {
+	errs := field.ErrorList{}
+	path := field.NewPath("jwt")
+	if j.Realm == "" {
+		errs = append(errs, field.Required(path.Child("realm"), "必须输入realm"))
+	} else if len(j.Realm) > 255 {
+		errs = append(errs, field.TooLong(path.Child("realm"), j.Realm, 255))
+	}
+
+	if j.Key == "" {
+		errs = append(errs, field.Required(path.Child("key"), "JWT secret key 必须存在"))
+	} else if len(j.Key) < 32 {
+		errs = append(errs, field.Invalid(path.Child("key"), j.Key, "jwt secret key 最小为32位长"))
+	}
+
+	if j.Timeout <= 0 {
+		errs = append(errs, field.Invalid(path.Child("timeout"), j.Timeout, "timeout必须大于0"))
+	}
+
+	if j.MaxRefresh < 0 {
+		errs = append(errs, field.Invalid(path.Child("max-refresh"), j.MaxRefresh, "max-refresh必须大于0"))
+	}
+	if j.Timeout > 0 && j.MaxRefresh > 0 && j.Timeout >= j.MaxRefresh {
+		errs = append(errs, field.Invalid(path.Child("timeout"), j.Timeout, "timeout必须小于maxrefresh"))
+	}
+	return errs.ToAggregate().Errors()
 }
 
 func (j *JwtOptions) ApplyTo(s *server.Config) {
@@ -68,15 +120,31 @@ func (j *JwtOptions) ApplyTo(s *server.Config) {
 	s.Jwt.MaxRefresh = j.MaxRefresh
 }
 
-func (j *JwtOptions) Complete() {
-	if j.Realm == "" {
-		j.Realm = "iam-server"
-	}
-	if j.Timeout == 0 {
-		j.Timeout = 24 * time.Hour
-	}
-	if j.MaxRefresh == 0 {
-		j.MaxRefresh = 24 * 7 * time.Hour
+func (j *JwtOptions) ensureKey() {
+	// 优先从环境变量获取
+	if envKey := os.Getenv("JWT_SECRET_KEY"); envKey != "" {
+		j.Key = envKey
+		return
 	}
 
+	// 开发环境：生成临时密钥
+	if os.Getenv("GO_ENV") == "development" {
+		j.Key = idutil.NewSecretKey()
+		j.KeyHash, _ = idutil.HashWithBcrypt(j.Key)
+		fmt.Printf("开发模式：生成临时 JWT 密钥: %s\n", j.Key)
+		return
+	}
+	// 生产环境：必须配置密钥
+	panic("JWT 密钥未配置，请设置 JWT_SECRET_KEY 环境变量")
+}
+
+func (s *JwtOptions) AddFlags(fs *pflag.FlagSet) {
+	fs.StringVarP(&s.Realm, "jwt.realm", "r", s.Realm, "向用户显示的Realm名称。")
+
+	fs.StringVarP(&s.Key, "jwt.key", "k", s.Key, "用于签名JWT令牌的私钥。")
+
+	fs.DurationVarP(&s.Timeout, "jwt.timeout", "t", s.Timeout, "JWT令牌超时时间。")
+
+	fs.DurationVarP(&s.MaxRefresh, "jwt.max-refresh", "m", s.MaxRefresh, ""+
+		"此字段允许客户端在MaxRefresh时间过去之前刷新其令牌。")
 }

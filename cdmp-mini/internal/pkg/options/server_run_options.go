@@ -67,8 +67,90 @@ Mode - 服务器运行模式（debug/test/release）
 */
 package options
 
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
+	"github.com/spf13/pflag"
+)
+
 type ServerRunOptions struct {
 	Mode        string   `json:"mode"        mapstructure:"mode"`
 	Healthz     bool     `json:"healthz"     mapstructure:"healthz"`
 	Middlewares []string `json:"middlewares" mapstructure:"middlewares"`
+}
+
+func NewServerRunOptions() *ServerRunOptions {
+	defaults := getServerDefaults()
+	return &ServerRunOptions{
+		Mode:        defaults.Mode,
+		Healthz:     defaults.Healthz,
+		Middlewares: defaults.Middlewares,
+	}
+}
+
+func (s *ServerRunOptions) Complete() {
+	defaults := getServerDefaults()
+
+	s.Mode = s.completeString(s.Mode, defaults.Mode, []string{gin.DebugMode, gin.ReleaseMode, gin.TestMode})
+	s.Healthz = s.completeBool(s.Healthz, defaults.Healthz)
+	s.Middlewares = s.completeSlice(s.Middlewares, defaults.Middlewares)
+}
+
+func (s *ServerRunOptions) Validate() []error {
+	var errs = field.ErrorList{}
+	var path = field.NewPath("server")
+
+	if s.Mode != "" {
+		for _, mode := range []string{gin.DebugMode, gin.ReleaseMode, gin.TestMode} {
+			if s.Mode != mode {
+				errs = append(errs, field.Invalid(path.Child("mode"), s.Mode, "无效的mode模式"))
+			}
+		}
+	}
+	return errs.ToAggregate().Errors()
+}
+
+func (s *ServerRunOptions) ApplyTo(c *server.Config) {
+	c.Mode = s.Mode
+	c.Middlewares = s.Middlewares
+	c.Healthz = s.Healthz
+
+}
+
+func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
+	fs.StringVarP(&s.Mode, "server.mode", "M", s.Mode, ""+
+		"指定服务器运行模式。支持的服务器模式：debug(调试)、test(测试)、release(发布)。")
+
+	fs.BoolVarP(&s.Healthz, "server.healthz", "z", s.Healthz, ""+
+		"启用健康检查并安装 /healthz 路由。")
+
+	fs.StringSliceVarP(&s.Middlewares, "server.middlewares", "w", s.Middlewares, ""+
+		"服务器允许的中间件列表，逗号分隔。如果列表为空，将使用默认中间件。")
+}
+
+func (s *ServerRunOptions) completeString(value, defaultValue string, validValues []string) string {
+	if value == "" {
+		return defaultValue
+	}
+	if len(validValues) > 0 {
+		for _, validValue := range validValues {
+			if validValue == value {
+				return value
+			}
+		}
+		return defaultValue
+	}
+	return value
+}
+
+func (s *ServerRunOptions) completeSlice(value, defaultValue []string) []string {
+	if value == nil {
+		return defaultValue
+	}
+	return value
+}
+
+func (s *ServerRunOptions) completeBool(value, defaultValue bool) bool {
+	return value
 }

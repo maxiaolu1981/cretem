@@ -1,3 +1,275 @@
+/*
+这是一个用于字段级别验证的错误处理包，适合在业务场景中进行数据验证和错误管理。以下是详细分析：
+
+包摘要
+核心功能
+字段级别验证错误：提供结构化的字段验证错误信息
+
+多种错误类型：支持11种不同的验证错误类型
+
+错误聚合处理：支持将多个错误聚合处理
+
+错误过滤：支持按类型过滤错误
+
+主要组件
+1. Error 结构体
+go
+
+	type Error struct {
+	    Type     ErrorType   // 错误类型
+	    Field    string      // 字段路径
+	    BadValue interface{} // 错误值
+	    Detail   string      // 详细描述
+	}
+
+2. 错误类型 (ErrorType)
+go
+const (
+
+	ErrorTypeNotFound      // 值未找到
+	ErrorTypeRequired      // 必填字段为空
+	ErrorTypeDuplicate     // 值重复
+	ErrorTypeInvalid       // 值无效
+	ErrorTypeNotSupported  // 值不支持
+	ErrorTypeForbidden     // 值被禁止
+	ErrorTypeTooLong       // 值过长
+	ErrorTypeTooMany       // 数量过多
+	ErrorTypeInternal      // 内部错误
+
+)
+3. 错误列表 (ErrorList)
+go
+type ErrorList []*Error
+函数使用方式
+基本错误创建
+go
+// 必填字段验证
+err := field.Required(field.NewPath("username"), "用户名不能为空")
+
+// 无效值验证
+err := field.Invalid(field.NewPath("age"), -1, "年龄不能为负数")
+
+// 重复值验证
+err := field.Duplicate(field.NewPath("email"), "test@example.com")
+
+// 不支持的值验证
+err := field.NotSupported(
+
+	field.NewPath("status"),
+	"pending",
+	[]string{"active", "inactive"}
+
+)
+
+// 值过长验证
+err := field.TooLong(field.NewPath("description"), longText, 100)
+
+// 数量过多验证
+err := field.TooMany(field.NewPath("items"), 15, 10)
+错误处理示例
+go
+
+	func ValidateUser(user *User) field.ErrorList {
+	    var allErrors field.ErrorList
+
+	    // 验证用户名
+	    if user.Username == "" {
+	        allErrors = append(allErrors, field.Required(
+	            field.NewPath("username"),
+	            "用户名必须填写"
+	        ))
+	    } else if len(user.Username) > 20 {
+	        allErrors = append(allErrors, field.TooLong(
+	            field.NewPath("username"),
+	            user.Username,
+	            20
+	        ))
+	    }
+
+	    // 验证邮箱格式
+	    if !isValidEmail(user.Email) {
+	        allErrors = append(allErrors, field.Invalid(
+	            field.NewPath("email"),
+	            user.Email,
+	            "邮箱格式不正确"
+	        ))
+	    }
+
+	    // 验证年龄范围
+	    if user.Age < 0 || user.Age > 150 {
+	        allErrors = append(allErrors, field.Invalid(
+	            field.NewPath("age"),
+	            user.Age,
+	            "年龄必须在0-150之间"
+	        ))
+	    }
+
+	    return allErrors
+	}
+
+// 使用错误列表
+
+	func CreateUser(user *User) error {
+	    if errs := ValidateUser(user); len(errs) > 0 {
+	        // 转换为聚合错误
+	        return errs.ToAggregate()
+	    }
+	    // 创建用户逻辑...
+	    return nil
+	}
+
+错误过滤
+go
+// 创建错误类型匹配器
+requiredMatcher := field.NewErrorTypeMatcher(field.ErrorTypeRequired)
+invalidMatcher := field.NewErrorTypeMatcher(field.ErrorTypeInvalid)
+
+// 过滤掉特定类型的错误
+filteredErrors := allErrors.Filter(requiredMatcher, invalidMatcher)
+
+// 只保留必填错误
+
+	requiredErrors := allErrors.Filter(func(err error) bool {
+	    if fieldErr, ok := err.(*field.Error); ok {
+	        return fieldErr.Type == field.ErrorTypeRequired
+	    }
+	    return false
+	})
+
+适合的业务场景
+1. API 请求验证
+go
+
+	func ValidateCreateRequest(req *CreateRequest) field.ErrorList {
+	    var errs field.ErrorList
+
+	    if req.Name == "" {
+	        errs = append(errs, field.Required(
+	            field.NewPath("name"),
+	            "名称不能为空"
+	        ))
+	    }
+
+	    if req.Price <= 0 {
+	        errs = append(errs, field.Invalid(
+	            field.NewPath("price"),
+	            req.Price,
+	            "价格必须大于0"
+	        ))
+	    }
+
+	    return errs
+	}
+
+2. 配置验证
+go
+
+	func ValidateConfig(config *Config) field.ErrorList {
+	    var errs field.ErrorList
+
+	    if config.Timeout < 0 {
+	        errs = append(errs, field.Invalid(
+	            field.NewPath("timeout"),
+	            config.Timeout,
+	            "超时时间不能为负数"
+	        ))
+	    }
+
+	    if !isValidLogLevel(config.LogLevel) {
+	        errs = append(errs, field.NotSupported(
+	            field.NewPath("logLevel"),
+	            config.LogLevel,
+	            []string{"debug", "info", "warn", "error"}
+	        ))
+	    }
+
+	    return errs
+	}
+
+3. 表单数据验证
+go
+
+	func ValidateRegistrationForm(form *RegistrationForm) field.ErrorList {
+	    var errs field.ErrorList
+
+	    // 必填字段验证
+	    if form.Username == "" {
+	        errs = append(errs, field.Required(
+	            field.NewPath("username"),
+	            "用户名必须填写"
+	        ))
+	    }
+
+	    if form.Password == "" {
+	        errs = append(errs, field.Required(
+	            field.NewPath("password"),
+	            "密码必须填写"
+	        ))
+	    }
+
+	    // 格式验证
+	    if !isValidEmail(form.Email) {
+	        errs = append(errs, field.Invalid(
+	            field.NewPath("email"),
+	            form.Email,
+	            "邮箱格式不正确"
+	        ))
+	    }
+
+	    // 长度验证
+	    if len(form.Description) > 500 {
+	        errs = append(errs, field.TooLong(
+	            field.NewPath("description"),
+	            form.Description,
+	            500
+	        ))
+	    }
+
+	    return errs
+	}
+
+4. 批量操作验证
+go
+
+	func ValidateBatchOperation(operations []Operation) field.ErrorList {
+	    var errs field.ErrorList
+
+	    // 数量限制验证
+	    if len(operations) > 100 {
+	        errs = append(errs, field.TooMany(
+	            field.NewPath("operations"),
+	            len(operations),
+	            100
+	        ))
+	    }
+
+	    // 逐个验证操作
+	    for i, op := range operations {
+	        path := field.NewPath("operations").Index(i)
+	        if op.Type == "" {
+	            errs = append(errs, field.Required(
+	                path.Child("type"),
+	                "操作类型必须指定"
+	            ))
+	        }
+	    }
+
+	    return errs
+	}
+
+最佳实践
+结构化错误信息：使用字段路径明确指示错误位置
+
+详细的错误描述：提供具体的错误原因和建议
+
+错误聚合：使用 ToAggregate() 将多个错误合并返回
+
+错误过滤：根据需要过滤特定类型的错误
+
+国际化支持：错误消息可以考虑支持多语言
+
+这个包特别适合需要精细字段级别验证的业务场景，如API请求验证、配置验证、表单验证等。
+*/
 package field
 
 import (
