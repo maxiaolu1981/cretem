@@ -152,8 +152,6 @@ func init() {
 func addConfigFlag(basename string, fs *pflag.FlagSet) {
 	fs.AddFlag(pflag.Lookup(configFlagName))
 	viper.AutomaticEnv()
-	viper.SetEnvPrefix(strings.Replace(strings.ToLower(basename), "-", "_", -1))
-	viper.SetEnvKeyReplacer(strings.NewReplacer(".", "_", "-", "_"))
 	cobra.OnInitialize(func() {
 		if cfgFile != "" {
 			viper.SetConfigFile(cfgFile)

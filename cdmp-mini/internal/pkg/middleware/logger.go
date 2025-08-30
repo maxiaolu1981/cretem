@@ -1,21 +1,3 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 /*
 包摘要
 该包（package middleware）提供了基于 Gin 框架的日志中间件（Logger），用于记录 HTTP 请求的关键信息（如状态码、客户端 IP、处理耗时等）。它支持自定义日志格式、输出目标和忽略路径，同时适配终端彩色输出，是跟踪请求处理情况的核心组件。
@@ -24,7 +6,6 @@
 请求处理前准备：中间件在请求到达时记录开始时间，存储请求路径和原始查询参数。
 请求处理与日志生成：请求经过业务处理器后，中间件计算处理耗时，收集状态码、客户端 IP 等信息，通过格式化函数生成日志内容。
 日志输出：根据配置的输出目标（默认标准输出）和终端环境（是否支持彩色），输出格式化后的日志。
-
 */
 package middleware
 
@@ -36,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattn/go-isatty" // 用于判断输出设备是否为终端（支持彩色输出）
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 )
 
 // defaultLogFormatter 是日志中间件默认使用的日志格式化函数
@@ -66,8 +48,7 @@ var defaultLogFormatter = func(param gin.LogFormatterParams) string {
 
 // Logger 创建一个日志中间件，默认将日志写入 gin.DefaultWriter（标准输出）
 func Logger() gin.HandlerFunc {
-	//return LoggerWithConfig(GetLoggerConfig(nil, nil, nil))
-	return nil
+	return LoggerWithConfig(GetLoggerConfig(nil, nil, nil))
 }
 
 // LoggerWithFormatter 创建一个日志中间件，使用指定的日志格式化函数
@@ -157,7 +138,7 @@ func LoggerWithConfig(conf gin.LoggerConfig) gin.HandlerFunc {
 			param.Path = path
 
 			// 生成日志并输出（原代码注释了输出逻辑，实际使用时需补充）
-			// log.L(c).Info(formatter(param))
+			log.L(c).Info(formatter(param))
 		}
 	}
 }
