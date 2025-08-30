@@ -23,3 +23,9 @@ Run(cfg *config.Config) error
 这个包作为API服务器的启动入口，封装了服务器的创建、准备和运行流程，为上层应用提供了简单清晰的启动接口。
 */
 package apiserver
+
+import "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+
+func Run(opt *options.Options) error {
+	return nil
+}

@@ -32,6 +32,7 @@ package options
 
 import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 )
 
@@ -40,6 +41,7 @@ type Options struct {
 	JwtOptions             *options.JwtOptions
 	MysqlOptions           *options.MySQLOptions
 	ServerRunOptions       *options.ServerRunOptions
+	Log                    *log.Options
 }
 
 func NewOptions() *Options {
@@ -48,11 +50,26 @@ func NewOptions() *Options {
 		JwtOptions:             options.NewJwtOptions(),
 		MysqlOptions:           options.NewMySQLOptions(),
 		ServerRunOptions:       options.NewServerRunOptions(),
+		Log:                    log.NewOptions(),
 	}
 }
 
+func (o *Options) Complete() {
+	o.InsecureServingOptions.Complete()
+	o.JwtOptions.Complete()
+	o.ServerRunOptions.Complete()
+	o.MysqlOptions.Complete()
+	o.Log.Complete()
+}
+
 func (o *Options) Validate() []error {
-	return nil
+	var errs []error
+	errs = append(errs, o.InsecureServingOptions.Validate()...)
+	errs = append(errs, o.JwtOptions.Validate()...)
+	errs = append(errs, o.MysqlOptions.Validate()...)
+	errs = append(errs, o.ServerRunOptions.Validate()...)
+	errs = append(errs, o.Log.Validate()...)
+	return errs
 }
 
 func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
@@ -60,5 +77,6 @@ func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.MysqlOptions.AddFlags(fss.FlagSet("mysql"))
 	o.JwtOptions.AddFlags(fss.FlagSet("jwt"))
 	o.ServerRunOptions.AddFlags(fss.FlagSet("server"))
+	o.Log.AddFlags(fss.FlagSet("log"))
 	return fss
 }

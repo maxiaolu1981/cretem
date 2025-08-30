@@ -49,13 +49,3 @@ func InitFlags(flags *pflag.FlagSet) {
 	// 将标准库goflag的标志集添加到pflag中，实现两者的兼容
 	flags.AddGoFlagSet(goflag.CommandLine)
 }
-
-// PrintFlags 打印标志集中所有已设置的标志及其值（调试用）
-// 遍历所有标志并通过Debug级别日志输出，便于开发和调试时确认参数是否正确解析
-func PrintFlags(flags *pflag.FlagSet) {
-	// 遍历标志集中的所有标志
-	flags.VisitAll(func(flag *pflag.Flag) {
-		// 输出调试日志：标志名和对应的值
-		log.Debugf("FLAG: --%s=%q", flag.Name, flag.Value)
-	})
-}

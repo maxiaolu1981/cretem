@@ -115,12 +115,20 @@ import (
 	"os"
 
 	"github.com/fatih/color"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
+
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
-	cliFlag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
+
+	cliflag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/term"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/prettyprint"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version/verflag"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 const example = `  # 基础启动（使用默认配置）
@@ -187,16 +195,10 @@ type App struct {
 	noConfig    bool
 	silence     bool
 	runFunc     Runfunc
-	options     CliOptions
 	command     *cobra.Command
 	args        cobra.PositionalArgs
 }
 
-func WithOptions(opts *options.Options) Option {
-	return func(a *App) {
-		a.options = opts
-	}
-}
 func WithDescription(description string) Option {
 	return func(a *App) {
 		a.description = description
@@ -242,7 +244,7 @@ func WithDefaultValidArgs() Option {
 	}
 }
 
-func NewApp(basename, name string, opts ...Option) (*App, error) {
+func NewApp(basename, name string, opt CliOptions, opts ...Option) (*App, error) {
 	app := &App{
 		basename: basename,
 		name:     name,
@@ -250,11 +252,15 @@ func NewApp(basename, name string, opts ...Option) (*App, error) {
 	for _, o := range opts {
 		o(app)
 	}
-	app.buildCommand()
+
+	if err := app.buildCommand(opt); err != nil {
+		return nil, err
+	}
+
 	return app, nil
 }
 
-func (a *App) buildCommand() {
+func (a *App) buildCommand(opt CliOptions) error {
 	cmd := &cobra.Command{
 		Use:           a.basename,
 		Short:         a.name,
@@ -265,29 +271,106 @@ func (a *App) buildCommand() {
 	}
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
+	cliflag.InitFlags(cmd.Flags())
+
 	if a.runFunc != nil {
 		cmd.RunE = a.runCommand
 	}
-	var namedFlagSets cliFlag.NamedFlagSets
-	if a.options != nil {
-		namedFlagSets = a.options.Flags()
+
+	var namedFlagSets cliflag.NamedFlagSets
+	if opt != nil {
+
+		namedFlagSets = opt.Flags()
 		fs := cmd.Flags()
 		for _, fss := range namedFlagSets.FlagSets {
 			fs.AddFlagSet(fss)
 		}
 	}
-	a.command = cmd
-}
 
-func (a *App) Run() {
-	if err := a.command.Execute(); err != nil {
-		fmt.Printf("error=%v %v", progressMessage, err)
+	if !a.noVersion {
+		verflag.AddFlags(namedFlagSets.FlagSet("global"))
 	}
+	if !a.noConfig {
+		addConfigFlag(a.basename, namedFlagSets.FlagSet("global"))
+	}
+
+	addHelpCommandFlag(cmd.Name(), namedFlagSets.FlagSet("global"))
+
+	addCmdTemplate(cmd, namedFlagSets)
+
+	// 1. 首先绑定命令行标志到 Viper（确保命令行参数优先级最高）
+	if !a.noConfig {
+		if err := viper.BindPFlags(cmd.Flags()); err != nil {
+			return err
+		}
+	}
+	// 2. 将 Viper 配置解组到选项结构体
+	if !a.noConfig && opt != nil {
+		if err := viper.Unmarshal(opt); err != nil {
+			return err
+		}
+	}
+	// 3. 应用选项规则（补全和验证）
+	if opt != nil {
+		if err := a.applyOptionRules(opt); err != nil {
+			return err
+		}
+	}
+
+	// 4. 打印调试信息（如果非静默模式）
+	if !a.silence {
+		prettyprint.PrintFlags(cmd.Flags())
+		if !a.noVersion {
+			version.Get().PrintVersionWithLog()
+		}
+		if !a.noConfig {
+			prettyprint.PrintConfig()
+		}
+		prettyprint.Print("options.Options内容", opt)
+	}
+	a.command = cmd
+	return nil
 }
 
 func (a *App) runCommand(cmd *cobra.Command, args []string) error {
+	pwd, _ := os.Getwd()
+	log.Infof("%s开始在[%s]运行%s", progressMessage, pwd, a.name)
 	if a.runFunc != nil {
 		a.runFunc(a.basename)
 	}
 	return nil
+}
+
+func addCmdTemplate(cmd *cobra.Command, namedFlagSets cliflag.NamedFlagSets) {
+	usageFmt := "Usage:\n  %s\n"
+	cols, _, _ := term.TerminalSize(cmd.OutOrStdout())
+	cmd.SetUsageFunc(func(cmd *cobra.Command) error {
+		fmt.Fprintf(cmd.OutOrStderr(), usageFmt, cmd.UseLine())
+		cliflag.PrintSections(cmd.OutOrStderr(), namedFlagSets, cols)
+
+		return nil
+	})
+	cmd.SetHelpFunc(func(cmd *cobra.Command, args []string) {
+		fmt.Fprintf(cmd.OutOrStdout(), "%s\n\n"+usageFmt, cmd.Long, cmd.UseLine())
+		cliflag.PrintSections(cmd.OutOrStdout(), namedFlagSets, cols)
+	})
+}
+
+func (a *App) applyOptionRules(opt CliOptions) error {
+	if completeableOptions, ok := opt.(CompleteableOptions); ok {
+		completeableOptions.Complete()
+	}
+	if opt != nil {
+		if errs := opt.Validate(); len(errs) > 0 {
+			return errors.NewAggregate(errs)
+		}
+	}
+
+	return nil
+}
+
+func (a *App) Run() {
+	if err := a.command.Execute(); err != nil {
+		fmt.Printf("error=%v %v\n", progressMessage, err)
+	}
 }

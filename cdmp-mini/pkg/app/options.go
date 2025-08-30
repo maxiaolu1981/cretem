@@ -118,5 +118,5 @@ type Runfunc func(basename string) error
 
 // 完成配置接口
 type CompleteableOptions interface {
-	Complete() error
+	Complete()
 }

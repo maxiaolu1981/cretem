@@ -49,7 +49,7 @@ import (
 // 帮助标志的常量定义
 const (
 	flagHelp          = "help" // 长选项名：--help
-	flagHelpShorthand = "H"    // 短选项名：-H
+	flagHelpShorthand = "h"    // 短选项名：-H
 )
 
 // helpCommand 创建一个"help"子命令，用于显示其他命令的帮助信息

@@ -69,7 +69,7 @@ package options
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/sets"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
 	"github.com/spf13/pflag"
 )
@@ -81,20 +81,19 @@ type ServerRunOptions struct {
 }
 
 func NewServerRunOptions() *ServerRunOptions {
-	defaults := getServerDefaults()
+
 	return &ServerRunOptions{
-		Mode:        defaults.Mode,
-		Healthz:     defaults.Healthz,
-		Middlewares: defaults.Middlewares,
+		Mode:        gin.ReleaseMode,
+		Healthz:     true,
+		Middlewares: []string{},
 	}
 }
 
 func (s *ServerRunOptions) Complete() {
-	defaults := getServerDefaults()
 
-	s.Mode = s.completeString(s.Mode, defaults.Mode, []string{gin.DebugMode, gin.ReleaseMode, gin.TestMode})
-	s.Healthz = s.completeBool(s.Healthz, defaults.Healthz)
-	s.Middlewares = s.completeSlice(s.Middlewares, defaults.Middlewares)
+	s.Mode = s.completeString(s.Mode, s.Mode, []string{gin.DebugMode, gin.ReleaseMode, gin.TestMode})
+	s.Healthz = s.completeBool(s.Healthz, s.Healthz)
+	s.Middlewares = s.completeSlice(s.Middlewares, s.Middlewares)
 }
 
 func (s *ServerRunOptions) Validate() []error {
@@ -102,20 +101,16 @@ func (s *ServerRunOptions) Validate() []error {
 	var path = field.NewPath("server")
 
 	if s.Mode != "" {
-		for _, mode := range []string{gin.DebugMode, gin.ReleaseMode, gin.TestMode} {
-			if s.Mode != mode {
-				errs = append(errs, field.Invalid(path.Child("mode"), s.Mode, "无效的mode模式"))
-			}
+		set := sets.NewString(gin.DebugMode, gin.ReleaseMode, gin.TestMode)
+		if !set.Has(s.Mode) {
+			errs = append(errs, field.Invalid(path.Child("mode"), s.Mode, "无效的mode模式"))
 		}
 	}
-	return errs.ToAggregate().Errors()
-}
-
-func (s *ServerRunOptions) ApplyTo(c *server.Config) {
-	c.Mode = s.Mode
-	c.Middlewares = s.Middlewares
-	c.Healthz = s.Healthz
-
+	agg := errs.ToAggregate()
+	if agg == nil {
+		return nil // 无错误时返回空切片，而非nil
+	}
+	return agg.Errors()
 }
 
 func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {

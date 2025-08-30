@@ -75,17 +75,23 @@ package options
 
 import (
 	"net"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/pflag"
 )
 
 type MySQLOptions struct {
+	// 管理员配置（用于初始化数据库、创建应用用户）
+	AdminUsername         string        `json:"admin-username" mapstructure:"admin-username"`
+	AdminPassword         string        `json:"admin-password" mapstructure:"admin-password"`
 	Host                  string        `json:"host,omitempty"                     mapstructure:"host"`
+	Port                  int           `json:"port" mapstructure:"-"`
 	Username              string        `json:"username,omitempty"                 mapstructure:"username"`
 	Password              string        `json:"-"                                  mapstructure:"password"`
 	Database              string        `json:"database"                           mapstructure:"database"`
@@ -97,6 +103,8 @@ type MySQLOptions struct {
 
 func NewMySQLOptions() *MySQLOptions {
 	return &MySQLOptions{
+		AdminUsername:         "root",
+		AdminPassword:         "iam59!z$",
 		Host:                  "127.0.0.1:3306",
 		Username:              "",
 		Password:              "",
@@ -105,6 +113,123 @@ func NewMySQLOptions() *MySQLOptions {
 		MaxConnectionLifeTime: time.Duration(10) * time.Second,
 		LogLevel:              1,
 	}
+}
+
+func (m *MySQLOptions) Complete() error {
+	// ---------------- 第一步：加载环境变量（覆盖默认值，优先级最高） ----------------
+	// 此处整合原 loadFromEnv 逻辑，确保环境变量先于补全生效
+	if err := m.loadFromEnv(); err != nil {
+		return errors.Wrap(err, "load config from environment variable failed")
+	}
+
+	// ---------------- 第二步：补全管理员配置（防止环境变量未设置且默认值被清空） ----------------
+	if m.AdminUsername == "" {
+		m.AdminUsername = "root"
+	}
+	if m.AdminPassword == "" {
+		m.AdminPassword = "iam59!z$"
+	}
+
+	// ---------------- 第三步：补全应用访问配置 + 处理 Host 依赖（拆分 IP/Port） ----------------
+	// 补全 Host 兜底值
+	if m.Host == "" {
+		m.Host = "127.0.0.1:3306"
+	}
+	// 拆分 Host 为 IP + Port（支持 "IP:Port" 或 "IP" 格式）
+	ip, port, err := splitHostIntoIPPort(m.Host)
+	if err != nil {
+		return errors.Wrapf(err, "split Host [%s] into IP:Port failed", m.Host)
+	}
+	m.Host = ip
+	m.Port = port
+
+	// 补全应用访问账号
+	if m.Username == "" {
+		m.Username = "iam"
+	}
+	if m.Password == "" {
+		m.Password = "iam59!z$"
+	}
+	if m.Database == "" {
+		m.Database = "iam"
+	}
+
+	// ---------------- 第四步：优化连接池参数（处理不合理值） ----------------
+	// MaxIdleConnections：确保不小于0且不大于 MaxOpenConnections，默认取 MaxOpenConnections 的 1/2
+	if m.MaxIdleConnections <= 0 || m.MaxIdleConnections > m.MaxOpenConnections {
+		m.MaxIdleConnections = m.MaxOpenConnections / 2
+		if m.MaxIdleConnections <= 0 { // 避免 MaxOpenConnections=1 时 Idle 为0
+			m.MaxIdleConnections = 1
+		}
+	}
+	// MaxOpenConnections：兜底为 100（防止环境变量设为0或负数）
+	if m.MaxOpenConnections <= 0 {
+		m.MaxOpenConnections = 100
+	}
+	// ConnMaxLifetime：兜底为 1 小时（防止环境变量设为0或负数）
+	if m.MaxConnectionLifeTime <= 0 {
+		m.MaxConnectionLifeTime = 3600 * time.Second
+	}
+
+	return nil
+}
+
+// loadFromEnv 从环境变量加载配置（优先级：环境变量 > 默认值）
+func (m *MySQLOptions) loadFromEnv() error {
+	// 1. 加载管理员配置
+	if envVal := os.Getenv("MARIADB_ADMIN_USERNAME"); envVal != "" {
+		m.AdminUsername = envVal
+	}
+	if envVal := os.Getenv("MARIADB_ADMIN_PASSWORD"); envVal != "" {
+		m.AdminPassword = envVal
+	}
+
+	// 2. 加载应用访问基础配置
+	if envVal := os.Getenv("MARIADB_HOST"); envVal != "" {
+		m.Host = envVal
+	}
+	if envVal := os.Getenv("MARIADB_USERNAME"); envVal != "" {
+		m.Username = envVal
+	}
+	if envVal := os.Getenv("MARIADB_PASSWORD"); envVal != "" {
+		m.Password = envVal
+	}
+	if envVal := os.Getenv("MARIADB_DATABASE"); envVal != "" {
+		m.Database = envVal
+	}
+
+	// 3. 加载连接池配置
+	if envVal := os.Getenv("MARIADB_MAX_IDLE_CONNECTIONS"); envVal != "" {
+		val, err := strconv.Atoi(envVal)
+		if err != nil {
+			return errors.Wrapf(err, "invalid MARIADB_MAX_IDLE_CONNECTIONS: %s", envVal)
+		}
+		if val >= 0 {
+			m.MaxIdleConnections = val
+		}
+	}
+	if envVal := os.Getenv("MARIADB_MAX_OPEN_CONNECTIONS"); envVal != "" {
+		val, err := strconv.Atoi(envVal)
+		if err != nil {
+			return errors.Wrapf(err, "invalid MARIADB_MAX_OPEN_CONNECTIONS: %s", envVal)
+		}
+		if val > 0 {
+			m.MaxOpenConnections = val
+		} else {
+			return errors.Errorf("MARIADB_MAX_OPEN_CONNECTIONS must be > 0: %d", val)
+		}
+	}
+	if envVal := os.Getenv("MARIADB_CONN_MAX_LIFETIME"); envVal != "" {
+		val, err := time.ParseDuration(envVal)
+		if err != nil {
+			return errors.Wrapf(err, "invalid MARIADB_CONN_MAX_LIFETIME: %s", envVal)
+		}
+		if val > 0 {
+			m.MaxConnectionLifeTime = val
+		}
+	}
+
+	return nil
 }
 
 func (m *MySQLOptions) Validate() []error {
@@ -209,7 +334,11 @@ func (m *MySQLOptions) Validate() []error {
 	if m.MaxOpenConnections > 0 && m.MaxIdleConnections > m.MaxOpenConnections {
 		errs = append(errs, field.Invalid(path.Child("max-idle-connections"), m.MaxIdleConnections, "最大空闲连接数不能大于最大打开连接数"))
 	}
-	return errs.ToAggregate().Errors()
+	agg := errs.ToAggregate()
+	if agg == nil {
+		return nil // 无错误时返回空切片，而非nil
+	}
+	return agg.Errors()
 }
 
 func (o *MySQLOptions) AddFlags(fs *pflag.FlagSet) {
@@ -236,4 +365,37 @@ func (o *MySQLOptions) AddFlags(fs *pflag.FlagSet) {
 
 	fs.IntVarP(&o.LogLevel, "mysql.log-mode", "v", o.LogLevel, ""+
 		"指定GORM日志级别。")
+}
+
+// splitHostIntoIPPort 辅助函数：将 Host 拆分为 IP 和 Port（支持 "IP:Port" 或 "IP" 格式）
+func splitHostIntoIPPort(host string) (ip string, port int, err error) {
+	parts := strings.Split(host, ":")
+	switch len(parts) {
+	case 1:
+		// 仅 IP 格式（如 "127.0.0.1"），默认使用 MariaDB 标准端口 3306
+		ip = parts[0]
+		port = 3306
+	case 2:
+		// 完整 IP:Port 格式（如 "127.0.0.1:3306"）
+		ip = parts[0]
+		portVal, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return "", 0, errors.Wrapf(err, "Port [%s] is not a valid integer", parts[1])
+		}
+		port = portVal
+	default:
+		// 非法格式（如 "127.0.0.1:3306:8080"）
+		return "", 0, errors.Errorf("invalid Host format [%s] (expected 'IP' or 'IP:Port')", host)
+	}
+
+	// 补充 IP 非空校验
+	if ip == "" {
+		return "", 0, errors.New("IP is empty after splitting Host")
+	}
+	// 补充 Port 范围校验
+	if port <= 0 || port > 65535 {
+		return "", 0, errors.Errorf("Port [%d] is out of valid range (1-65535)", port)
+	}
+
+	return ip, port, nil
 }

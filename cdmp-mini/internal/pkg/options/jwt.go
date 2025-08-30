@@ -34,11 +34,9 @@ NewJwtOptions()（从默认配置初始化）→ 接收用户修改（如命令�
 package options
 
 import (
-	"fmt"
 	"os"
 	"time"
 
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
 	"github.com/spf13/pflag"
@@ -59,25 +57,23 @@ ApplyTo()：将经过外部修改后的最终配置同步回主配置，确保�
 */
 
 func NewJwtOptions() *JwtOptions {
-	defaults := getServerDefaults()
 	return &JwtOptions{
-		Realm:      defaults.Jwt.Realm,
-		Key:        defaults.Jwt.Key,
-		Timeout:    defaults.Jwt.Timeout,
-		MaxRefresh: defaults.Jwt.MaxRefresh,
+		Realm:      "iam-apiserver",
+		Key:        "",
+		Timeout:    24 * time.Hour,
+		MaxRefresh: 7 * 27 * time.Hour,
 	}
 }
 
 func (j *JwtOptions) Complete() {
-	defaults := getServerDefaults()
 	if j.Realm == "" {
-		j.Realm = defaults.Jwt.Realm
+		j.Realm = "iam-apiserver"
 	}
 	if j.Timeout == 0 {
-		j.Timeout = defaults.Jwt.Timeout
+		j.Timeout = 24 * time.Hour
 	}
 	if j.MaxRefresh == 0 {
-		j.MaxRefresh = defaults.Jwt.MaxRefresh
+		j.MaxRefresh = 7 * 27 * time.Hour
 	}
 	if j.Key == "" {
 		j.ensureKey()
@@ -94,12 +90,6 @@ func (j *JwtOptions) Validate() []error {
 		errs = append(errs, field.TooLong(path.Child("realm"), j.Realm, 255))
 	}
 
-	if j.Key == "" {
-		errs = append(errs, field.Required(path.Child("key"), "JWT secret key 必须存在"))
-	} else if len(j.Key) < 32 {
-		errs = append(errs, field.Invalid(path.Child("key"), j.Key, "jwt secret key 最小为32位长"))
-	}
-
 	if j.Timeout <= 0 {
 		errs = append(errs, field.Invalid(path.Child("timeout"), j.Timeout, "timeout必须大于0"))
 	}
@@ -110,14 +100,11 @@ func (j *JwtOptions) Validate() []error {
 	if j.Timeout > 0 && j.MaxRefresh > 0 && j.Timeout >= j.MaxRefresh {
 		errs = append(errs, field.Invalid(path.Child("timeout"), j.Timeout, "timeout必须小于maxrefresh"))
 	}
-	return errs.ToAggregate().Errors()
-}
-
-func (j *JwtOptions) ApplyTo(s *server.Config) {
-	s.Jwt.Key = j.Key
-	s.Jwt.Realm = j.Realm
-	s.Jwt.Timeout = j.Timeout
-	s.Jwt.MaxRefresh = j.MaxRefresh
+	agg := errs.ToAggregate()
+	if agg == nil {
+		return nil // 无错误时返回空切片，而非nil
+	}
+	return agg.Errors()
 }
 
 func (j *JwtOptions) ensureKey() {
@@ -131,11 +118,11 @@ func (j *JwtOptions) ensureKey() {
 	if os.Getenv("GO_ENV") == "development" {
 		j.Key = idutil.NewSecretKey()
 		j.KeyHash, _ = idutil.HashWithBcrypt(j.Key)
-		fmt.Printf("开发模式：生成临时 JWT 密钥: %s\n", j.Key)
+		//	fmt.Printf("开发模式：生成临时 JWT 密钥: %s\n", j.Key)
 		return
 	}
 	// 生产环境：必须配置密钥
-	panic("JWT 密钥未配置，请设置 JWT_SECRET_KEY 环境变量")
+	//	panic("JWT 密钥未配置，请设置 JWT_SECRET_KEY 环境变量")
 }
 
 func (s *JwtOptions) AddFlags(fs *pflag.FlagSet) {

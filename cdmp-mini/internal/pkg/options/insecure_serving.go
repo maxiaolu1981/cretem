@@ -58,7 +58,6 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/pflag"
@@ -70,22 +69,21 @@ type InsecureServingOptions struct {
 }
 
 func NewInsecureServingOptions() *InsecureServingOptions {
-	defaults := getServerDefaults()
+
 	return &InsecureServingOptions{
-		BindAddress: defaults.InsecureServingInfo.BindAdress,
-		BindPort:    defaults.InsecureServingInfo.BindPort,
+		BindAddress: "127.0.0.1",
+		BindPort:    8080,
 	}
 }
 
 func (i *InsecureServingOptions) Complete() {
 	i.loadFromEnv()
 
-	defaults := getServerDefaults()
 	if i.BindAddress == "" {
-		i.BindAddress = defaults.InsecureServingInfo.BindAdress
+		i.BindAddress = "127.0.0.1"
 	}
 	if i.BindPort < 0 || i.BindPort > 65535 {
-		i.BindPort = defaults.InsecureServingInfo.BindPort
+		i.BindPort = 8080
 	}
 }
 
@@ -109,12 +107,6 @@ func (i *InsecureServingOptions) Validate() []error {
 		}
 	}
 	return errs
-}
-
-func (i *InsecureServingOptions) ApplyTo(s *server.Config) {
-	s.InsecureServingInfo.BindAdress = i.BindAddress
-	s.InsecureServingInfo.BindPort = i.BindPort
-
 }
 
 func (i *InsecureServingOptions) AddFlags(fs *pflag.FlagSet) {

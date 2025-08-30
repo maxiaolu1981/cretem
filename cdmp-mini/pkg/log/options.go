@@ -19,7 +19,6 @@
 package log
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -70,6 +69,35 @@ func NewOptions() *Options {
 	}
 }
 
+func (o *Options) Complete() error {
+	// Set default level if not specified
+	if o.Level == "" {
+		o.Level = zapcore.InfoLevel.String()
+	}
+
+	// Set default format if not specified
+	if o.Format == "" {
+		o.Format = consoleFormat
+	}
+
+	// Set default output paths if not specified
+	if len(o.OutputPaths) == 0 {
+		o.OutputPaths = []string{"stdout"}
+	}
+
+	// Set default error output paths if not specified
+	if len(o.ErrorOutputPaths) == 0 {
+		o.ErrorOutputPaths = []string{"stderr"}
+	}
+
+	// Validate the completed options
+	if errs := o.Validate(); len(errs) > 0 {
+		return fmt.Errorf("invalid log options: %v", errs)
+	}
+
+	return nil
+}
+
 // Validate validate the options fields.
 func (o *Options) Validate() []error {
 	var errs []error
@@ -105,12 +133,6 @@ func (o *Options) AddFlags(fs *pflag.FlagSet) {
 			"the behavior of DPanicLevel and takes stacktraces more liberally.",
 	)
 	fs.StringVar(&o.Name, flagName, o.Name, "The name of the logger.")
-}
-
-func (o *Options) String() string {
-	data, _ := json.Marshal(o)
-
-	return string(data)
 }
 
 // Build constructs a global zap logger from the Config and Options.

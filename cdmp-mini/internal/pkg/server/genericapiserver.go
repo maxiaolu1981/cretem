@@ -135,18 +135,51 @@ errgroup - 并发控制
 package server
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
+
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/app"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 )
 
-type genericAPIServer struct {
-	middleware          []string
-	insecureServingInfo *insecureServingInfo
-	mode                string
-	insecureServer      http.Server
+type GenericAPIServer struct {
+	insecureServer http.Server
 	*gin.Engine
-	enableProfiling bool
-	enableMetrics   bool
-	healthz         bool
+}
+
+func NewGenericAPIServer(opt app.CliOptions) (*GenericAPIServer, error) {
+	opts, ok := opt.(*options.Options)
+	if !ok {
+		return nil, fmt.Errorf("无效的option type:%T", opt)
+	}
+	//1.设置gin运行模式
+	gin.SetMode(opts.ServerRunOptions.Mode)
+	//2.创建服务器实例
+	g := &GenericAPIServer{
+		Engine: gin.New(),
+	}
+	//3设置调式路由打印
+	gin.DebugPrintRouteFunc = func(httpMethod, absolutePath, handlerName string, nuHandlers int) {
+		log.Infof("%-6s %-s ==> %s(%d handler)", httpMethod, absolutePath, handlerName, nuHandlers)
+	}
+	//4.安装中间件
+	g.Use(middleware.RequestID())
+	g.Use(middleware.Context())
+    
+	if len(opts.ServerRunOptions.Middlewares) > 0{
+		//for _,mw := range opts.ServerRunOptions.Middlewares{
+
+		}
+	}
+   
+
+	return g, nil
+}
+
+func (g *GenericAPIServer) installMiddlewares() {
+
 }

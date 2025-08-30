@@ -20,6 +20,7 @@ import (
 	cliflag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag/globalflag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/term"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/prettyprint"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version/verflag"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
@@ -266,8 +267,8 @@ func (a *App) Command() *cobra.Command {
 
 // runCommand 是 cobra 命令的执行函数，处理应用启动前的准备工作
 func (a *App) runCommand(cmd *cobra.Command, args []string) error {
-	printWorkingDir()               // 打印工作目录
-	cliflag.PrintFlags(cmd.Flags()) // 打印所有标志配置
+	printWorkingDir()                   // 打印工作目录
+	prettyprint.PrintFlags(cmd.Flags()) // 打印所有标志配置
 
 	// 处理配置文件绑定
 	if !a.noConfig {

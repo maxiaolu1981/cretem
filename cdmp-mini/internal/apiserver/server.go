@@ -100,3 +100,16 @@ Redis缓存: 异步连接Redis并进行健康监测
 这个包是IAM API服务器的核心实现，提供了完整的高可用、安全的微服务架构基础。
 */
 package apiserver
+
+import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/app"
+)
+
+type apiServer struct {
+	genericAPIServer *server.GenericAPIServer
+}
+
+func createAPIServer(opt app.CliOptions) (*apiServer, error) {
+
+}
