@@ -24,8 +24,15 @@ Run(cfg *config.Config) error
 */
 package apiserver
 
-import "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+)
 
-func Run(opt *options.Options) error {
-	return nil
+func Run(opts *options.Options) error {
+
+	server, err := newApiServer(opts)
+	if err != nil {
+		return err
+	}
+	return server.run()
 }

@@ -75,25 +75,30 @@ import (
 )
 
 type ServerRunOptions struct {
-	Mode        string   `json:"mode"        mapstructure:"mode"`
-	Healthz     bool     `json:"healthz"     mapstructure:"healthz"`
-	Middlewares []string `json:"middlewares" mapstructure:"middlewares"`
+	Mode            string   `json:"mode"        mapstructure:"mode"`
+	Healthz         bool     `json:"healthz"     mapstructure:"healthz"`
+	Middlewares     []string `json:"middlewares" mapstructure:"middlewares"`
+	EnableProfiling bool
+	EnableMetrics   bool
 }
 
 func NewServerRunOptions() *ServerRunOptions {
 
 	return &ServerRunOptions{
-		Mode:        gin.ReleaseMode,
-		Healthz:     true,
-		Middlewares: []string{},
+		Mode:            gin.ReleaseMode,
+		Healthz:         true,
+		Middlewares:     []string{},
+		EnableProfiling: true,
+		EnableMetrics:   true,
 	}
 }
 
 func (s *ServerRunOptions) Complete() {
 
 	s.Mode = s.completeString(s.Mode, s.Mode, []string{gin.DebugMode, gin.ReleaseMode, gin.TestMode})
-	s.Healthz = s.completeBool(s.Healthz, s.Healthz)
+	s.Healthz = true
 	s.Middlewares = s.completeSlice(s.Middlewares, s.Middlewares)
+	s.EnableMetrics = true
 }
 
 func (s *ServerRunOptions) Validate() []error {
@@ -143,9 +148,5 @@ func (s *ServerRunOptions) completeSlice(value, defaultValue []string) []string 
 	if value == nil {
 		return defaultValue
 	}
-	return value
-}
-
-func (s *ServerRunOptions) completeBool(value, defaultValue bool) bool {
 	return value
 }

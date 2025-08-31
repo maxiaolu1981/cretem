@@ -77,7 +77,7 @@ GetRequestIDFromHeaders()
 
 */
 
-package middleware
+package common
 
 import (
 	"fmt"

@@ -47,7 +47,7 @@ Context() gin.HandlerFunc
 
 这个中间件作为信息传递的桥梁，确保关键的上下文信息（如用户身份、请求ID）在整个请求处理生命周期中可用。
 */
-package middleware
+package common
 
 import (
 	"github.com/gin-gonic/gin"

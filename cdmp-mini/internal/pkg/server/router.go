@@ -75,4 +75,70 @@ AutoStrategy 就像一个聪明的保安总管，他的工作流程非常简单�
 // ... /users 这个包厢不需要安检，可以直接访问（比如登录接口本身就不能要求已登录）
 // !!! 重要：告诉总管，/v1 区域下的所有其他包厢，都必须经过安检！
 */
-package apiserver
+package server
+
+import (
+	"github.com/gin-contrib/pprof"
+	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
+	ginprometheus "github.com/zsais/go-gin-prometheus"
+)
+
+func installRoutes(engine *gin.Engine, opts *options.Options) error {
+	// 系统路由（最先注册，通常无需认证）
+	if err := installSystemRoutes(engine, opts); err != nil {
+		return err
+	}
+
+	// 管理路由（需要管理员认证）
+	if err := installAdminRoutes(engine, opts); err != nil {
+		return err
+	}
+
+	// API路由（需要用户认证）
+	if err := installAPIRoutes(engine, opts); err != nil {
+		return err
+	}
+
+	// 公共服务路由（部分需要认证）
+	if err := installPublicServiceRoutes(engine, opts); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func installSystemRoutes(g *gin.Engine, opts *options.Options) error {
+
+	if opts.ServerRunOptions.Healthz {
+		g.GET("/healthz", func(c *gin.Context) {
+			core.WriteResponse(c, nil, map[string]string{
+				"status": "ok"})
+		})
+	}
+	if opts.ServerRunOptions.EnableMetrics {
+		prometheus := ginprometheus.NewPrometheus("gin")
+		prometheus.Use(g)
+	}
+	if opts.ServerRunOptions.EnableProfiling && opts.ServerRunOptions.Mode == gin.DebugMode {
+		pprof.Register(g)
+	}
+	g.GET("/version", func(c *gin.Context) {
+		core.WriteResponse(c, nil, version.Get().ToJSON())
+	})
+	return nil
+}
+
+func installAdminRoutes(g *gin.Engine, opts *options.Options) error {
+	return nil
+}
+
+func installAPIRoutes(g *gin.Engine, opts *options.Options) error {
+	return nil
+}
+
+func installPublicServiceRoutes(g *gin.Engine, opts *options.Options) error {
+	return nil
+}

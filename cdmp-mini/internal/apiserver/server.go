@@ -102,14 +102,36 @@ Redis缓存: 异步连接Redis并进行健康监测
 package apiserver
 
 import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/app"
+	_ "github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator"
 )
 
 type apiServer struct {
 	genericAPIServer *server.GenericAPIServer
+	options          *options.Options
 }
 
-func createAPIServer(opt app.CliOptions) (*apiServer, error) {
+func newApiServer(opts *options.Options) (*apiServer, error) {
 
+	//mysql
+	//storeIns, err := mysql.GetMySQLFactoryOr(opts.MysqlOptions)
+	///if err != nil {
+	//	return err
+	//}
+	//store.SetClient(storeIns)
+
+	genericAPIServer, err := server.NewGenericAPIServer(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	return &apiServer{
+		genericAPIServer: genericAPIServer,
+		options:          opts,
+	}, nil
+}
+
+func (a *apiServer) run() error {
+	return a.genericAPIServer.Run()
 }

@@ -116,6 +116,7 @@ import (
 
 	"github.com/fatih/color"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
@@ -197,6 +198,13 @@ type App struct {
 	runFunc     Runfunc
 	command     *cobra.Command
 	args        cobra.PositionalArgs
+	options     CliOptions
+}
+
+func WithOptions(opts *options.Options) Option {
+	return func(a *App) {
+		a.options = opts
+	}
 }
 
 func WithDescription(description string) Option {
@@ -244,7 +252,7 @@ func WithDefaultValidArgs() Option {
 	}
 }
 
-func NewApp(basename, name string, opt CliOptions, opts ...Option) (*App, error) {
+func NewApp(basename, name string, opts ...Option) (*App, error) {
 	app := &App{
 		basename: basename,
 		name:     name,
@@ -253,14 +261,14 @@ func NewApp(basename, name string, opt CliOptions, opts ...Option) (*App, error)
 		o(app)
 	}
 
-	if err := app.buildCommand(opt); err != nil {
+	if err := app.buildCommand(); err != nil {
 		return nil, err
 	}
 
 	return app, nil
 }
 
-func (a *App) buildCommand(opt CliOptions) error {
+func (a *App) buildCommand() error {
 	cmd := &cobra.Command{
 		Use:           a.basename,
 		Short:         a.name,
@@ -268,6 +276,7 @@ func (a *App) buildCommand(opt CliOptions) error {
 		Args:          a.args,
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PreRunE:       a.persistentPreRun,
 	}
 	cmd.SetOut(os.Stdout)
 	cmd.SetErr(os.Stderr)
@@ -278,9 +287,9 @@ func (a *App) buildCommand(opt CliOptions) error {
 	}
 
 	var namedFlagSets cliflag.NamedFlagSets
-	if opt != nil {
+	if a.options != nil {
 
-		namedFlagSets = opt.Flags()
+		namedFlagSets = a.options.Flags()
 		fs := cmd.Flags()
 		for _, fss := range namedFlagSets.FlagSets {
 			fs.AddFlagSet(fss)
@@ -297,37 +306,6 @@ func (a *App) buildCommand(opt CliOptions) error {
 	addHelpCommandFlag(cmd.Name(), namedFlagSets.FlagSet("global"))
 
 	addCmdTemplate(cmd, namedFlagSets)
-
-	// 1. 首先绑定命令行标志到 Viper（确保命令行参数优先级最高）
-	if !a.noConfig {
-		if err := viper.BindPFlags(cmd.Flags()); err != nil {
-			return err
-		}
-	}
-	// 2. 将 Viper 配置解组到选项结构体
-	if !a.noConfig && opt != nil {
-		if err := viper.Unmarshal(opt); err != nil {
-			return err
-		}
-	}
-	// 3. 应用选项规则（补全和验证）
-	if opt != nil {
-		if err := a.applyOptionRules(opt); err != nil {
-			return err
-		}
-	}
-
-	// 4. 打印调试信息（如果非静默模式）
-	if !a.silence {
-		prettyprint.PrintFlags(cmd.Flags())
-		if !a.noVersion {
-			version.Get().PrintVersionWithLog()
-		}
-		if !a.noConfig {
-			prettyprint.PrintConfig()
-		}
-		prettyprint.Print("options.Options内容", opt)
-	}
 	a.command = cmd
 	return nil
 }
@@ -356,12 +334,12 @@ func addCmdTemplate(cmd *cobra.Command, namedFlagSets cliflag.NamedFlagSets) {
 	})
 }
 
-func (a *App) applyOptionRules(opt CliOptions) error {
-	if completeableOptions, ok := opt.(CompleteableOptions); ok {
+func (a *App) applyOptionRules() error {
+	if completeableOptions, ok := a.options.(CompleteableOptions); ok {
 		completeableOptions.Complete()
 	}
-	if opt != nil {
-		if errs := opt.Validate(); len(errs) > 0 {
+	if a.options != nil {
+		if errs := a.options.Validate(); len(errs) > 0 {
 			return errors.NewAggregate(errs)
 		}
 	}
@@ -373,4 +351,40 @@ func (a *App) Run() {
 	if err := a.command.Execute(); err != nil {
 		fmt.Printf("error=%v %v\n", progressMessage, err)
 	}
+}
+
+func (a *App) persistentPreRun(cmd *cobra.Command, args []string) error {
+	// 绑定 Viper
+	if !a.noConfig {
+		if err := viper.BindPFlags(cmd.Flags()); err != nil {
+			return err
+		}
+	}
+	//解组到结构体
+	if !a.noConfig && a.options != nil {
+		if err := viper.Unmarshal(a.options); err != nil {
+			return err
+		}
+	}
+
+	// 应用选项规则
+	if a.options != nil {
+		if err := a.applyOptionRules(); err != nil {
+			return err
+		}
+	}
+
+	// 打印调试信息
+	if !a.silence {
+		//prettyprint.PrintFlags(cmd.Flags())
+		if !a.noVersion {
+			version.Get().PrintVersionWithLog()
+		}
+		if !a.noConfig {
+			//	prettyprint.PrintConfig()
+		}
+		prettyprint.Print("配置内容", a.options)
+	}
+
+	return nil
 }

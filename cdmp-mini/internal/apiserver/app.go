@@ -32,15 +32,20 @@ const commandDesc = `IAM API 服务器用于验证和配置 API 对象的数据�
 
 func NewApp(basename string) *app.App {
 	opt := options.NewOptions()
-	application, _ := app.NewApp(basename, "api server", opt, app.WithDefaultValidArgs(), app.WithRunFunc(run(opt)), app.WithDescription(commandDesc))
+	application, _ := app.NewApp(basename, "api server", app.WithOptions(opt), app.WithDefaultValidArgs(), app.WithRunFunc(run(opt)), app.WithDescription(commandDesc))
 
 	return application
 }
 
-func run(opt *options.Options) app.Runfunc {
+func run(opt app.CliOptions) app.Runfunc {
 	return func(basename string) error {
+		opt, ok := opt.(*options.Options)
+		if !ok {
+			log.Fatal("转换Options错误")
+
+		}
 		log.Init(opt.Log)
 		defer log.Flush()
-		return nil
+		return Run(opt)
 	}
 }
