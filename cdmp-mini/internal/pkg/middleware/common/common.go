@@ -7,7 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/maxiaolu1981/cretem/nexuscore/log"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
+
 	gindump "github.com/tpkeeper/gin-dump"
 )
 
