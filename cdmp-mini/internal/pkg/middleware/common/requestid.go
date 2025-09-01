@@ -88,11 +88,6 @@ import (
 	uuid "github.com/satori/go.uuid"
 )
 
-const (
-	// XRequestIDKey defines X-Request-ID key string.
-	XRequestIDKey = "X-Request-ID"
-)
-
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		rid := c.Request.Header.Get(XRequestIDKey)

@@ -72,7 +72,7 @@ func NewInsecureServingOptions() *InsecureServingOptions {
 
 	return &InsecureServingOptions{
 		BindAddress: "127.0.0.1",
-		BindPort:    9090,
+		BindPort:    8080,
 	}
 }
 

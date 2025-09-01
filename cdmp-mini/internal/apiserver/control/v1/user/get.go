@@ -1,0 +1,18 @@
+package user
+
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+)
+
+func (u *UserController) Get(c *gin.Context) {
+	log.L(c).Info("调用Get函数")
+	user, err := u.srv.Users().Get(c, c.Param("name"), metav1.GetOptions{})
+	if err != nil {
+		core.WriteResponse(c, err, nil)
+		return
+	}
+	core.WriteResponse(c, nil, user)
+}

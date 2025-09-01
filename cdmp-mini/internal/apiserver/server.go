@@ -106,6 +106,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
+
 	_ "github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator"
 )
 

@@ -328,9 +328,18 @@ func (l *zapLogger) Write(p []byte) (n int, err error) {
 func WithValues(keysAndValues ...interface{}) Logger { return std.WithValues(keysAndValues...) }
 
 func (l *zapLogger) WithValues(keysAndValues ...interface{}) Logger {
-	//newLogger := l.zapLogger.With(handleFields(l.zapLogger, keysAndValues)...)
-	return nil
-	//return NewLogger(newLogger)
+	// 处理键值对为 Zap 字段
+	fields := handleFields(l.zapLogger, keysAndValues)
+	// 创建新的 Zap 实例，附加字段
+	newZapLogger := l.zapLogger.With(fields...)
+	// 包装为自定义的 *zapLogger 并返回
+	return &zapLogger{
+		zapLogger: newZapLogger,
+		infoLogger: infoLogger{
+			log:   newZapLogger,
+			level: l.infoLogger.level,
+		},
+	}
 }
 
 // WithName adds a new path segment to the logger's name. Segments are joined by

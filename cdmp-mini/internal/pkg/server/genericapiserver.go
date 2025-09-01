@@ -178,7 +178,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		return nil, err
 	}
 	//. 安装路由
-	installRoutes(g.Engine, opts)
+	g.installRoutes()
 
 	return g, nil
 }

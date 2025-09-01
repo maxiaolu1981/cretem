@@ -36,6 +36,12 @@ func (p *policservice) Update(ctx context.Context, policy *v1.Policy, opts metav
 func (p *policservice) Delete(ctx context.Context, username string, name string, opts metav1.DeleteOptions) error {
 	return nil
 }
-func (p *policservice) DeleteCollection(ctx context.Context, username string, names []string, opts metav1.DeleteOptions) error
-func (p *policservice) Get(ctx context.Context, username string, name string, opts metav1.GetOptions) (*v1.Policy, error)
-func (p *policservice) List(ctx context.Context, username string, opts metav1.ListOptions) (*v1.PolicyList, error)
+func (p *policservice) DeleteCollection(ctx context.Context, username string, names []string, opts metav1.DeleteOptions) error {
+	return nil
+}
+func (p *policservice) Get(ctx context.Context, username string, name string, opts metav1.GetOptions) (*v1.Policy, error) {
+	return nil, nil
+}
+func (p *policservice) List(ctx context.Context, username string, opts metav1.ListOptions) (*v1.PolicyList, error) {
+	return nil, nil
+}

@@ -88,11 +88,11 @@ type BasicStrategy struct {
 	compare func(username string, password string) bool
 }
 
-func NewBasicStrategy(compare func(username string, password string) bool) *BasicStrategy {
-	return &BasicStrategy{compare: compare}
+func NewBasicStrategy(compare func(username string, password string) bool) BasicStrategy {
+	return BasicStrategy{compare: compare}
 }
 
-func (b *BasicStrategy) AuthFunc() gin.HandlerFunc {
+func (b BasicStrategy) AuthFunc() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
 		if len(auth) != 2 || auth[0] != "Basic" {

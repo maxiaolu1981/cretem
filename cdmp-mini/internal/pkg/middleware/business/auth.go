@@ -96,5 +96,5 @@ func (operator *AuthOperator) SetAuthStrategy(authStrategy AuthStrategy) {
 }
 
 func (operator *AuthOperator) AuthFunc() gin.HandlerFunc {
-	return operator.AuthFunc()
+	return operator.strategy.AuthFunc()
 }

@@ -33,11 +33,12 @@ parseWithBody()      // 从请求体解析JSON凭据
 */
 // Package apiserver implements the API server handlers.
 //nolint:unused // 包含通过闭包间接使用的函数
-package apiserver
+package server
 
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -92,7 +93,7 @@ func newBasicAuth() middleware.AuthStrategy {
 	})
 }
 
-func newJWTAuth() middleware.AuthStrategy {
+func newJWTAuth() (middleware.AuthStrategy, error) {
 	//基础配置：初始化核心参数
 	realm := viper.GetString("jwt.realm")
 	signingAlgorithm := "HS256"
@@ -105,7 +106,7 @@ func newJWTAuth() middleware.AuthStrategy {
 	tokenLoopup := "header: Authorization, query: token, cookie: jwt"
 	tokenHeadName := "Bearer"
 
-	ginjwt, _ := jwt.New(&jwt.GinJWTMiddleware{
+	ginjwt, err := jwt.New(&jwt.GinJWTMiddleware{
 		Realm:            realm,
 		SigningAlgorithm: signingAlgorithm,
 		Key:              key,
@@ -134,7 +135,11 @@ func newJWTAuth() middleware.AuthStrategy {
 			})
 		},
 	})
-	return auth.NewJWTStrategy(ginjwt)
+	if err != nil {
+		return nil, fmt.Errorf("create JWT middleware failed: %w", err)
+	}
+
+	return auth.NewJWTStrategy(*ginjwt), nil
 }
 
 func authoricator() func(c *gin.Context) (interface{}, error) {
@@ -237,4 +242,16 @@ func refreshResponse() func(c *gin.Context, code int, token string, expire time.
 			"expire": expire.Format(time.RFC3339),
 		})
 	}
+}
+
+func newAutoAuth() (middleware.AuthStrategy, error) {
+	jwt, err := newJWTAuth()
+	if err != nil {
+		return nil, err
+	}
+	jwtAuth, ok := jwt.(auth.JWTStrategy)
+	if !ok {
+		return nil, fmt.Errorf("转换JWTStrategy错误")
+	}
+	return auth.NewAutoStrategy(newBasicAuth().(auth.BasicStrategy), jwtAuth), nil
 }

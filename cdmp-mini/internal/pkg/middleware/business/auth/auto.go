@@ -75,6 +75,7 @@ API网关的统一认证入口
 package auth
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -98,10 +99,11 @@ func NewAutoStrategy(basic, jwt middleware.AuthStrategy) AutoStrategy {
 	}
 }
 
-func (a *AutoStrategy) AuthFunc() gin.HandlerFunc {
+func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		operator := middleware.AuthOperator{}
 		auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
+		fmt.Println("auth......", auth)
 		if len(auth) != authHeaderCount {
 			core.WriteResponse(c, errors.WithCode(code.ErrInvalidAuthHeader, "无效的header"), nil)
 			c.Abort()
@@ -112,6 +114,10 @@ func (a *AutoStrategy) AuthFunc() gin.HandlerFunc {
 			operator.SetAuthStrategy(a.basicStrategy)
 		case "Bearer":
 			operator.SetAuthStrategy(a.jwtStrategy)
+		default:
+			core.WriteResponse(c, errors.WithCode(code.ErrSignatureInvalid, "unrecognized Authorization header."), nil)
+			c.Abort()
+			return
 		}
 		operator.AuthFunc()(c)
 		c.Next()

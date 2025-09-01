@@ -78,51 +78,69 @@ AutoStrategy 就像一个聪明的保安总管，他的工作流程非常简单�
 package server
 
 import (
+	"fmt"
+
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/control/v1/user"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/mysql"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
+
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	ginprometheus "github.com/zsais/go-gin-prometheus"
 )
 
-func installRoutes(engine *gin.Engine, opts *options.Options) error {
+func (g *GenericAPIServer) installRoutes() error {
 	// 系统路由（最先注册，通常无需认证）
-	if err := installSystemRoutes(engine, opts); err != nil {
+	if err := g.installSystemRoutes(); err != nil {
 		return err
 	}
 
-	// 管理路由（需要管理员认证）
-	if err := installAdminRoutes(engine, opts); err != nil {
+	// 认证路由
+	if err := g.installAuthRoutes(); err != nil {
 		return err
 	}
+
+	// 公共路由（部分公开API）- 业务级别但无需认证
+	//if err := installPublicRoutes(); err != nil {
+	//	return err
+	//}
 
 	// API路由（需要用户认证）
-	if err := installAPIRoutes(engine, opts); err != nil {
+	if err := g.installApiRoutes(); err != nil {
 		return err
 	}
 
-	// 公共服务路由（部分需要认证）
-	if err := installPublicServiceRoutes(engine, opts); err != nil {
-		return err
-	}
+	// 管理路由（需要管理员认证）- 系统管理功能
+	//if err := installAdminRoutes(engine, opts); err != nil {
+	//	return err
+	//.}
+
+	// 6. 内部路由（内部服务调用）- 服务间通信
+	//if err := installInternalRoutes(engine, opts); err != nil {
+	//		return err
+	//	}
 
 	return nil
 }
 
-func installSystemRoutes(g *gin.Engine, opts *options.Options) error {
+func (g *GenericAPIServer) installSystemRoutes() error {
 
-	if opts.ServerRunOptions.Healthz {
+	if g.options.ServerRunOptions.Healthz {
 		g.GET("/healthz", func(c *gin.Context) {
 			core.WriteResponse(c, nil, map[string]string{
 				"status": "ok"})
 		})
 	}
-	if opts.ServerRunOptions.EnableMetrics {
+	if g.options.ServerRunOptions.EnableMetrics {
 		prometheus := ginprometheus.NewPrometheus("gin")
-		prometheus.Use(g)
+		prometheus.Use(g.Engine)
 	}
-	if opts.ServerRunOptions.EnableProfiling && opts.ServerRunOptions.Mode == gin.DebugMode {
+	if g.options.ServerRunOptions.EnableProfiling && g.options.ServerRunOptions.Mode == gin.DebugMode {
 		pprof.Register(g)
 	}
 	g.GET("/version", func(c *gin.Context) {
@@ -131,14 +149,41 @@ func installSystemRoutes(g *gin.Engine, opts *options.Options) error {
 	return nil
 }
 
-func installAdminRoutes(g *gin.Engine, opts *options.Options) error {
+func (g *GenericAPIServer) installAuthRoutes() error {
+	jwtStrategy, err := newJWTAuth()
+	if err != nil {
+		return err
+	}
+	jwt, ok := jwtStrategy.(auth.JWTStrategy)
+	if !ok {
+		return fmt.Errorf("转换jwtStrategy错误")
+	}
+	g.POST("/login", jwt.LoginHandler)
+	g.POST("/logout", jwt.LogoutHandler)
+	g.POST("/refresh", jwt.RefreshHandler)
 	return nil
 }
 
-func installAPIRoutes(g *gin.Engine, opts *options.Options) error {
-	return nil
-}
+func (g *GenericAPIServer) installApiRoutes() error {
+	auto, err := newAutoAuth()
+	if err != nil {
+		return err
+	}
+	g.NoRoute(auto.AuthFunc(), func(c *gin.Context) {
+		core.WriteResponse(c, errors.WithCode(code.ErrPageNotFound, "没有到请求的页面"), nil)
+	})
+	storeIns, _ := mysql.GetMySQLFactoryOr(nil)
+	v1 := g.Group("/v1")
+	{
+		userv1 := v1.Group("/users")
+		{
+			userController := user.NewUserController(storeIns)
+			userv1.POST("", userController.Create)
+			//userv1.Use(auto.AuthFunc(), middleware.Validation())
+			userv1.Use(auto.AuthFunc())
+			userv1.GET(":name", userController.Get)
 
-func installPublicServiceRoutes(g *gin.Engine, opts *options.Options) error {
+		}
+	}
 	return nil
 }

@@ -19,8 +19,12 @@ import (
 )
 
 func (u *UserController) Create(c *gin.Context) {
-	logger := log.L(c)
-	logger.Info("增在创建用户")
+	logger := log.L(c).WithValues(
+		"controller", "UserController", // 标识当前控制器
+		"action", "Create", // 标识当前操作
+		"client_ip", c.ClientIP(), // 客户端IP
+	)
+	logger.Debug("开始处理用户创建请求")
 
 	var r v1.User
 
@@ -48,6 +52,6 @@ func (u *UserController) Create(c *gin.Context) {
 	}
 	// 返回时隐藏敏感信息
 	responseUser := r
-	r.Password = ""
+	responseUser.Password = ""
 	core.WriteResponse(c, nil, responseUser)
 }

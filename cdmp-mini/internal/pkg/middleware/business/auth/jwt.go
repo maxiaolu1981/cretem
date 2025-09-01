@@ -72,15 +72,15 @@ import (
 const AuthzAudience = "https://github.com/maxiaolu1981/cretem"
 
 type JWTStrategy struct {
-	*ginjwt.GinJWTMiddleware
+	ginjwt.GinJWTMiddleware
 }
 
 var _ middleware.AuthStrategy = &JWTStrategy{}
 
-func NewJWTStrategy(gjwt *ginjwt.GinJWTMiddleware) *JWTStrategy {
-	return &JWTStrategy{gjwt}
+func NewJWTStrategy(gjwt ginjwt.GinJWTMiddleware) JWTStrategy {
+	return JWTStrategy{gjwt}
 }
 
-func (j *JWTStrategy) AuthFunc() gin.HandlerFunc {
+func (j JWTStrategy) AuthFunc() gin.HandlerFunc {
 	return j.MiddlewareFunc()
 }
