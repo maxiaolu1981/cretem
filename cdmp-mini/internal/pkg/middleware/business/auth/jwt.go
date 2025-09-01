@@ -62,3 +62,25 @@ gin-jwt: 基于appleboy/gin-jwt.v2库实现核心JWT功能
 这个包通过适配器模式将强大的gin-jwt库集成到IAM认证体系中，提供了生产级的JWT认证解决方案。
 */
 package auth
+
+import (
+	ginjwt "github.com/appleboy/gin-jwt/v2"
+	"github.com/gin-gonic/gin"
+	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
+)
+
+const AuthzAudience = "https://github.com/maxiaolu1981/cretem"
+
+type JWTStrategy struct {
+	*ginjwt.GinJWTMiddleware
+}
+
+var _ middleware.AuthStrategy = &JWTStrategy{}
+
+func NewJWTStrategy(gjwt *ginjwt.GinJWTMiddleware) *JWTStrategy {
+	return &JWTStrategy{gjwt}
+}
+
+func (j *JWTStrategy) AuthFunc() gin.HandlerFunc {
+	return j.MiddlewareFunc()
+}

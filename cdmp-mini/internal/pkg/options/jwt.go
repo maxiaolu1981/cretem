@@ -58,7 +58,7 @@ ApplyTo()：将经过外部修改后的最终配置同步回主配置，确保�
 
 func NewJwtOptions() *JwtOptions {
 	return &JwtOptions{
-		Realm:      "iam-apiserver",
+		Realm:      "github.com/maxiaolu1981/cretem",
 		Key:        "",
 		Timeout:    24 * time.Hour,
 		MaxRefresh: 7 * 27 * time.Hour,

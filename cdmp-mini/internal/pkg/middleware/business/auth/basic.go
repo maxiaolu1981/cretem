@@ -72,3 +72,48 @@ AuthFunc() gin.HandlerFunc
 */
 
 package auth
+
+import (
+	"encoding/base64"
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+)
+
+type BasicStrategy struct {
+	compare func(username string, password string) bool
+}
+
+func NewBasicStrategy(compare func(username string, password string) bool) *BasicStrategy {
+	return &BasicStrategy{compare: compare}
+}
+
+func (b *BasicStrategy) AuthFunc() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
+		if len(auth) != 2 || auth[0] != "Basic" {
+			core.WriteResponse(c, errors.WithCode(code.ErrInvalidAuthHeader, "无效的header"), nil)
+			c.Abort()
+			return
+		}
+		payload, _ := base64.StdEncoding.DecodeString(auth[1])
+		pair := strings.SplitN(string(payload), ":", 2)
+		if len(pair) != 2 {
+			core.WriteResponse(c, errors.WithCode(code.ErrInvalidAuthHeader, "无效的头"), nil)
+			c.Abort()
+			return
+		}
+		if b.compare(pair[0], pair[1]) {
+			core.WriteResponse(c, errors.WithCode(code.ErrInvalidAuthHeader, "无效的头"), nil)
+			c.Abort()
+			return
+		}
+		c.Set(common.UsernameKey, pair[0])
+		c.Next()
+
+	}
+}

@@ -4,8 +4,11 @@ import (
 	"context"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+	"gorm.io/gorm"
 )
 
 type UserSrv interface {
@@ -19,6 +22,8 @@ type UserSrv interface {
 	ChangePassword(ctx context.Context, user *v1.User) error
 }
 
+var _ UserSrv = &userService{}
+
 type userService struct {
 	store store.Factory
 }
@@ -30,8 +35,21 @@ func newUsers(s *service) *userService {
 }
 
 func (u *userService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error {
-	return nil
+	err := u.store.Users().Create(ctx, user, opts)
+	if err == nil {
+		return nil
+	}
+	switch {
+	case errors.Is(err, gorm.ErrDuplicatedKey):
+		return errors.WithCode(code.ErrUserAlreadyExist, "用户[%s]已经存在:%v", user.Name, err)
+		// 只有在用户表有外键约束时才需要这个分支
+	case errors.Is(err, gorm.ErrForeignKeyViolated):
+		return errors.WithCode(code.ErrInvalidReference, "关联的数据不存在:%v", err)
+	default:
+		return errors.WithCode(code.ErrDatabase, err.Error())
+	}
 }
+
 func (u *userService) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions) error {
 	return nil
 }

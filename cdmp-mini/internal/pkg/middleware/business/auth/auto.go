@@ -74,4 +74,46 @@ API网关的统一认证入口
 */
 package auth
 
+import (
+	"strings"
+
+	"github.com/gin-gonic/gin"
+	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
+	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+)
+
 const authHeaderCount = 2
+
+type AutoStrategy struct {
+	basicStrategy middleware.AuthStrategy
+	jwtStrategy   middleware.AuthStrategy
+}
+
+func NewAutoStrategy(basic, jwt middleware.AuthStrategy) AutoStrategy {
+	return AutoStrategy{
+		basicStrategy: basic,
+		jwtStrategy:   jwt,
+	}
+}
+
+func (a *AutoStrategy) AuthFunc() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		operator := middleware.AuthOperator{}
+		auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
+		if len(auth) != authHeaderCount {
+			core.WriteResponse(c, errors.WithCode(code.ErrInvalidAuthHeader, "无效的header"), nil)
+			c.Abort()
+			return
+		}
+		switch auth[0] {
+		case "Basic":
+			operator.SetAuthStrategy(a.basicStrategy)
+		case "Bearer":
+			operator.SetAuthStrategy(a.jwtStrategy)
+		}
+		operator.AuthFunc()(c)
+		c.Next()
+	}
+}

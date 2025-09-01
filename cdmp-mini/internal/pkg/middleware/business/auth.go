@@ -20,9 +20,7 @@
 
 包功能
 接口定义: 定义统一的认证策略接口
-
 策略模式: 提供策略切换的操作器实现
-
 解耦设计: 将认证策略与使用代码解耦
 
 核心接口
@@ -80,3 +78,23 @@ AuthFunc() gin.HandlerFunc
 这个包作为认证系统的抽象层，为IAM项目提供了灵活、可扩展的认证架构，是策略设计模式的典型应用。
 */
 package middleware
+
+import (
+	"github.com/gin-gonic/gin"
+)
+
+type AuthStrategy interface {
+	AuthFunc() gin.HandlerFunc
+}
+
+type AuthOperator struct {
+	strategy AuthStrategy
+}
+
+func (operator *AuthOperator) SetAuthStrategy(authStrategy AuthStrategy) {
+	operator.strategy = authStrategy
+}
+
+func (operator *AuthOperator) AuthFunc() gin.HandlerFunc {
+	return operator.AuthFunc()
+}

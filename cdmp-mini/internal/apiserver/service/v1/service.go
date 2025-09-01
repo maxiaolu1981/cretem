@@ -33,6 +33,10 @@ func (s *service) Secrets() SecretSrv {
 	return newSecrets(s)
 }
 
+func (s *service) Policies() PolicySrv {
+	return newPolicies(s)
+}
+
 // 持有数据访问层store的引用,确保具体业务处理着(userService)能够拿到食材(数据)
 // 通过User() 方法孵化具体的业务处理着userService,实现总调度和具体业务分离.就像后厨领班 不用亲自炒菜 但知道哪个厨师团队负责 当服务员点菜的时候 就把任务分配给不同的厨师团队(userService)
 

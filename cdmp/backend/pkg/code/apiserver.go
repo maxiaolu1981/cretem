@@ -12,6 +12,8 @@ const (
 
 	// ErrUserAlreadyExist - 400: 用户已存在。
 	ErrUserAlreadyExist
+	//用户表有外键约束
+	ErrInvalidReference
 )
 
 // iam-apiserver：密钥相关错误
