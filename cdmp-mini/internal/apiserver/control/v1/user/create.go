@@ -5,6 +5,7 @@
 package user
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -18,40 +19,54 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-func (u *UserController) Create(c *gin.Context) {
-	logger := log.L(c).WithValues(
-		"controller", "UserController", // 标识当前控制器
-		"action", "Create", // 标识当前操作
-		"client_ip", c.ClientIP(), // 客户端IP
+func (u *UserController) Create(ctx *gin.Context) {
+	// 从Gin上下文获取中间件设置的信息
+
+	logger := log.L(ctx).WithValues(
+		"controller", "UserController",
+		"action", "Create",
+		"client_ip", ctx.ClientIP(), // 客户端IP
+		"method", ctx.Request.Method, // 请求方法
+		"path", ctx.FullPath(), // 请求路径 操作的资源ID
+		"user_agent", ctx.Request.UserAgent(), // 用户代理
 	)
-	logger.Debug("开始处理用户创建请求")
+	logger.Info("开始处理用户创建请求")
 
 	var r v1.User
 
-	if err := c.ShouldBindJSON(&r); err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrBind, "%v", err.Error()), nil)
+	if err := ctx.ShouldBindJSON(&r); err != nil {
+		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "参数绑定失败:%v", err.Error()), nil)
 		return
 	}
-	if errs := r.Validate(); len(errs) != 0 {
-		core.WriteResponse(c, errors.WithCode(code.ErrValidation, "%v", errs.ToAggregate().Error()), nil)
+
+	validationErrs := r.Validate()
+	if len(validationErrs) > 0 {
+		errDetails := make(map[string]string, len(validationErrs))
+		for _, fieldErr := range validationErrs {
+			errDetails[fieldErr.Field] = fieldErr.ErrorBody()
+		}
+		detailsStr := fmt.Sprintf("参数校验失败: %+v", errDetails)
+
+		err := errors.WrapC(
+			nil,                // 无原始错误，创建全新带码错误
+			code.ErrValidation, // 业务错误码
+			"%s",
+			detailsStr, // 错误消息（包含详情）
+		)
+
+		core.WriteResponse(ctx, err, nil)
 		return
 	}
-	encryptedPassword, err := auth.Encrypt(r.Password)
-	if err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrEncodingFailed, "%v", err.Error()), nil)
-	}
-	r.Password = encryptedPassword
-	if r.Status == 0 {
-		r.Status = 1
-	}
+	r.Password, _ = auth.Encrypt(r.Password)
+	r.Status = 1
 	r.LoginedAt = time.Now()
 
-	if err := u.srv.Users().Create(c, &r, metav1.CreateOptions{}); err != nil {
-		core.WriteResponse(c, err, nil)
+	if err := u.srv.Users().Create(ctx, &r, metav1.CreateOptions{}); err != nil {
+		core.WriteResponse(ctx, err, nil)
 		return
 	}
 	// 返回时隐藏敏感信息
 	responseUser := r
 	responseUser.Password = ""
-	core.WriteResponse(c, nil, responseUser)
+	core.WriteResponse(ctx, nil, responseUser)
 }

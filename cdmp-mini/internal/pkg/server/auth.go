@@ -121,7 +121,32 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 		PayloadFunc:      payload(),
 		IdentityHandler: func(c *gin.Context) interface{} {
 			claims := jwt.ExtractClaims(c)
-			return claims[jwt.IdentityKey]
+
+			// 1. 优先从 jwt.IdentityKey 提取（与 payload 对应）
+			username, ok := claims[jwt.IdentityKey].(string)
+
+			// 2. 若失败，从 sub 字段提取（payload 中同步存储了该字段）
+			if !ok || username == "" {
+				username, ok = claims["sub"].(string)
+				if !ok || username == "" {
+					fmt.Println("JWT解析失败：claims中未找到有效用户名（identity/sub均为空）")
+					return nil
+				}
+			}
+
+			// 3. 后续：设置到 AuthOperator 和上下文（保持之前的逻辑）
+			operatorVal, exists := c.Get("AuthOperator")
+			if exists {
+				if operator, ok := operatorVal.(*middleware.AuthOperator); ok {
+					operator.SetUsername(username)
+				}
+			}
+
+			c.Set(common.UsernameKey, username)
+			ctx := context.WithValue(c.Request.Context(), common.KeyUsername, username)
+			c.Request = c.Request.WithContext(ctx)
+
+			return username
 		},
 		Authorizator:    authorizator(),
 		LoginResponse:   loginResponse(),
@@ -211,17 +236,17 @@ func payload() func(data interface{}) jwt.MapClaims {
 
 func authorizator() func(data interface{}, c *gin.Context) bool {
 	return func(data interface{}, c *gin.Context) bool {
-		user, ok := data.(*v1.User)
-		if !ok {
-			log.L(c).Info("无效的user data")
-			return false
-		}
-		if user.Status != 1 {
-			log.L(c).Warnf("用户%s没有激活", user.Name)
-			return false
-		}
-		log.L(c).Infof("用户 `%s`已经通过认证", user.Name) // 添加参数
-		c.Set(common.UsernameKey, user.Name)
+		// user, ok := data.(*v1.User)
+		// if !ok {
+		// 	log.L(c).Info("无效的user data")
+		// 	return false
+		// }
+		// if user.Status != 1 {
+		// 	log.L(c).Warnf("用户%s没有激活", user.Name)
+		// 	return false
+		// }
+		// log.L(c).Infof("用户 `%s`已经通过认证", user.Name) // 添加参数
+		// c.Set(common.UsernameKey, user.Name)
 		return true
 	}
 }

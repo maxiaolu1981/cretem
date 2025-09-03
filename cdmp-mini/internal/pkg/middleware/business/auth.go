@@ -89,6 +89,15 @@ type AuthStrategy interface {
 
 type AuthOperator struct {
 	strategy AuthStrategy
+	username string
+}
+
+func (operator *AuthOperator) SetUsername(name string) {
+	operator.username = name
+}
+
+func (operator *AuthOperator) GetUsername() string {
+	return operator.username
 }
 
 func (operator *AuthOperator) SetAuthStrategy(authStrategy AuthStrategy) {

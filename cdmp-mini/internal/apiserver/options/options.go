@@ -37,11 +37,12 @@ import (
 )
 
 type Options struct {
-	InsecureServingOptions *options.InsecureServingOptions
-	JwtOptions             *options.JwtOptions
-	MysqlOptions           *options.MySQLOptions
-	ServerRunOptions       *options.ServerRunOptions
-	Log                    *log.Options
+	InsecureServingOptions *options.InsecureServingOptions `json:"insecure" mapstructure:"insecure"`
+	JwtOptions             *options.JwtOptions             `json:"jwt"      mapstructure:"jwt"`
+	MysqlOptions           *options.MySQLOptions           `json:"mysql"    mapstructure:"mysql"`
+	ServerRunOptions       *options.ServerRunOptions       `json:"server"   mapstructure:"server"`
+	Log                    *log.Options                    `json:"log"      mapstructure:"log"`
+	RedisOptions           *options.RedisOptions           `json:"redis"    mapstructure:"redis"`
 }
 
 func NewOptions() *Options {
@@ -51,6 +52,7 @@ func NewOptions() *Options {
 		MysqlOptions:           options.NewMySQLOptions(),
 		ServerRunOptions:       options.NewServerRunOptions(),
 		Log:                    log.NewOptions(),
+		RedisOptions:           options.NewRedisOptions(),
 	}
 }
 
@@ -69,6 +71,7 @@ func (o *Options) Validate() []error {
 	errs = append(errs, o.MysqlOptions.Validate()...)
 	errs = append(errs, o.ServerRunOptions.Validate()...)
 	errs = append(errs, o.Log.Validate()...)
+	errs = append(errs, o.RedisOptions.Validate()...)
 	return errs
 }
 
@@ -78,5 +81,6 @@ func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.JwtOptions.AddFlags(fss.FlagSet("jwt"))
 	o.ServerRunOptions.AddFlags(fss.FlagSet("server"))
 	o.Log.AddFlags(fss.FlagSet("log"))
+	o.RedisOptions.AddFlags(fss.FlagSet("redis"))
 	return fss
 }

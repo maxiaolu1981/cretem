@@ -50,6 +50,7 @@ func EmptyMiddleware() gin.HandlerFunc {
 var baseMiddlewares = map[string]gin.HandlerFunc{
 	"recovery":  gin.Recovery(),
 	"requestid": RequestID(),
+	"context":   Context(),
 	"secure":    Secure,
 	"nocache":   NoCache,
 }
@@ -169,7 +170,7 @@ func GetMiddlewareStack() []gin.HandlerFunc {
 
 	// 统一的执行顺序
 	executionOrder := []string{
-		"recovery", "requestid", "logger", "cors", "secure", "nocache", "dump",
+		"recovery", "secure", "cors", "requestid", "context", "logger", "nocache", "dump",
 	}
 
 	var stack []gin.HandlerFunc

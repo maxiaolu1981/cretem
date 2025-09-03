@@ -85,6 +85,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/control/v1/user"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/mysql"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
 
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
@@ -177,10 +178,11 @@ func (g *GenericAPIServer) installApiRoutes() error {
 	{
 		userv1 := v1.Group("/users")
 		{
-			userController := user.NewUserController(storeIns)
+			userController := user.NewUserController(storeIns, g.redis)
+			userv1.Use(auto.AuthFunc(), middleware.Validation())
+			userv1.DELETE(":name", userController.Delete)
+			userv1.DELETE(":name/force", userController.ForceDelete)
 			userv1.POST("", userController.Create)
-			//userv1.Use(auto.AuthFunc(), middleware.Validation())
-			userv1.Use(auto.AuthFunc())
 			userv1.GET(":name", userController.Get)
 
 		}

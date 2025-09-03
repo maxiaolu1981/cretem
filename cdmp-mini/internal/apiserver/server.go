@@ -112,7 +112,8 @@ import (
 
 type apiServer struct {
 	genericAPIServer *server.GenericAPIServer
-	options          *options.Options
+	//redis            redis.UniversalClient // 新增字段
+	options *options.Options
 }
 
 func newApiServer(opts *options.Options) (*apiServer, error) {
@@ -136,5 +137,6 @@ func newApiServer(opts *options.Options) (*apiServer, error) {
 }
 
 func (a *apiServer) run() error {
+
 	return a.genericAPIServer.Run()
 }

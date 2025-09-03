@@ -280,6 +280,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 
 	english "github.com/go-playground/locales/en"
 	ut "github.com/go-playground/universal-translator"
@@ -393,13 +394,24 @@ func (v *Validator) Validate() field.ErrorList {
 
 	allErrs := field.ErrorList{}
 
-	// collect human-readable errors
 	vErrors, _ := err.(validator.ValidationErrors)
 	for _, vErr := range vErrors {
-		allErrs = append(allErrs, field.Invalid(field.NewPath(vErr.Namespace()), vErr.Translate(v.trans), ""))
+		// 1. 移除结构体名称（如 "User."）
+		namespace := strings.ReplaceAll(vErr.Namespace(), "User.", "")
+		// 2. 转换为 JSON 字段格式（如 "Nickname" → "nickname"）
+		jsonField := strings.ToLower(namespace)
+		// 3. 处理嵌套字段（如 "metadata.Name" → "metadata.name"）
+		jsonField = strings.ReplaceAll(jsonField, ".name", ".name") // 保持小写（示例）
+
+		allErrs = append(allErrs, field.Invalid(
+			field.NewPath(jsonField), // JSON 字段路径
+			vErr.Value(),             // 错误值
+			vErr.Translate(v.trans),  // 错误详情（如“必填项”）
+		))
 	}
 
 	return allErrs
+
 }
 
 // validateDir checks if a given string is an existing directory.

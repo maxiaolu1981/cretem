@@ -78,6 +78,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
@@ -113,6 +114,10 @@ func (b BasicStrategy) AuthFunc() gin.HandlerFunc {
 			return
 		}
 		c.Set(common.UsernameKey, pair[0])
+		// 关键：从上下文获取 AuthOperator，并设置用户名
+		if operator, ok := c.MustGet("AuthOperator").(*middleware.AuthOperator); ok {
+			operator.SetUsername(pair[0]) // 保存到 operator 中
+		}
 		c.Next()
 
 	}

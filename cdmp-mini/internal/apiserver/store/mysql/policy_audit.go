@@ -12,7 +12,7 @@ type policy_audit struct {
 
 func newPolicyAudits(ds *datastore) *policy_audit {
 	return &policy_audit{
-		db: ds.db,
+		db: ds.DB,
 	}
 }
 

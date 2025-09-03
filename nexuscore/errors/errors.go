@@ -367,15 +367,19 @@ func WithCode(code int, format string, args ...interface{}) error {
 // 3. 调用 callers() 获取当前堆栈跟踪
 // 4. 实例化 withCode 结构体，包含错误码、新消息、原始错误和堆栈并返回
 func WrapC(err error, code int, format string, args ...interface{}) error {
-	if err == nil {
-		return err
-	}
-	return &withCode{
-		err:   fmt.Errorf(format, args...),
+	// 生成错误消息
+	msg := fmt.Errorf(format, args...)
+	// 无论原始err是否为nil，都创建带码错误
+	errWithCode := &withCode{
+		err:   msg,
 		code:  code,
-		cause: err,
 		stack: callers(),
 	}
+	// 如果有原始错误，记录cause
+	if err != nil {
+		errWithCode.cause = err
+	}
+	return errWithCode
 }
 
 // Error 实现 error 接口，返回外部安全的错误消息

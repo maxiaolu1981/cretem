@@ -2,12 +2,14 @@ package v1
 
 import (
 	"context"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/lock"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -30,36 +32,29 @@ var _ UserSrv = &userService{}
 
 type userService struct {
 	store store.Factory
+	redis *storage.RedisCluster
 }
 
 func newUsers(s *service) *userService {
 	return &userService{
 		store: s.store,
+		redis: s.redis,
 	}
 }
 
 func (u *userService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error {
 	// 使用辅助函数获取上下文值
-	requestID := common.GetRequestID(ctx)
-	operator := common.GetUsername(ctx)
 
-	// 合并所有字段，只声明一次 logger
 	logger := log.L(ctx).WithValues(
 		"service", "UserService",
-		"operation", "create_user",
-		"request_id", requestID,
-		"operator", operator,
-		"target_user", user.Name,
-		"user_id", user.ID,
-		"user_status", user.Status,
+		"method", "Create",
 	)
 
-	logger.Debug("开始执行用户创建逻辑")
+	logger.Info("开始执行用户创建逻辑")
 
 	// 执行数据库操作
 	err := u.store.Users().Create(ctx, user, opts)
 	if err == nil {
-		logger.Debug("用户创建成功")
 		return nil
 	}
 
@@ -103,12 +98,65 @@ func (u *userService) Update(ctx context.Context, user *v1.User, opts metav1.Upd
 	return nil
 }
 func (u *userService) Delete(ctx context.Context, username string, opts metav1.DeleteOptions) error {
+	logger := log.L(ctx).WithValues(
+		"service", "UserService",
+		"method", "Delete",
+	)
+
+	logger.Info("开始执行用户删除操作")
+	startTime := time.Now()
+	defer func() {
+		logger.WithValues("cost_ms", time.Since(startTime).Microseconds()).Info("用户删除结束")
+	}()
+	//参数校验
+	if username == "" {
+		err := errors.WithCode(code.ErrInvalidParameter, "用户名不能为空")
+		logger.Errorw("删除失败:参数无效", "error", err)
+		return err
+	}
+	//并发控制
+	lock := lock.NewRedisLock(u.redis, "user:delete:"+username, 30*time.Second)
+
+	acquired, err := lock.TryAcquire(ctx, 3, 100*time.Microsecond)
+	if err != nil {
+		logger.Errorw("获取分布锁失败", "error", err, "lock_err", lock.GetKey())
+		return errors.WithCode(code.ErrInternal, "系统繁忙,请稍后再试")
+	}
+	if !acquired {
+		logger.Warnw("获取分布式锁失败，可能其他进程正在操作同一用户", "lock_key", lock.GetKey())
+		return errors.WithCode(code.ErrResourceConflict, "用户正在被其他操作处理，请稍后重试")
+	}
+	// 确保释放锁
+	defer func() {
+		if releaseErr := lock.Release(ctx); releaseErr != nil {
+			logger.Errorw("释放分布式锁失败", "error", releaseErr, "lock_key", lock.GetKey())
+		}
+	}()
+
+	logger.Infow("成功获取分布式锁，开始执行删除操作", "lock_key", lock.GetKey())
+
+	err = u.store.Users().Delete(ctx, username, metav1.DeleteOptions{})
+	if err != nil {
+		logger.Info("删除失败")
+		return err
+	}
 	return nil
 }
 func (u *userService) DeleteCollection(ctx context.Context, username []string, opts metav1.DeleteOptions) error {
 	return nil
 }
 func (u *userService) Get(ctx context.Context, username string, opts metav1.GetOptions) (*v1.User, error) {
+	// 使用辅助函数获取上下文值
+	//requestID := common.GetRequestID(ctx)
+	//operator := common.GetUsername(ctx)
+
+	// 合并所有字段，只声明一次 logger
+	logger := log.L(ctx).WithValues(
+		"service", "UserService",
+		"operation", "Get",
+	)
+	logger.Info("开始执行用户查询逻辑")
+
 	user, err := u.store.Users().Get(ctx, username, opts)
 	if err != nil {
 		return nil, err
@@ -124,6 +172,3 @@ func (u *userService) ListWithBadPerformance(ctx context.Context, opts metav1.Li
 func (u *userService) ChangePassword(ctx context.Context, user *v1.User) error {
 	return nil
 }
-
-// 是UserSrv接口的具体实现,专门处理用户相关业务,比如查询用户列表等.
-// 实现具体的业务逻辑 直接调用store 获取或者修改数据 就像厨师团队从仓库拿食材

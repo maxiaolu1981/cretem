@@ -32,7 +32,7 @@ var (
 )
 
 type datastore struct {
-	db *gorm.DB
+	DB *gorm.DB
 }
 
 func (ds *datastore) Users() store.UserStore {
@@ -81,7 +81,7 @@ func GetMySQLFactoryOr(opts *options.MySQLOptions) (store.Factory, error) {
 }
 
 func (ds *datastore) Close() error {
-	db, err := ds.db.DB()
+	db, err := ds.DB.DB()
 	if err != nil {
 		return errors.Wrap(err, "get gorm db instance failed")
 	}

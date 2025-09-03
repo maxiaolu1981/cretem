@@ -1,6 +1,9 @@
 package v1
 
-import "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
+)
 
 // 角色:后厨总菜单，明确告知control，，后厨能够处理哪些大类的业务
 // 作用:定义业务层入口规范,让control层知道有哪些业务能力.就好像是饭店菜单上的大类,比如川菜 粤菜.
@@ -18,11 +21,13 @@ type Service interface {
 */
 type service struct {
 	store store.Factory
+	redis *storage.RedisCluster
 }
 
-func NewService(store store.Factory) Service {
+func NewService(store store.Factory, redis *storage.RedisCluster) Service {
 	return &service{
 		store: store,
+		redis: redis,
 	}
 }
 

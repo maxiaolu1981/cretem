@@ -65,8 +65,7 @@ const (
 )
 
 const (
-	XRequestIDKey = "X-Request-ID"
-	UsernameKey   = "username"
+	UsernameKey = "username"
 )
 
 // Context 中间件 - 增强版

@@ -75,11 +75,12 @@ API网关的统一认证入口
 package auth
 
 import (
-	"fmt"
+	"context"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
@@ -102,8 +103,9 @@ func NewAutoStrategy(basic, jwt middleware.AuthStrategy) AutoStrategy {
 func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		operator := middleware.AuthOperator{}
+		c.Set("AuthOperator", &operator)
 		auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
-		fmt.Println("auth......", auth)
+
 		if len(auth) != authHeaderCount {
 			core.WriteResponse(c, errors.WithCode(code.ErrInvalidAuthHeader, "无效的header"), nil)
 			c.Abort()
@@ -120,6 +122,23 @@ func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 			return
 		}
 		operator.AuthFunc()(c)
+		if c.IsAborted() {
+			return
+		}
+		// 6. 从operator获取用户名（关键步骤）
+		username := operator.GetUsername()
+
+		// 7. 验证用户名是否有效
+		if username == "" {
+			core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "未获取到用户名"), nil)
+			c.Abort()
+			return
+		}
+
+		// 8. 同步到上下文
+		c.Set(common.UsernameKey, username)
+		ctx := context.WithValue(c.Request.Context(), common.KeyUsername, username)
+		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
 }

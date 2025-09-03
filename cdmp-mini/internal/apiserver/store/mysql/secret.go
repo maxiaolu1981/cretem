@@ -14,7 +14,7 @@ type secret struct {
 
 func newSecrets(ds *datastore) *secret {
 	return &secret{
-		db: ds.db,
+		db: ds.DB,
 	}
 }
 

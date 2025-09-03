@@ -150,12 +150,14 @@ import (
 	"golang.org/x/sync/errgroup"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 )
 
 type GenericAPIServer struct {
 	insecureServer *http.Server
 	*gin.Engine
 	options *options.Options
+	redis   *storage.RedisCluster
 }
 
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
@@ -172,6 +174,9 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	if err := g.configureGin(); err != nil {
 		return nil, err
 	}
+
+	//初始化redis
+	g.initRedisStore()
 
 	//安装中间件
 	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
@@ -199,6 +204,21 @@ func (g *GenericAPIServer) configureGin() error {
 	}
 
 	return nil
+}
+
+func (g *GenericAPIServer) initRedisStore() {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// 初始化Redis实例
+	g.redis = &storage.RedisCluster{
+		// 根据需要设置字段
+		KeyPrefix: "genericapiserver:",
+		HashKeys:  false,
+		IsCache:   false, // 根据实际需求设置
+	}
+
+	go storage.ConnectToRedis(ctx, g.options.RedisOptions)
 }
 
 func (g *GenericAPIServer) Run() error {

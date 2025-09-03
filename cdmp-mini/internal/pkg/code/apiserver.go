@@ -13,6 +13,10 @@ const (
 
 	// ErrUserAlreadyExist - 400: User already exist.
 	ErrUserAlreadyExist
+	ErrUnauthorized
+	ErrInvalidParameter
+	ErrInternal
+	ErrResourceConflict
 )
 
 // iam-apiserver: secret errors.

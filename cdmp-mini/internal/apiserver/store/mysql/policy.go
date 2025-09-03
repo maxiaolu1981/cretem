@@ -14,7 +14,7 @@ type policy struct {
 
 func newPolices(ds *datastore) *policy {
 	return &policy{
-		db: ds.db,
+		db: ds.DB,
 	}
 }
 
@@ -40,4 +40,14 @@ func (p *policy) Get(ctx context.Context, username string, name string, opts met
 
 func (p *policy) List(ctx context.Context, username string, opts metav1.ListOptions) (*v1.PolicyList, error) {
 	return nil, nil
+}
+
+// DeleteByUser deletes policies by username.
+func (p *policy) DeleteByUser(ctx context.Context, username string, opts metav1.DeleteOptions) error {
+	db := p.db  // 使用局部变量
+	if opts.Unscoped {
+		db = db.Unscoped()  // 只修改局部变量
+	}
+
+	return db.Where("username = ?", username).Delete(&v1.Policy{}).Error
 }

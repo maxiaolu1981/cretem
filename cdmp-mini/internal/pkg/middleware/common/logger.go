@@ -17,7 +17,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/mattn/go-isatty" // 用于判断输出设备是否为终端（支持彩色输出）
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 )
 
 // defaultLogFormatter 是日志中间件默认使用的日志格式化函数
@@ -138,7 +137,7 @@ func LoggerWithConfig(conf gin.LoggerConfig) gin.HandlerFunc {
 			param.Path = path
 
 			// 生成日志并输出（原代码注释了输出逻辑，实际使用时需补充）
-			log.L(c).Info(formatter(param))
+			//log.L(c).Debug(formatter(param))
 		}
 	}
 }
