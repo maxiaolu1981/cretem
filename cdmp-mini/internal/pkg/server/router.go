@@ -178,14 +178,14 @@ func (g *GenericAPIServer) installApiRoutes() error {
 	{
 		userv1 := v1.Group("/users")
 		{
-			userController := user.NewUserController(storeIns, g.redis)
+			userController := user.NewUserController(storeIns, g.redis, g.options)
 			userv1.Use(auto.AuthFunc(), middleware.Validation())
 			userv1.DELETE(":name", userController.Delete)
 			userv1.DELETE(":name/force", userController.ForceDelete)
 			userv1.POST("", userController.Create)
 			userv1.GET(":name", userController.Get)
-
 		}
+
 	}
 	return nil
 }

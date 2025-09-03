@@ -1,137 +1,3 @@
-/*
-这是一个完整的 Go 语言 HTTP 服务器实现包，基于 Gin Web 框架，提供了通用的 API 服务器功能。以下是详细分析：
-
-核心结构
-GenericAPIServer
-通用 API 服务器结构体，包含：
-insecureServingInfo - HTTP 服务配置信息
-insecureServer - HTTP 服务器实例
-middlewares - 中间件列表
-mode - 服务器模式
-enableMetrics - 指标收集开关
-enableProfiling - 性能分析开关
-healthz - 健康检查开关
-*gin.Engine - Gin 引擎实例（继承）
-
-主要方法
-1. initGenericAPIServer()
-服务器初始化入口，调用三个核心设置方法：
-
-setup() - 基础设置
-
-installMiddlewares() - 中间件安装
-
-installAPIs() - API 路由安装
-
-2. setup()
-配置 Gin 路由调试信息输出，使用自定义日志格式
-
-3. installMiddlewares()
-安装中间件：
-
-固定安装：RequestID、Context 中间件
-
-动态安装：根据配置列表安装其他中间件
-
-4. installAPIs()
-安装API端点：
-
-/healthz - 健康检查端点（如果启用）
-
-Prometheus 指标收集（如果启用）
-
-pprof 性能分析（如果启用）
-
-/version - 版本信息端点
-
-5. Run()
-启动服务器的主要方法：
-
-配置 HTTP 服务器
-
-使用 errgroup 进行并发控制
-
-启动健康检查 ping
-
-优雅的错误处理
-
-6. ping()
-健康检查方法，在服务器启动后验证路由是否正常加载
-
-技术特性
-中间件管理
-go
-// 预定义的中间件映射
-middleware.Middlewares[mw] // 通过名称获取中间件实例
-监控集成
-Prometheus: 通过 ginprometheus 集成指标收集
-
-pprof: 集成性能分析工具
-
-健康检查: 自定义健康检查端点
-
-错误处理
-使用 errgroup 进行并发错误管理，确保所有goroutine正常退出
-
-启动流程
-初始化：设置 Gin 引擎和中间件
-
-配置：设置路由调试信息
-
-安装：安装中间件和API路由
-
-启动：创建 HTTP 服务器并监听
-
-验证：执行健康检查 ping
-
-运行：等待服务器运行
-
-健康检查机制
-独特的健康检查实现：
-
-go
-
-	func (s *GenericAPIServer) ping(ctx context.Context) error {
-	    // 构建检查URL
-	    // 循环检查直到成功或超时
-	    // 支持本地回环地址转换
-	}
-
-错误处理特点
-优雅关闭：检查 http.ErrServerClosed 错误
-
-超时控制：使用 context 控制健康检查超时
-
-并发安全：使用 errgroup 管理多个goroutine
-
-详细日志：每个步骤都有详细的日志输出
-
-配置依赖
-该服务器依赖多个外部包：
-
-gin - Web 框架
-
-gin-contrib/pprof - 性能分析
-
-go-gin-prometheus - Prometheus 集成
-
-errgroup - 并发控制
-
-自定义中间件和工具包
-
-设计优势
-模块化设计：清晰的初始化步骤分离
-
-可扩展性：通过中间件轻松扩展功能
-
-生产就绪：包含监控、健康检查等生产环境必需功能
-
-错误恢复：完善的错误处理和日志记录
-
-标准化响应：使用统一的响应格式
-
-这个包提供了一个完整、健壮的企业级 API 服务器框架，适合构建微服务和 RESTful API。
-*/
 package server
 
 import (
@@ -140,11 +6,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"golang.org/x/sync/errgroup"
@@ -153,11 +22,18 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 )
 
+// 全局变量存储Redis客户端（用于监控）
+var redisClient redis.UniversalClient
+
+// 新增：存储分布式锁开关状态
+var distributedLockEnabled bool
+
 type GenericAPIServer struct {
 	insecureServer *http.Server
 	*gin.Engine
-	options *options.Options
-	redis   *storage.RedisCluster
+	options     *options.Options
+	redis       *storage.RedisCluster
+	redisCancel context.CancelFunc
 }
 
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
@@ -176,7 +52,11 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 
 	//初始化redis
-	g.initRedisStore()
+	log.Info("正在初始化redis服务器")
+	if err := g.initRedisStore(); err != nil {
+		log.Error("初始化redis服务器失败")
+		return nil, err
+	}
 
 	//安装中间件
 	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
@@ -204,21 +84,6 @@ func (g *GenericAPIServer) configureGin() error {
 	}
 
 	return nil
-}
-
-func (g *GenericAPIServer) initRedisStore() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	// 初始化Redis实例
-	g.redis = &storage.RedisCluster{
-		// 根据需要设置字段
-		KeyPrefix: "genericapiserver:",
-		HashKeys:  false,
-		IsCache:   false, // 根据实际需求设置
-	}
-
-	go storage.ConnectToRedis(ctx, g.options.RedisOptions)
 }
 
 func (g *GenericAPIServer) Run() error {
@@ -377,4 +242,208 @@ func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
 			// 继续重试
 		}
 	}
+}
+
+// initRedisStore 初始化Redis存储，根据分布式锁开关状态调整初始化策略
+// 在initRedisStore函数中正确初始化RedisCluster
+func (g *GenericAPIServer) initRedisStore() error {
+	// 获取分布式锁开关状态
+	distributedLockEnabled = g.options.DistributedLock.Enabled
+	log.Infof("分布式锁开关状态: %v", distributedLockEnabled)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	g.redisCancel = cancel
+	defer func() {
+		if r := recover(); r != nil || redisClient == nil {
+			cancel()
+			log.Errorf("Redis初始化异常，触发上下文取消: recover=%v, 客户端是否为空=%t", r, redisClient == nil)
+		}
+	}()
+
+	// 关键修复：正确初始化RedisCluster，明确设置IsCache=false
+	g.redis = &storage.RedisCluster{
+		KeyPrefix: "genericapiserver:",
+		HashKeys:  false,
+		IsCache:   false, // 匹配singlePool（非缓存客户端）
+	}
+	log.Debugf("RedisCluster实例初始化完成，KeyPrefix=%s，IsCache=%v", g.redis.KeyPrefix, g.redis.IsCache)
+
+	// 启动Redis异步连接任务
+	go func() {
+		log.Info("启动Redis异步连接任务")
+		storage.ConnectToRedis(ctx, g.options.RedisOptions)
+		log.Warn("Redis异步连接任务退出（可能上下文已取消）")
+	}()
+
+	// 等待Redis客户端就绪（带重试机制）
+	const (
+		maxRetries    = 30
+		retryInterval = 1 * time.Second
+	)
+	var retryCount int
+	var lastErr error
+
+	for {
+		// 检查存储是否标记为已连接
+		if !storage.Connected() {
+			lastErr = fmt.Errorf("storage未标记为已连接")
+		} else {
+			// 尝试获取客户端并验证可用性
+			redisClient = g.redis.GetClient()
+			if redisClient != nil {
+				if err := pingRedis(ctx, redisClient); err == nil {
+					log.Info("✅ Redis客户端获取成功且验证可用")
+					go g.monitorRedisConnection(ctx)
+					return nil
+				} else {
+					lastErr = fmt.Errorf("客户端非空但验证失败: %v", err)
+					redisClient = nil // 重置客户端，重新尝试
+				}
+			} else {
+				lastErr = fmt.Errorf("GetClient()返回空客户端")
+			}
+		}
+
+		// 检查是否达到最大重试次数
+		retryCount++
+		if retryCount >= maxRetries {
+			if distributedLockEnabled {
+				finalErr := fmt.Errorf("Redis初始化失败（核心依赖），已达最大重试次数(%d)，最后错误: %v", maxRetries, lastErr)
+				log.Fatal(finalErr.Error())
+				return finalErr
+			} else {
+				log.Warnf("Redis初始化重试达最大次数(%d)（非核心依赖），最后错误: %v，继续启动并监控", maxRetries, lastErr)
+				go g.monitorRedisConnection(ctx)
+				return nil
+			}
+		}
+
+		// 输出重试日志
+		if distributedLockEnabled {
+			log.Warnf("Redis初始化重试中（核心依赖），第%d/%d次，最后错误: %v", retryCount, maxRetries, lastErr)
+		} else {
+			log.Debugf("Redis初始化重试中（非核心依赖），第%d/%d次，最后错误: %v", retryCount, maxRetries, lastErr)
+		}
+		time.Sleep(retryInterval)
+	}
+}
+
+// monitorRedisConnection 监控Redis连接状态，根据分布式锁开关决定是否影响主进程
+func (g *GenericAPIServer) monitorRedisConnection(ctx context.Context) {
+	lastConnected := true
+	monitorTicker := time.NewTicker(3 * time.Second)
+	defer monitorTicker.Stop()
+
+	// 根据锁开关状态输出监控启动日志
+	if distributedLockEnabled {
+		log.Info("🔍 Redis运行期监控协程已启动（分布式锁启用，连接中断将导致进程退出）")
+	} else {
+		log.Info("🔍 Redis运行期监控协程已启动（分布式锁禁用，连接中断不影响主进程）")
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			log.Info("📌 Redis监控协程因上下文取消而退出")
+			return
+		case <-monitorTicker.C:
+			err := pingRedis(ctx, redisClient)
+			current := err == nil
+
+			// 处理连接状态变化
+			if current && !lastConnected {
+				log.Info("📈 Redis连接已恢复")
+				lastConnected = current
+			} else if !current && lastConnected {
+				log.Error("📉 Redis连接已断开，尝试重连...")
+
+				// 尝试重连3次
+				reconnectSuccess := false
+				for i := 0; i < 3; i++ {
+					time.Sleep(1 * time.Second)
+					if err := pingRedis(ctx, redisClient); err == nil {
+						reconnectSuccess = true
+						break
+					}
+				}
+
+				if !reconnectSuccess {
+					if distributedLockEnabled {
+						log.Fatal("❌ Redis多次重连失败（分布式锁启用，核心依赖不可用），主进程将退出")
+						os.Exit(137)
+					} else {
+						log.Warn("⚠️ Redis多次重连失败（分布式锁禁用，非核心依赖），继续监控")
+						lastConnected = false
+					}
+				} else {
+					log.Info("📈 Redis重连成功")
+					lastConnected = true
+				}
+			}
+		}
+	}
+}
+
+// 修正：添加 ctx context.Context 参数，适配 v8 的 Ping 方法签名
+func pingRedis(ctx context.Context, client redis.UniversalClient) error {
+	if client == nil {
+		return fmt.Errorf("Redis客户端未初始化")
+	}
+
+	resultChan := make(chan error, 1)
+
+	// 异步执行PING命令，避免阻塞
+	go func() {
+		var pingCmd *redis.StatusCmd
+
+		// 类型断言，适配不同客户端类型（v8 需传 ctx）
+		switch c := client.(type) {
+		case *redis.Client:
+			pingCmd = c.Ping(ctx) // 修正：传入 ctx
+		case *redis.ClusterClient:
+			pingCmd = c.Ping(ctx) // 修正：传入 ctx
+		default:
+			resultChan <- fmt.Errorf("不支持的Redis客户端类型: %T", client)
+			return
+		}
+
+		// 检查命令执行结果
+		if pingCmd.Err() != nil {
+			resultChan <- handlePingError(pingCmd.Err())
+			return
+		}
+
+		// 验证响应内容
+		if pingCmd.Val() != "PONG" {
+			resultChan <- fmt.Errorf("Redis PING响应异常: %s", pingCmd.Val())
+			return
+		}
+
+		resultChan <- nil
+	}()
+
+	// 超时控制（2秒）：结合外部ctx和超时
+	timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	select {
+	case err := <-resultChan:
+		return err
+	case <-timeoutCtx.Done():
+		return fmt.Errorf("PING命令超时（超过2秒）: %w", timeoutCtx.Err())
+	}
+}
+
+// handlePingError 分类处理PING命令的错误
+func handlePingError(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	if strings.Contains(err.Error(), "connection refused") ||
+		strings.Contains(err.Error(), "i/o timeout") ||
+		strings.Contains(err.Error(), "closed") {
+		return fmt.Errorf("连接失败: %v", err)
+	}
+	return fmt.Errorf("PING失败: %v", err)
 }

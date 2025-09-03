@@ -1,8 +1,8 @@
 #!/bin/bash
-# 单条用户删除操作脚本（适配控制层Delete接口）
-# 功能：调用DELETE /v1/users/:name接口删除指定用户
-# 使用方法: ./delete_single_user.sh [令牌] [待删除用户名]
-# 示例: ./delete_single_user.sh "eyJhbGciOiJIUzI1Ni..." "test-user123"
+# 单条用户硬删除操作脚本（适配控制层ForceDelete接口）
+# 功能：调用DELETE /v1/users/:name/force接口硬删除指定用户
+# 使用方法: ./delete_user_hard.sh [令牌] [待删除用户名]
+# 示例: ./delete_user_hard.sh "eyJhbGciOiJIUzI1Ni..." "test-user123"
 
 # 配置
 API_BASE_URL="http://127.0.0.1:8080/v1/users"  # 需与后端接口地址一致
@@ -24,13 +24,14 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 # 参数校验
 if [ $# -ne 2 ]; then
     log_error "参数错误！正确用法:"
-    log_error "  ./delete_single_user.sh [令牌] [待删除用户名]"
+    log_error "  ./delete_user_hard.sh [令牌] [待删除用户名]"
     exit 1
 fi
 
 TOKEN="$1"
 DELETE_USER="$2"
-DELETE_URL="${API_BASE_URL}/${DELETE_USER}"
+# 关键修改：添加/force路径后缀，适配硬删除接口
+DELETE_URL="${API_BASE_URL}/${DELETE_USER}/force"
 
 # 检查令牌和用户名不为空
 if [ -z "$TOKEN" ]; then
@@ -43,8 +44,16 @@ if [ -z "$DELETE_USER" ]; then
     exit 1
 fi
 
+# 硬删除风险提示与确认
+log_warn "警告：这是硬删除操作，数据将被永久删除且无法恢复！"
+read -p "确认要硬删除用户 '$DELETE_USER' 吗？(y/N) " CONFIRM
+if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
+    log_info "操作已取消"
+    exit 0
+fi
+
 # 执行删除请求
-log_info "开始删除用户: $DELETE_USER"
+log_info "开始硬删除用户: $DELETE_USER"
 log_info "请求接口: $DELETE_URL"
 
 # 发送DELETE请求（携带Bearer令牌）
@@ -60,31 +69,37 @@ response_body=$(echo "$response" | head -n -1)
 # 处理结果（根据控制层逻辑适配）
 case $http_code in
     200)
-        # 后端成功删除或用户不存在时返回200（幂等性处理）
-        log_success "用户 '$DELETE_USER' 操作成功"
+        # 后端成功硬删除时返回200
+        log_success "用户 '$DELETE_USER' 已永久删除"
         log_info "响应: $response_body"
         exit 0
         ;;
     401)
-        # 控制层：未登录时返回 code.ErrUnauthorized（对应HTTP 401）
-        log_error "删除失败：未授权（无法获取操作者信息，可能未登录）"
+        # 控制层：未登录时返回401
+        log_error "删除失败：未授权（令牌无效或已过期）"
         log_error "响应: $response_body"
         exit 1
         ;;
     404)
-        # 若后端将"用户不存在"映射为404（需与控制层一致，当前代码返回200）
+        # 用户不存在
         log_warn "用户 '$DELETE_USER' 不存在（无需删除）"
         log_info "响应: $response_body"
         exit 0
         ;;
-    400|403)
-        # 400：参数错误（如用户名空）；403：权限不足（控制层可能扩展）
-        log_error "删除失败：请求错误（HTTP $http_code）"
+    403)
+        # 权限不足，无硬删除权限
+        log_error "删除失败：权限不足（没有硬删除操作权限）"
+        log_error "响应: $response_body"
+        exit 1
+        ;;
+    400)
+        # 参数错误
+        log_error "删除失败：请求参数错误"
         log_error "响应: $response_body"
         exit 1
         ;;
     500)
-        # 后端数据库错误等（如删除操作失败）
+        # 服务器内部错误
         log_error "删除失败：服务器内部错误"
         log_error "响应: $response_body"
         exit 1

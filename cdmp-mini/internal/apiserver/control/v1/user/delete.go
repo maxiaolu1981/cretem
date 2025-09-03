@@ -53,7 +53,7 @@ func (u *UserController) Delete(ctx *gin.Context) {
 		return
 	}
 
-	if err := u.srv.Users().Delete(stdCtx, deleteUsername, metav1.DeleteOptions{Unscoped: false}); err != nil {
+	if err := u.srv.Users().Delete(stdCtx, deleteUsername, false, metav1.DeleteOptions{Unscoped: false}); err != nil {
 		logger.Errorf("用户删除失败%v", err)
 		core.WriteResponse(ctx, err, nil)
 		return
@@ -103,7 +103,7 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 		return
 	}
 
-	if err := u.srv.Users().Delete(stdCtx, deleteUsername, metav1.DeleteOptions{Unscoped: true}); err != nil {
+	if err := u.srv.Users().Delete(stdCtx, deleteUsername, true, metav1.DeleteOptions{Unscoped: true}); err != nil {
 		logger.Errorf("用户删除失败%v", err)
 		core.WriteResponse(ctx, err, nil)
 		return

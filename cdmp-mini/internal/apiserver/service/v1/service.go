@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 )
@@ -20,14 +21,16 @@ type Service interface {
 // 3. 为每个菜单配备对应的厨师和食材
 */
 type service struct {
-	store store.Factory
-	redis *storage.RedisCluster
+	store   store.Factory
+	redis   *storage.RedisCluster
+	options *options.Options
 }
 
-func NewService(store store.Factory, redis *storage.RedisCluster) Service {
+func NewService(store store.Factory, redis *storage.RedisCluster, options *options.Options) Service {
 	return &service{
-		store: store,
-		redis: redis,
+		store:   store,
+		redis:   redis,
+		options: options,
 	}
 }
 

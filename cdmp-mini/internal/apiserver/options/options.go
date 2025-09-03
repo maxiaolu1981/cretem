@@ -43,6 +43,7 @@ type Options struct {
 	ServerRunOptions       *options.ServerRunOptions       `json:"server"   mapstructure:"server"`
 	Log                    *log.Options                    `json:"log"      mapstructure:"log"`
 	RedisOptions           *options.RedisOptions           `json:"redis"    mapstructure:"redis"`
+	DistributedLock        *options.DistributedLockOptions `json:"distributedLock" mapstructure:"distributedLock"`
 }
 
 func NewOptions() *Options {
@@ -53,6 +54,7 @@ func NewOptions() *Options {
 		ServerRunOptions:       options.NewServerRunOptions(),
 		Log:                    log.NewOptions(),
 		RedisOptions:           options.NewRedisOptions(),
+		DistributedLock:        options.NewDistributedLockOptions(),
 	}
 }
 
@@ -62,6 +64,7 @@ func (o *Options) Complete() {
 	o.ServerRunOptions.Complete()
 	o.MysqlOptions.Complete()
 	o.Log.Complete()
+	o.DistributedLock.Complete()
 }
 
 func (o *Options) Validate() []error {
@@ -72,6 +75,7 @@ func (o *Options) Validate() []error {
 	errs = append(errs, o.ServerRunOptions.Validate()...)
 	errs = append(errs, o.Log.Validate()...)
 	errs = append(errs, o.RedisOptions.Validate()...)
+	errs = append(errs, o.DistributedLock.Validate()...)
 	return errs
 }
 
@@ -82,5 +86,6 @@ func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.ServerRunOptions.AddFlags(fss.FlagSet("server"))
 	o.Log.AddFlags(fss.FlagSet("log"))
 	o.RedisOptions.AddFlags(fss.FlagSet("redis"))
+	o.DistributedLock.AddFlags(fss.FlagSet("distributedLock"))
 	return fss
 }

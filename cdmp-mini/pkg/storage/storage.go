@@ -8,7 +8,6 @@ package storage
 import (
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"hash"
@@ -149,14 +148,6 @@ func hashFunction(algorithm string) (hash.Hash, error) {
 	default:
 		return murmur3.New32(), fmt.Errorf("unknown key hash function: %s. Falling back to murmur32", algorithm)
 	}
-}
-
-// HashStr return hash the give string and return.
-func HashStr(in string) string {
-	h, _ := hashFunction(TokenHashAlgo(in))
-	_, _ = h.Write([]byte(in))
-
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 // HashKey return hash the give string and return.

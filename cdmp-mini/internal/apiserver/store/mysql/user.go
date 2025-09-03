@@ -35,8 +35,11 @@ func (u *users) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOpt
 	return nil
 }
 
-// Delete 主删除方法
 func (u *users) Delete(ctx context.Context, username string, opts metav1.DeleteOptions) error {
+	return nil
+}
+
+func (u *users) DeleteForce(ctx context.Context, username string, opts metav1.DeleteOptions) error {
 	logger := log.FromContext(ctx).WithValues("operation", "user_delete", "username", username, "unscoped", opts.Unscoped)
 	startTime := time.Now()
 	logger.Infow("开始用户删除操作", "start_time", startTime)

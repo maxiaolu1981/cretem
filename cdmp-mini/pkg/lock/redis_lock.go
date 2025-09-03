@@ -1,4 +1,3 @@
-// internal/pkg/lock/redis_lock.go
 package lock
 
 import (
@@ -37,8 +36,8 @@ func NewRedisLock(storage *storage.RedisCluster, key string, timeout time.Durati
 
 // Acquire 获取分布式锁
 func (l *RedisDistributedLock) Acquire(ctx context.Context) (bool, error) {
-	// 直接接收 SetNX 的返回值，无需调用 Result()
-	success, err := l.storage.SetNX(l.key, l.value, l.timeout)
+	// 修复：补充ctx参数，匹配SetNX方法签名
+	success, err := l.storage.SetNX(ctx, l.key, l.value, l.timeout)
 	if err != nil {
 		log.Errorf("Failed to acquire lock: %v", err)
 		return false, err
@@ -57,8 +56,8 @@ func (l *RedisDistributedLock) Release(ctx context.Context) error {
     end
 `
 
-	// 直接获取结果，不需要调用 .Result()
-	result, err := l.storage.Eval(luaScript, []string{l.key}, []interface{}{l.value})
+	// 修复：补充ctx参数，匹配Eval方法签名
+	result, err := l.storage.Eval(ctx, luaScript, []string{l.key}, []interface{}{l.value})
 	if err != nil {
 		log.Errorf("Failed to release lock: %v", err)
 		return err
@@ -102,4 +101,28 @@ func (l *RedisDistributedLock) GetValue() string {
 // GetKey 获取锁的键名（用于调试）
 func (l *RedisDistributedLock) GetKey() string {
 	return l.key
+}
+
+// Renew 续约分布式锁
+func (l *RedisDistributedLock) Renew(ctx context.Context) (bool, error) {
+	// 续约逻辑：仅当锁存在（值匹配）时，重置超时时间（原子操作）
+	luaScript := `
+	if redis.call("get", KEYS[1]) == tostring(ARGV[1]) then
+		return redis.call("expire", KEYS[1], ARGV[2])
+	else
+		return 0
+	end
+`
+	// 修复：补充ctx参数，匹配Eval方法签名
+	result, err := l.storage.Eval(ctx, luaScript, []string{l.key}, []interface{}{l.value, int(l.timeout.Seconds())})
+	if err != nil {
+		log.Errorf("Failed to renew lock: %v", err)
+		return false, err
+	}
+
+	// 解析结果（expire 成功返回 1，失败返回 0）
+	if renewed, ok := result.(int64); ok && renewed == 1 {
+		return true, nil
+	}
+	return false, nil
 }
