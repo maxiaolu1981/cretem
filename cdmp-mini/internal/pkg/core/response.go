@@ -1,10 +1,13 @@
 package core
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
@@ -60,4 +63,23 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 func WriteDeleteSuccess(c *gin.Context) {
 	// 设置 204 状态码（成功且无内容），不写入任何响应体
 	c.Status(http.StatusNoContent)
+}
+
+func CreateSuccessResponse(c *gin.Context, message string, data interface{}) {
+
+	if user, ok := data.(*v1.User); ok {
+		c.Header("Location", fmt.Sprintf("/users/%d", user.ID))
+	}
+	c.JSON(http.StatusCreated, SuccessResponse{
+		Code:    code.ErrSuccess, // 成功码固定为0，区别于错误码（如100004）
+		Message: message,         // 自定义成功提示（语义化）
+		Data:    data,            // 单资源数据（如过滤后的用户对象）
+	})
+}
+
+// SuccessResponse 统一成功响应结构体
+type SuccessResponse struct {
+	Code    int         `json:"code"`    // 成功码固定为0（与错误码区分）
+	Message string      `json:"message"` // 成功提示信息
+	Data    interface{} `json:"data"`    // 业务数据（单资源对象）
 }

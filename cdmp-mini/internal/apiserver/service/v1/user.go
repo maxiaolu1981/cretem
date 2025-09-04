@@ -63,11 +63,15 @@ func (u *userService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		"service", "UserService",
 		"method", "Create",
 	)
-
+	logger.Info("开始查询用户是否存在")
+	_, err := u.store.Users().Get(ctx, user.Name, metav1.GetOptions{})
+	if err == nil {
+		return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在%s", user.Name)
+	}
 	logger.Info("开始执行用户创建逻辑")
 
 	// 执行数据库操作
-	err := u.store.Users().Create(ctx, user, opts)
+	err = u.store.Users().Create(ctx, user, opts)
 	if err == nil {
 		return nil
 	}

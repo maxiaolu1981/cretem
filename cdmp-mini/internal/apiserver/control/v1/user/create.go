@@ -6,6 +6,8 @@ package user
 
 import (
 	"fmt"
+	"strings"
+
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,10 +15,12 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/core"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/auth"
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
+
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
@@ -39,6 +43,14 @@ func (u *UserController) Create(ctx *gin.Context) {
 		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "参数绑定失败:%v", err.Error()), nil)
 		return
 	}
+	//校验用户名
+	username := r.Name
+	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
+		errsMsg := strings.Join(errs, ":")
+		log.Warnw("用户名不合法:", errsMsg)
+		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errsMsg), nil)
+		return
+	}
 
 	validationErrs := r.Validate()
 	if len(validationErrs) > 0 {
@@ -46,15 +58,14 @@ func (u *UserController) Create(ctx *gin.Context) {
 		for _, fieldErr := range validationErrs {
 			errDetails[fieldErr.Field] = fieldErr.ErrorBody()
 		}
-		detailsStr := fmt.Sprintf("参数校验失败: %+v", errDetails)
-
+		detailsStr := fmt.Sprintf("密码设定不符合规则: %+v", errDetails)
 		err := errors.WrapC(
 			nil,                // 无原始错误，创建全新带码错误
 			code.ErrValidation, // 业务错误码
 			"%s",
 			detailsStr, // 错误消息（包含详情）
 		)
-
+		log.Warnw("密码生成不符合规则", detailsStr)
 		core.WriteResponse(ctx, err, nil)
 		return
 	}
@@ -69,5 +80,5 @@ func (u *UserController) Create(ctx *gin.Context) {
 	// 返回时隐藏敏感信息
 	responseUser := r
 	responseUser.Password = ""
-	core.WriteResponse(ctx, nil, responseUser)
+	core.CreateSuccessResponse(ctx, "用户创建成功", responseUser)
 }

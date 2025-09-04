@@ -1,230 +1,218 @@
 #!/bin/bash
-# create_users.sh - 用户创建脚本
-# 功能：支持单次创建一个用户、批量创建两个用户（无重复检查）
-# 使用方法:
-#   单次创建一个用户: ./create_users.sh batch <用户名> <邮箱> <令牌>
-#   批量创建2个用户: ./create_users.sh batch-2 <令牌>
-#   批量创建1000个用户: ./create_users.sh batch-1000 <令牌>
 
-# 配置
-IAM_API_URL="http://127.0.0.1:8080"
-BATCH_SIZE=50  # 每批创建数量（用于1000用户场景）
-DELAY=0.5      # 批次间延迟（秒）
+# 测试配置
+BASE_URL="http://localhost:8080/v1/users"
+# 替换为有效的管理员token
+ADMIN_TOKEN="your_admin_token_here"
+# 替换为有效的普通用户token
+USER_TOKEN="your_user_token_here"
+# 生成一个随机用户名，避免重复
+TEST_USERNAME="test_user_$(date +%s)"
+TEST_EMAIL="test_$(date +%s)@example.com"
 
-# 颜色输出
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# 颜色输出函数
+green() { echo -e "\033[32m$1\033[0m"; }
+red() { echo -e "\033[31m$1\033[0m"; }
+yellow() { echo -e "\033[33m$1\033[0m"; }
+blue() { echo -e "\033[34m$1\033[0m"; }
 
-# 日志函数
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1" >&1; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1" >&1; }
-log_info() { echo -e "${BLUE}[INFO]${NC} $1" >&1; }
+# 测试结果统计
+total=0
+passed=0
+failed=0
 
-# 检查依赖工具
-check_dependencies() {
-    local deps=("curl" "date")
-    for dep in "${deps[@]}"; do
-        if ! command -v "$dep" &> /dev/null; then
-            log_error "缺少必要工具: $dep，请先安装"
-            exit 1
-        fi
-    done
-}
+# 测试函数
+run_test() {
+    local test_name=$1
+    local description=$2
+    local command=$3
+    local expected_code=$4
+    local expected_message=$5
 
-# 创建单个用户（无重复检查，由数据库保证唯一性）
-create_single_user() {
-    local username="$1"
-    local email="$2"
+    total=$((total + 1))
+    blue "\n=== 测试 $total: $test_name ==="
+    echo "描述: $description"
+    echo "执行命令: $command"
     
-    local response=$(curl -s -w "\n%{http_code}" -X POST "${IAM_API_URL}/v1/users" \
-        -H "Content-Type: application/json" \
-        -H "Authorization: Bearer ${TOKEN}" \
-        -d '{
-            "metadata": {
-                "name": "'"${username}"'"
-            },
-            "nickname": "'"${username}"'",
-            "email": "'"${email}"'",
-            "password": "TestPass123!",
-            "status": 1,
-            "isAdmin": 0
-        }')
-
-    local http_code=$(echo "$response" | tail -n1)
-    local body=$(echo "$response" | head -n -1)
+    # 执行测试命令并捕获输出
+    result=$(eval $command)
+    http_code=$(echo "$result" | grep -oP '(?<="http_status":)[0-9]+' | head -n 1)
+    response_code=$(echo "$result" | grep -oP '(?<="code":)[0-9]+' | head -n 1)
+    message=$(echo "$result" | grep -oP '(?<="message":")[^"]+' | head -n 1)
     
-    if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-        log_success "用户 '$username' 创建成功"
-        return 0  # 成功
+    # 显示响应信息
+    echo "HTTP状态码: $http_code"
+    echo "响应码: $response_code"
+    echo "响应消息: $message"
+    
+    # 验证结果
+    if [ "$http_code" -eq "$expected_code" ] && [[ "$message" == *"$expected_message"* ]]; then
+        green "✅ 测试通过"
+        passed=$((passed + 1))
     else
-        log_error "用户 '$username' 创建失败 (HTTP $http_code)，响应: $body"
-        return 1  # 失败
+        red "❌ 测试失败"
+        echo "预期HTTP状态码: $expected_code"
+        echo "预期消息包含: $expected_message"
+        failed=$((failed + 1))
     fi
 }
 
-# 批量创建2个用户（默认命名规则）
-batch_create_2() {
-    log_info "开始批量创建2个用户..."
-    local base_username="test-user"
-    local base_email="test-user"
-    local domain="example.com"
-    local total=2
-    local success_count=0
-    local fail_count=0
-    local start_time=$(date +%s)
+# 1. 测试使用正确参数创建用户（成功场景）
+run_test \
+    "使用正确参数创建用户" \
+    "发送合法的用户创建请求，应返回201状态码和成功消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer $ADMIN_TOKEN' \
+    -d '{
+        \"name\": \"'$TEST_USERNAME'\",
+        \"email\": \"'$TEST_EMAIL'\",
+        \"password\": \"ValidPass123!\",
+        \"nickname\": \"Test User\",
+        \"phone\": \"13800138000\"
+    }'" \
+    201 \
+    "用户创建成功"
 
-    for i in $(seq 1 $total); do
-        local username="${base_username}${i}"
-        local email="${base_email}${i}@${domain}"
-        
-        if create_single_user "$username" "$email"; then
-            success_count=$((success_count + 1))
-        else
-            fail_count=$((fail_count + 1))
-        fi
-    done
+# 2. 测试创建已存在的用户（冲突场景）
+run_test \
+    "创建已存在的用户" \
+    "尝试创建用户名已存在的用户，应返回409状态码和冲突消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer $ADMIN_TOKEN' \
+    -d '{
+        \"name\": \"'$TEST_USERNAME'\",
+        \"email\": \"another_'$TEST_EMAIL'\",
+        \"password\": \"ValidPass123!\",
+        \"nickname\": \"Duplicate User\",
+        \"phone\": \"13900139000\"
+    }'" \
+    409 \
+    "已存在"
 
-    local end_time=$(date +%s)
-    local duration=$(( end_time - start_time ))
-    
-    log_info "======================================"
-    log_success "批量创建完成 - 总耗时: ${duration}秒"
-    log_success "成功: $success_count, 失败: $fail_count"
-}
+# 3. 测试参数绑定失败（缺少必填字段）
+run_test \
+    "参数绑定失败（缺少必填字段）" \
+    "发送缺少用户名的请求，应返回400状态码和绑定失败消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer $ADMIN_TOKEN' \
+    -d '{
+        \"email\": \"missing_username@example.com\",
+        \"password\": \"ValidPass123!\"
+    }'" \
+    400 \
+    "参数绑定失败"
 
-# 批量创建1000个用户（默认命名规则）
-batch_create_1000() {
-    log_info "开始批量创建1000个用户..."
-    local base_username="gettest-user"
-    local base_email="gettest-user"
-    local domain="example.com"
-    local total=1000
-    local success_count=0
-    local fail_count=0
-    local start_time=$(date +%s)
+# 4. 测试用户名不合法（格式错误）
+run_test \
+    "用户名不合法" \
+    "发送包含特殊字符的用户名，应返回422状态码和验证错误消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer $ADMIN_TOKEN' \
+    -d '{
+        \"name\": \"invalid@user.name\",
+        \"email\": \"invalid_username@example.com\",
+        \"password\": \"ValidPass123!\"
+    }'" \
+    422 \
+    "用户名不合法"
 
-    # 分批次创建
-    for batch in $(seq 0 $(( (total - 1) / BATCH_SIZE )) ); do
-        local start=$(( batch * BATCH_SIZE + 1 ))
-        local end=$(( (batch + 1) * BATCH_SIZE ))
-        if [ $end -gt $total ]; then
-            end=$total
-        fi
+# 5. 测试密码不符合规则（强度不够）
+run_test \
+    "密码不符合规则" \
+    "发送弱密码请求，应返回422状态码和密码验证错误消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer $ADMIN_TOKEN' \
+    -d '{
+        \"name\": \"weakpassworduser\",
+        \"email\": \"weak_password@example.com\",
+        \"password\": \"123\"
+    }'" \
+    422 \
+    "密码不符合规则"
 
-        log_info "处理批次 $((batch + 1)): 创建用户 $start-$end"
-        
-        # 本批次内的用户创建
-        for i in $(seq $start $end); do
-            local username="${base_username}${i}"
-            local email="${base_email}${i}@${domain}"
-            
-            if create_single_user "$username" "$email"; then
-                success_count=$((success_count + 1))
-                # 每成功20个输出一次进度
-                if (( success_count % 20 == 0 )); then
-                    log_info "已成功创建 $success_count 个用户"
-                fi
-            else
-                fail_count=$((fail_count + 1))
-            fi
-        done
+# 6. 测试未提供Authorization头
+run_test \
+    "未提供Authorization头" \
+    "不发送认证令牌，应返回401状态码和未授权消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -d '{
+        \"name\": \"noauthtestuser\",
+        \"email\": \"no_auth@example.com\",
+        \"password\": \"ValidPass123!\"
+    }'" \
+    401 \
+    "缺少Authorization头"
 
-        # 批次间延迟（最后一批不延迟）
-        if [ $end -lt $total ]; then
-            log_info "批次间延迟 ${DELAY}秒..."
-            sleep $DELAY
-        fi
-    done
+# 7. 测试使用无效token
+run_test \
+    "使用无效token" \
+    "发送无效的认证令牌，应返回401状态码和认证失败消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer invalid_token' \
+    -d '{
+        \"name\": \"invalidtokentest\",
+        \"email\": \"invalid_token@example.com\",
+        \"password\": \"ValidPass123!\"
+    }'" \
+    401 \
+    "无效"
 
-    local end_time=$(date +%s)
-    local duration=$(( end_time - start_time ))
-    
-    log_info "======================================"
-    log_success "批量创建完成 - 总耗时: ${duration}秒"
-    log_success "成功: $success_count, 失败: $fail_count"
-}
+# 8. 测试权限不足（普通用户创建用户）
+run_test \
+    "权限不足" \
+    "使用普通用户令牌创建用户，应返回403状态码和权限不足消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer $USER_TOKEN' \
+    -d '{
+        \"name\": \"forbiddentestuser\",
+        \"email\": \"forbidden@example.com\",
+        \"password\": \"ValidPass123!\"
+    }'" \
+    403 \
+    "权限不足"
 
-# 单次创建一个用户（通过batch命令）
-batch_create_one() {
-    local username="$1"
-    local email="$2"
-    
-    log_info "开始创建单个用户: $username"
-    local start_time=$(date +%s)
-    
-    if create_single_user "$username" "$email"; then
-        log_success "单个用户创建成功"
-    else
-        log_error "单个用户创建失败"
-    fi
+# 9. 测试请求格式错误（非JSON格式）
+run_test \
+    "请求格式错误" \
+    "发送非JSON格式的请求体，应返回400状态码和格式错误消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer $ADMIN_TOKEN' \
+    -d 'invalid json format'" \
+    400 \
+    "参数绑定失败"
 
-    local end_time=$(date +%s)
-    local duration=$(( end_time - start_time ))
-    log_info "耗时: ${duration}秒"
-}
+# 10. 测试邮箱格式不正确
+run_test \
+    "邮箱格式不正确" \
+    "发送格式错误的邮箱地址，应返回422状态码和验证错误消息" \
+    "curl -s -w '\"http_status\":%{http_code}' -X POST $BASE_URL \
+    -H 'Content-Type: application/json' \
+    -H 'Authorization: Bearer $ADMIN_TOKEN' \
+    -d '{
+        \"name\": \"bademailuser\",
+        \"email\": \"not-an-email\",
+        \"password\": \"ValidPass123!\"
+    }'" \
+    422 \
+    "不符合规则"
 
-# 显示用法
-usage() {
-    echo "用法:" >&1
-    echo "  单次创建一个用户: $0 batch <用户名> <邮箱> <令牌>" >&1
-    echo "  批量创建2个用户: $0 batch-2 <令牌>" >&1
-    echo "  批量创建1000个用户: $0 batch-1000 <令牌>" >&1
-    echo "  示例: $0 batch myuser myuser@example.com <令牌>" >&1
-}
+# 输出测试总结
+blue "\n===== 测试总结 ====="
+echo "总测试数: $total"
+green "通过: $passed"
+red "失败: $failed"
 
-# 主逻辑入口
-log_info "=== 用户创建脚本启动 ==="
-
-# 检查依赖
-check_dependencies
-
-# 验证参数
-if [ $# -lt 2 ]; then
-    log_error "参数不足"
-    usage
-    exit 1
+if [ $failed -eq 0 ]; then
+    green "\n🎉 所有测试通过!"
+else
+    red "\n❌ 有 $failed 个测试失败，请检查问题。"
 fi
-
-# 解析命令和令牌
-COMMAND="$1"
-
-# 根据不同命令处理参数
-case "$COMMAND" in
-    batch-2)
-        if [ $# -ne 2 ]; then
-            log_error "参数错误，正确用法: $0 batch-2 <令牌>"
-            exit 1
-        fi
-        TOKEN="$2"
-        batch_create_2
-        ;;
-    batch-1000)
-        if [ $# -ne 2 ]; then
-            log_error "参数错误，正确用法: $0 batch-1000 <令牌>"
-            exit 1
-        fi
-        TOKEN="$2"
-        batch_create_1000
-        ;;
-    batch)
-        if [ $# -ne 4 ]; then
-            log_error "参数错误，正确用法: $0 batch <用户名> <邮箱> <令牌>"
-            exit 1
-        fi
-        local username="$2"
-        local email="$3"
-        TOKEN="$4"
-        batch_create_one "$username" "$email"
-        ;;
-    *)
-        log_error "未知命令: $1"
-        usage
-        exit 1
-        ;;
-esac
-
-log_info "=== 脚本执行完成 ==="

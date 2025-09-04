@@ -30,7 +30,7 @@ func (u *UserController) Get(c *gin.Context) {
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errMsg := strings.Join(errs, ":")
 		log.Warnw("用户名参数校验失败:", "error", errMsg)
-		core.WriteResponse(c, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errMsg), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrInvalidParameter, "用户名不合法:%s", errMsg), nil)
 		return
 	}
 	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{})

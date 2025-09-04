@@ -14,7 +14,6 @@ require (
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/mattn/go-isatty v0.0.20
 	github.com/maxiaolu1981/cretem/nexuscore v0.0.0-20250901231038-fa914272025d
-	github.com/novalagung/gubrak v1.0.0
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/pflag v1.0.7
