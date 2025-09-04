@@ -79,9 +79,10 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
@@ -100,45 +101,87 @@ func NewAutoStrategy(basic, jwt middleware.AuthStrategy) AutoStrategy {
 	}
 }
 
+// AuthFunc 生成 Gin 中间件函数（核心认证逻辑）
 func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 初始化 AuthOperator 并设置到上下文
 		operator := middleware.AuthOperator{}
 		c.Set("AuthOperator", &operator)
-		auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
 
-		if len(auth) != authHeaderCount {
-			core.WriteResponse(c, errors.WithCode(code.ErrInvalidAuthHeader, "无效的header"), nil)
+		// 第一步：获取 Authorization 头并判断是否为空
+		authHeader := c.Request.Header.Get("Authorization")
+		if authHeader == "" {
+			err := errors.WithCode(
+				code.ErrMissingHeader,
+				"缺少Authorization头，支持格式：\n1. Basic认证：Authorization: Basic {base64(username:password)}\n2. JWT认证：Authorization: Bearer {jwt-token}",
+			)
+			core.WriteResponse(c, err, nil)
 			c.Abort()
 			return
 		}
-		switch auth[0] {
+
+		// 第二步：分割授权头并校验格式
+		authParts := strings.SplitN(authHeader, " ", authHeaderCount)
+		if len(authParts) != authHeaderCount || strings.TrimSpace(authParts[0]) == "" || strings.TrimSpace(authParts[1]) == "" {
+			err := errors.WithCode(
+				code.ErrInvalidAuthHeader,
+				"授权头格式无效，正确格式：\n- Basic认证：Authorization: Basic {base64编码的用户名:密码}\n- JWT认证：Authorization: Bearer {完整JWT令牌}",
+			)
+			core.WriteResponse(c, err, nil)
+			c.Abort()
+			return
+		}
+		authScheme := strings.TrimSpace(authParts[0])
+
+		// 第三步：选择认证策略
+		switch authScheme {
 		case "Basic":
 			operator.SetAuthStrategy(a.basicStrategy)
 		case "Bearer":
 			operator.SetAuthStrategy(a.jwtStrategy)
 		default:
-			core.WriteResponse(c, errors.WithCode(code.ErrSignatureInvalid, "unrecognized Authorization header."), nil)
+			err := errors.WithCode(
+				code.ErrInvalidAuthHeader,
+				"未识别的认证方式，仅支持两种：\n1. Basic认证（用户名密码）\n2. Bearer认证（JWT令牌）",
+			)
+			core.WriteResponse(c, err, nil)
 			c.Abort()
 			return
 		}
-		operator.AuthFunc()(c)
+
+		// 第四步：执行具体认证逻辑（规避 nil 风险）
+		authFunc := operator.AuthFunc()
+		if authFunc == nil {
+			err := errors.WithCode(
+				code.ErrInternalServer,
+				"认证策略初始化异常，无法执行认证",
+			)
+			core.WriteResponse(c, err, nil)
+			c.Abort()
+			return
+		}
+		authFunc(c)
 		if c.IsAborted() {
 			return
 		}
-		// 6. 从operator获取用户名（关键步骤）
-		username := operator.GetUsername()
 
-		// 7. 验证用户名是否有效
+		// 第五步：获取并校验用户名
+		username := operator.GetUsername()
 		if username == "" {
-			core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "未获取到用户名"), nil)
+			err := errors.WithCode(
+				code.ErrUnauthorized,
+				"认证流程异常：未获取到用户名",
+			)
+			core.WriteResponse(c, err, nil)
 			c.Abort()
 			return
 		}
 
-		// 8. 同步到上下文
+		// 第六步：同步用户名到上下文
 		c.Set(common.UsernameKey, username)
-		ctx := context.WithValue(c.Request.Context(), common.KeyUsername, username)
-		c.Request = c.Request.WithContext(ctx)
+		newCtx := context.WithValue(c.Request.Context(), common.KeyUsername, username)
+		c.Request = c.Request.WithContext(newCtx)
+
 		c.Next()
 	}
 }

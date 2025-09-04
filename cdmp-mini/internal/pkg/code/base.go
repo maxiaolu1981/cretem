@@ -7,83 +7,89 @@ package code
 //go:generate codegen -type=int
 //go:generate codegen -type=int -doc -output ../../../docs/guide/zh-CN/api/error_code_generated.md
 
-// Common: basic errors.
-// Code must start with 1xxxxx.
+// 通用基本错误（1000xx）：服务10 + 模块00 + 序号
 const (
-	// ErrSuccess - 200: OK.
-	ErrSuccess int = iota + 100001
+	// ErrSuccess - 200: 成功
+	ErrSuccess int = iota + 100001 // 100001
 
-	// ErrUnknown - 500: Internal server error.
-	ErrUnknown
+	// ErrUnknown - 500: 内部服务器错误
+	ErrUnknown // 100002
 
-	// ErrBind - 400: Error occurred while binding the request body to the struct.
-	ErrBind
+	// ErrBind - 400: 请求体绑定结构体失败
+	ErrBind // 100003
 
-	// ErrValidation - 400: Validation failed.
-	ErrValidation
+	// ErrValidation - 400: 数据验证失败
+	ErrValidation // 100004
 
-	// ErrTokenInvalid - 401: Token invalid.
-	ErrTokenInvalid
-
-	// ErrPageNotFound - 404: Page not found.
-	ErrPageNotFound
+	// ErrPageNotFound - 404: 页面不存在
+	ErrPageNotFound // 100005
 )
 
-// common: database errors.
+// 通用数据库错误（1001xx）：服务10 + 模块01 + 序号
 const (
-	// ErrDatabase - 500: Database error.
-	ErrDatabase int = iota + 100101
+	// ErrDatabase - 500: 数据库操作错误
+	ErrDatabase int = iota + 100101 // 100101
+
+	// ErrDatabaseTimeout - 500: 数据库超时
+	ErrDatabaseTimeout // 100102
 )
 
-// common: authorization and authentication errors.
+// 通用授权认证错误（1002xx）：服务10 + 模块02 + 序号
 const (
-	// ErrEncrypt - 401: Error occurred while encrypting the user password.
-	ErrEncrypt int = iota + 100201
+	// ErrEncrypt - 401: 用户密码加密失败
+	ErrEncrypt int = iota + 100201 // 100201
 
-	// ErrSignatureInvalid - 401: Signature is invalid.
-	ErrSignatureInvalid
+	// ErrSignatureInvalid - 401: 签名无效
+	ErrSignatureInvalid // 100202
 
-	// ErrExpired - 401: Token expired.
-	ErrExpired
+	// ErrExpired - 401: 令牌已过期
+	ErrExpired // 100203
 
-	// ErrInvalidAuthHeader - 401: Invalid authorization header.
-	ErrInvalidAuthHeader
+	// ErrInvalidAuthHeader - 401: 无效的授权头
+	ErrInvalidAuthHeader // 100204
 
-	// ErrMissingHeader - 401: The `Authorization` header was empty.
-	ErrMissingHeader
+	// ErrMissingHeader - 401: Authorization头为空
+	ErrMissingHeader // 100205
 
-	// ErrPasswordIncorrect - 401: Password was incorrect.
-	ErrPasswordIncorrect
+	// ErrPasswordIncorrect - 401: 密码不正确
+	ErrPasswordIncorrect // 100206
 
-	// PermissionDenied - 403: Permission denied.
-	ErrPermissionDenied
+	// ErrPermissionDenied - 403: 权限不足
+	ErrPermissionDenied // 100207
 
-	ErrDatabaseTimeout
+	// ErrTokenInvalid - 401: 令牌无效
+	ErrTokenInvalid // 100208（补充：归为授权错误更合理）
+
+	//100209 ErrBase64DecodeFail - 400: Basic认证 payload Base64解码失败
+	ErrBase64DecodeFail 
+
+	// 100210 ErrInvalidBasicPayload - 400: Basic认证 payload格式无效（缺少冒号分隔）
+    ErrInvalidBasicPayload
 )
 
-// common: encode/decode errors.
+// 通用加解码错误（1003xx）：服务10 + 模块03 + 序号
 const (
-	// ErrEncodingFailed - 500: Encoding failed due to an error with the data.
-	ErrEncodingFailed int = iota + 100301
+	// ErrEncodingFailed - 500: 数据编码失败
+	ErrEncodingFailed int = iota + 100301 // 100301
 
-	// ErrDecodingFailed - 500: Decoding failed due to an error with the data.
-	ErrDecodingFailed
+	// ErrDecodingFailed - 500: 数据解码失败
+	ErrDecodingFailed // 100302
 
-	// ErrInvalidJSON - 500: Data is not valid JSON.
-	ErrInvalidJSON
+	// ErrInvalidJSON - 500: 无效的JSON格式
+	ErrInvalidJSON // 100303
 
-	// ErrEncodingJSON - 500: JSON data could not be encoded.
-	ErrEncodingJSON
+	// ErrEncodingJSON - 500: JSON编码失败
+	ErrEncodingJSON // 100304
 
-	// ErrDecodingJSON - 500: JSON data could not be decoded.
-	ErrDecodingJSON
+	// ErrDecodingJSON - 500: JSON解码失败
+	ErrDecodingJSON // 100305
 
-	// ErrInvalidYaml - 500: Data is not valid Yaml.
-	ErrInvalidYaml
+	// ErrInvalidYaml - 500: 无效的Yaml格式
+	ErrInvalidYaml // 100306
 
-	// ErrEncodingYaml - 500: Yaml data could not be encoded.
-	ErrEncodingYaml
+	// ErrEncodingYaml - 500: Yaml编码失败
+	ErrEncodingYaml // 100307
 
-	// ErrDecodingYaml - 500: Yaml data could not be decoded.
-	ErrDecodingYaml
+	// ErrDecodingYaml - 500: Yaml解码失败
+	ErrDecodingYaml // 100308
 )

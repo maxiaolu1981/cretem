@@ -59,3 +59,11 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 	// 4. 无错误时，返回 200 OK 和业务数据
 	c.JSON(http.StatusOK, data)
 }
+
+// -------------------------- 新增：WriteDeleteSuccess --------------------------
+// WriteDeleteSuccess 处理 DELETE 操作成功的响应（RESTful 规范：204 No Content）
+// 核心：仅返回 204 状态码，无响应体（符合 HTTP 规范）
+func WriteDeleteSuccess(c *gin.Context) {
+	// 设置 204 状态码（成功且无内容），不写入任何响应体
+	c.Status(http.StatusNoContent)
+}

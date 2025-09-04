@@ -6,30 +6,41 @@ package code
 
 //go:generate codegen -type=int
 
-// iam-apiserver: user errors.
+// iam-apiserver用户模块错误（1100xx）：服务11 + 模块00 + 序号
 const (
-	// ErrUserNotFound - 404: User not found.
-	ErrUserNotFound int = iota + 110001
+	// ErrUserNotFound - 404: 用户不存在
+	ErrUserNotFound int = iota + 110001 // 110001
 
-	// ErrUserAlreadyExist - 400: User already exist.
-	ErrUserAlreadyExist
-	ErrUnauthorized
-	ErrInvalidParameter
-	ErrInternal
-	ErrResourceConflict
+	// ErrUserAlreadyExist - 400: 用户已存在
+	ErrUserAlreadyExist // 110002
+
+	// ErrUnauthorized - 401: 未授权访问用户资源
+	ErrUnauthorized // 110003
+
+	// ErrInvalidParameter - 400: 用户参数无效（如用户名为空）
+	ErrInvalidParameter // 110004
+
+	// ErrInternal - 500: 用户模块内部错误
+	ErrInternal // 110005
+
+	// ErrResourceConflict - 409: 用户资源冲突
+	ErrResourceConflict // 110006
+
+	// ErrInternalServer - 500: 用户模块服务器内部错误
+	ErrInternalServer // 110007
 )
 
-// iam-apiserver: secret errors.
+// iam-apiserver密钥模块错误（1101xx）：服务11 + 模块01 + 序号
 const (
-	// ErrEncrypt - 400: Secret reach the max count.
-	ErrReachMaxCount int = iota + 110101
+	// ErrReachMaxCount - 400: 密钥数量达到上限
+	ErrReachMaxCount int = iota + 110101 // 110101
 
-	//  ErrSecretNotFound - 404: Secret not found.
-	ErrSecretNotFound
+	// ErrSecretNotFound - 404: 密钥不存在
+	ErrSecretNotFound // 110102
 )
 
-// iam-apiserver: policy errors.
+// iam-apiserver策略模块错误（1102xx）：服务11 + 模块02 + 序号
 const (
-	// ErrPolicyNotFound - 404: Policy not found.
-	ErrPolicyNotFound int = iota + 110201
+	// ErrPolicyNotFound - 404: 策略不存在
+	ErrPolicyNotFound int = iota + 110201 // 110201
 )

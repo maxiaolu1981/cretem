@@ -1,112 +1,153 @@
 #!/bin/bash
-# 单条用户硬删除操作脚本（适配控制层ForceDelete接口）
-# 功能：调用DELETE /v1/users/:name/force接口硬删除指定用户
-# 使用方法: ./delete_user_hard.sh [令牌] [待删除用户名]
-# 示例: ./delete_user_hard.sh "eyJhbGciOiJIUzI1Ni..." "test-user123"
+# 修复版：用户硬删除接口全量测试脚本（400/401/404/500/204）
+# 核心改进：参数传递极简化，避免顺序混乱
+# 使用方法：1. 修改配置区的 TOKEN 和 VALID_USER；2. chmod +x 脚本；3. 执行脚本
 
-# 配置
-API_BASE_URL="http://127.0.0.1:8080/v1/users"  # 需与后端接口地址一致
-TIMEOUT=10  # 超时时间(秒)
+# ==================== 配置区（必须修改！） ====================
+API_BASE_URL="http://127.0.0.1:8080/v1/users"  # 接口地址
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzAyMTA4MCwiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ19pYXQiOjE3NTY5MzQ2ODAsInN1YiI6ImFkbWluIn0.8URnCUoBEM-adaeV3bMJeU9Hiazebf00-9Ws8DC5GYA"  # 你的有效令牌
+VALID_USER="gettest-user1000"  # 确认：这个用户必须存在！否则会触发404
+NON_EXIST_USER="non_exist_$(date +%s)"  # 随机不存在的用户（404测试）
+INVALID_USER="invalid@user"   # 格式无效的用户（400测试）
+TIMEOUT=10  # 超时时间
+# ==============================================================
 
-# 颜色输出
+# 颜色配置
 GREEN='\033[0;32m'
 RED='\033[0;31m'
-YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+PURPLE='\033[0;35m'
 NC='\033[0m'
 
 # 日志函数
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_test() { echo -e "${PURPLE}[TEST]${NC} $1"; }
 
-# 参数校验
-if [ $# -ne 2 ]; then
-    log_error "参数错误！正确用法:"
-    log_error "  ./delete_user_hard.sh [令牌] [待删除用户名]"
-    exit 1
-fi
+# 测试统计
+total=0
+passed=0
+failed=0
 
-TOKEN="$1"
-DELETE_USER="$2"
-# 关键修改：添加/force路径后缀，适配硬删除接口
-DELETE_URL="${API_BASE_URL}/${DELETE_USER}/force"
+# ==================== 核心函数（参数清晰无混乱） ====================
+# 函数功能：发送请求并验证状态码
+# 参数说明：
+# $1: 测试名称（如"400参数错误"）
+# $2: 请求URL（完整地址）
+# $3: 预期状态码（如400、401，必须是整数）
+# $4及以后: 可选请求头（如"Authorization: Bearer xxx"）
+test_case() {
+    local test_name="$1"
+    local url="$2"
+    local expect_code="$3"
+    shift 3  # 移除前3个固定参数，剩下的都是请求头
+    local headers=("$@")  # 接收所有请求头
 
-# 检查令牌和用户名不为空
-if [ -z "$TOKEN" ]; then
-    log_error "令牌不能为空，请提供有效的访问令牌"
-    exit 1
-fi
+    # 统计测试用例
+    total=$((total + 1))
+    log_test "开始测试：$test_name（预期状态码：$expect_code）"
+    log_info "请求地址：$url"
 
-if [ -z "$DELETE_USER" ]; then
-    log_error "待删除的用户名不能为空"
-    exit 1
-fi
+    # 构建curl命令（数组方式，避免引号问题）
+    curl_cmd=(
+        curl -s -w "\n%{http_code}"  # -s静默模式，-w输出状态码
+        -X DELETE "$url"             # 请求方法和地址
+        --max-time $TIMEOUT          # 超时时间
+        -H "Content-Type: application/json"  # 固定请求头
+    )
+    # 添加额外请求头（如授权头）
+    for h in "${headers[@]}"; do
+        curl_cmd+=(-H "$h")
+    done
 
-# 硬删除风险提示与确认
-log_warn "警告：这是硬删除操作，数据将被永久删除且无法恢复！"
-read -p "确认要硬删除用户 '$DELETE_USER' 吗？(y/N) " CONFIRM
-if [ "$CONFIRM" != "y" ] && [ "$CONFIRM" != "Y" ]; then
-    log_info "操作已取消"
+    # 执行请求并解析结果
+    response=$("${curl_cmd[@]}")
+    http_code=$(echo "$response" | tail -n1)  # 最后一行是状态码
+    response_body=$(echo "$response" | head -n -1)  # 前面是响应体
+
+    # 格式化响应体（有jq则美化）
+    if command -v jq &> /dev/null; then
+        body=$(echo "$response_body" | jq . 2>/dev/null || echo "$response_body")
+    else
+        body="$response_body"
+    fi
+
+    # 验证结果
+    if [ "$http_code" -eq "$expect_code" ]; then
+        log_success "测试通过！实际状态码：$http_code"
+        log_info "响应体：$body"
+        passed=$((passed + 1))
+    else
+        log_error "测试失败！预期：$expect_code，实际：$http_code"
+        log_error "响应体：$body"
+        failed=$((failed + 1))
+    fi
+    echo "--------------------------------------------------"
+}
+
+# ==================== 执行测试用例（参数顺序严格对应） ====================
+log_info "===== 开始用户硬删除接口测试（$(date)） ====="
+
+# 1. 测试400：用户名为空（路径//force）+ 带有效令牌
+test_case \
+    "400参数错误（用户名为空）" \
+    "${API_BASE_URL}//force" \
+    400 \
+    "Authorization: Bearer ${TOKEN}"
+
+# 2. 测试400：用户名含特殊字符（@）+ 带有效令牌
+test_case \
+    "400参数错误（用户名含@）" \
+    "${API_BASE_URL}/${INVALID_USER}/force" \
+    400 \
+    "Authorization: Bearer ${TOKEN}"
+
+# 3. 测试401：无令牌 + 不存在的用户
+test_case \
+    "401未授权（无令牌）" \
+    "${API_BASE_URL}/${NON_EXIST_USER}/force" \
+    401
+
+# 4. 测试401：无效令牌（乱输）+ 不存在的用户
+test_case \
+    "401未授权（无效令牌）" \
+    "${API_BASE_URL}/${NON_EXIST_USER}/force" \
+    401 \
+    "Authorization: Bearer invalid_token_xxx"
+
+# 5. 测试404：有效令牌 + 不存在的用户
+test_case \
+    "404用户不存在" \
+    "${API_BASE_URL}/${NON_EXIST_USER}/force" \
+    404 \
+    "Authorization: Bearer ${TOKEN}"
+
+# 6. 测试204：有效令牌 + 存在的用户（必须确保VALID_USER存在！）
+test_case \
+    "204删除成功（有效用户）" \
+    "${API_BASE_URL}/${VALID_USER}/force" \
+    204 \
+    "Authorization: Bearer ${TOKEN}"
+
+# 7. 测试500：需后端配合（如用户名为trigger_500），暂注释（无配合则会404）
+# test_case \
+#     "500服务器内部错误" \
+#     "${API_BASE_URL}/trigger_500/force" \
+#     500 \
+#     "Authorization: Bearer ${TOKEN}"
+
+# ==================== 测试总结 ====================
+log_info "===== 测试结束 ====="
+log_info "总用例：$total | 通过：$passed | 失败：$failed"
+
+if [ $failed -eq 0 ]; then
+    log_success "所有测试通过！"
     exit 0
+else
+    log_error "有$failed个用例失败，请检查："
+    log_error "1. 配置区的VALID_USER是否真的存在？"
+    log_error "2. 后端接口是否正确返回对应状态码？"
+    log_error "3. 令牌是否过期（可重新获取TOKEN）？"
+    exit 1
 fi
-
-# 执行删除请求
-log_info "开始硬删除用户: $DELETE_USER"
-log_info "请求接口: $DELETE_URL"
-
-# 发送DELETE请求（携带Bearer令牌）
-response=$(curl -s -w "\n%{http_code}" -X DELETE "${DELETE_URL}" \
-    -H "Authorization: Bearer ${TOKEN}" \
-    -H "Content-Type: application/json" \
-    --max-time ${TIMEOUT})
-
-# 解析响应（分离响应体和HTTP状态码）
-http_code=$(echo "$response" | tail -n1)
-response_body=$(echo "$response" | head -n -1)
-
-# 处理结果（根据控制层逻辑适配）
-case $http_code in
-    200)
-        # 后端成功硬删除时返回200
-        log_success "用户 '$DELETE_USER' 已永久删除"
-        log_info "响应: $response_body"
-        exit 0
-        ;;
-    401)
-        # 控制层：未登录时返回401
-        log_error "删除失败：未授权（令牌无效或已过期）"
-        log_error "响应: $response_body"
-        exit 1
-        ;;
-    404)
-        # 用户不存在
-        log_warn "用户 '$DELETE_USER' 不存在（无需删除）"
-        log_info "响应: $response_body"
-        exit 0
-        ;;
-    403)
-        # 权限不足，无硬删除权限
-        log_error "删除失败：权限不足（没有硬删除操作权限）"
-        log_error "响应: $response_body"
-        exit 1
-        ;;
-    400)
-        # 参数错误
-        log_error "删除失败：请求参数错误"
-        log_error "响应: $response_body"
-        exit 1
-        ;;
-    500)
-        # 服务器内部错误
-        log_error "删除失败：服务器内部错误"
-        log_error "响应: $response_body"
-        exit 1
-        ;;
-    *)
-        log_error "删除失败：未知错误（HTTP状态码: $http_code）"
-        log_error "响应: $response_body"
-        exit 1
-        ;;
-esac

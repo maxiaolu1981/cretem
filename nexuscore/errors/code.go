@@ -1,22 +1,3 @@
-// Copyright (c) 2025 马晓璐
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy of
-// this software and associated documentation files (the "Software"), to deal in
-// the Software without restriction, including without limitation the rights to
-// use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of
-// the Software, and to permit persons to whom the Software is furnished to do so,
-// subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in all
-// copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
-// FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR
-// COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-// IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-// CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
 /*
 package errors
 code.go
@@ -38,6 +19,7 @@ package errors
 
 import (
 	"fmt"
+	"sort"
 	"sync"
 )
 
@@ -182,40 +164,6 @@ func IsCode(err error, code int) bool {
 
 // ------------------------------ 错误码查询与辅助函数 ------------------------------
 
-// ListAllCodes 格式化打印所有已注册的错误码信息，包含编码、HTTP状态、描述及参考文档
-func ListAllCodes() {
-	withLock(func() {
-		if len(_codes) == 0 {
-			fmt.Println("当前无注册的错误码")
-			return
-		}
-
-		// 打印表头
-		fmt.Printf("%-8s %-8s %-20s %s\n", "错误码", "HTTP状态", "描述信息", "参考文档")
-		fmt.Println("-------------------------------------------------------------------------------")
-
-		// 遍历并格式化输出
-		for code, coder := range _codes {
-			fmt.Printf(
-				"%-8d %-8d %-20s %s\n",
-				code,
-				coder.HTTPStatus(),
-				truncateString(coder.String(), 38), // 截断过长描述
-				coder.Reference(),
-			)
-		}
-	})
-}
-
-// truncateString 辅助函数：当字符串长度超过max时截断并添加省略号
-func truncateString(s string, max int) string {
-	byte := []rune(s)
-	if len(byte) <= max {
-		return s
-	}
-	return string(byte[:max]) + "..."
-}
-
 // 辅助函数withLock 减少重复代码
 func withLock(fn func()) {
 	_codeMutex.Lock()
@@ -238,4 +186,131 @@ func NewDefaultCoder(code int, http int, msg string, ref string) defaultCoder {
 		Ext:  msg,
 		Ref:  ref,
 	}
+}
+
+// 错误码分组映射表（前缀 -> 分组名称）
+var codeGroups = map[int]string{
+	1000: "通用基本错误（1000xx）",
+	1001: "通用数据库错误（1001xx）",
+	1002: "通用授权认证错误（1002xx）",
+	1003: "通用加解码错误（1003xx）",
+	1100: "iam-apiserver 用户模块（1100xx）",
+	1101: "iam-apiserver 密钥模块（1101xx）",
+	1102: "iam-apiserver 策略模块（1102xx）",
+}
+
+// 错误码常量名映射表（需要手动维护与错误码的对应关系）
+// 注意：新增错误码时需在此处补充映射
+var codeConstNames = map[int]string{
+	// 通用基本错误
+	100001: "ErrSuccess",
+	100002: "ErrUnknown",
+	100003: "ErrBind",
+	100004: "ErrValidation",
+	100005: "ErrPageNotFound",
+
+	// 通用数据库错误
+	100101: "ErrDatabase",
+	100102: "ErrDatabaseTimeout",
+
+	// 通用授权认证错误
+	100201: "ErrEncrypt",
+	100202: "ErrSignatureInvalid",
+	100203: "ErrExpired",
+	100204: "ErrInvalidAuthHeader",
+	100205: "ErrMissingHeader",
+	100206: "ErrPasswordIncorrect",
+	100207: "ErrPermissionDenied",
+	100208: "ErrTokenInvalid",
+
+	// 通用加解码错误
+	100301: "ErrEncodingFailed",
+	100302: "ErrDecodingFailed",
+	100303: "ErrInvalidJSON",
+	100304: "ErrEncodingJSON",
+	100305: "ErrDecodingJSON",
+	100306: "ErrInvalidYaml",
+	100307: "ErrEncodingYaml",
+	100308: "ErrDecodingYaml",
+
+	// iam-apiserver 用户模块
+	110001: "ErrUserNotFound",
+	110002: "ErrUserAlreadyExist",
+	110003: "ErrUnauthorized",
+	110004: "ErrInvalidParameter",
+	110005: "ErrInternal",
+	110006: "ErrResourceConflict",
+	110007: "ErrInternalServer",
+
+	// iam-apiserver 密钥模块
+	110101: "ErrReachMaxCount",
+	110102: "ErrSecretNotFound",
+
+	// iam-apiserver 策略模块
+	110201: "ErrPolicyNotFound",
+}
+
+// ListAllCodes 按归类分组打印所有已注册的错误码信息，包含编码、常量名、HTTP状态、描述
+func ListAllCodes() {
+	withLock(func() {
+		if len(_codes) == 0 {
+			fmt.Println("当前无注册的错误码")
+			return
+		}
+
+		// 1. 按分组归类错误码
+		groupedCodes := make(map[int][]int) // 分组前缀 -> 错误码列表
+		for code := range _codes {
+			prefix := code / 100 // 提取前4位作为分组前缀（如100001 -> 1000）
+			groupedCodes[prefix] = append(groupedCodes[prefix], code)
+		}
+
+		// 2. 定义分组打印顺序（按前缀升序）
+		var groupOrder []int
+		for prefix := range groupedCodes {
+			groupOrder = append(groupOrder, prefix)
+		}
+		sort.Ints(groupOrder)
+
+		// 3. 遍历分组打印
+		for _, prefix := range groupOrder {
+			codes := groupedCodes[prefix]
+			sort.Ints(codes) // 组内按错误码升序排列
+
+			// 打印分组标题
+			fmt.Printf("\n===== %s =====\n", codeGroups[prefix])
+
+			// 打印表头
+			fmt.Printf(
+				"%-8s %-20s %-10s %s\n",
+				"错误码", "常量名", "HTTP状态", "描述信息",
+			)
+			fmt.Println("----------------------------------------------------------------------")
+
+			// 打印组内错误码
+			for _, code := range codes {
+				coder := _codes[code]
+				constName := codeConstNames[code]
+				if constName == "" {
+					constName = "未知常量名" // 未在映射表中定义时的默认值
+				}
+
+				fmt.Printf(
+					"%-8d %-20s %-10d %s\n",
+					code,
+					constName,
+					coder.HTTPStatus(),
+					truncateString(coder.String(), 50), // 描述最多显示50字符
+				)
+			}
+		}
+	})
+}
+
+// 辅助函数：截断过长字符串
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver"
+	_ "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
 )
 

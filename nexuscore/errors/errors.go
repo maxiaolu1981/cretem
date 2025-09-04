@@ -61,6 +61,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 )
 
 // fundamental 基础错误类型，包含错误消息和堆栈跟踪，无调用者信息
@@ -445,4 +446,39 @@ func (w *withCode) toJSON() withCodeJSON {
 		Cause:   causeJSON,
 		Stack:   w.stack.ToSlice(),
 	}
+}
+
+func IsWithCode(err error) bool {
+	_, ok := err.(*withCode)
+	return ok
+}
+
+// GetCode 从 withCode 错误中提取业务码（包内直接访问未导出字段 code）
+// 若不是 withCode 类型，返回 -1（无效码）
+func GetCode(err error) int {
+	if e, ok := err.(*withCode); ok {
+		return e.code
+	}
+	return -1
+}
+
+// GetMessage 从 withCode 错误中提取错误消息（包内直接访问未导出字段 err）
+// 若不是 withCode 类型，返回原始错误消息
+func GetMessage(err error) string {
+	if e, ok := err.(*withCode); ok {
+		return e.err.Error()
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// GetHTTPStatus 从 withCode 错误中获取映射的 HTTP 状态码（整合 ParseCoderByCode）
+// 若不是 withCode 类型，返回默认 500
+func GetHTTPStatus(err error) int {
+	if e, ok := err.(*withCode); ok {
+		return ParseCoderByCode(e.code).HTTPStatus()
+	}
+	return http.StatusInternalServerError
 }

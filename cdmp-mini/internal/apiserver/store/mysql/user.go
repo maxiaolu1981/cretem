@@ -40,7 +40,11 @@ func (u *users) Delete(ctx context.Context, username string, opts metav1.DeleteO
 }
 
 func (u *users) DeleteForce(ctx context.Context, username string, opts metav1.DeleteOptions) error {
-	logger := log.FromContext(ctx).WithValues("operation", "user_delete", "username", username, "unscoped", opts.Unscoped)
+		logger := log.L(ctx).WithValues(
+	   "method", "DeleteForce",
+		"unscoped",true,
+	)
+
 	startTime := time.Now()
 	logger.Infow("开始用户删除操作", "start_time", startTime)
 

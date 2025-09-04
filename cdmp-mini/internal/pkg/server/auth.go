@@ -47,6 +47,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
@@ -55,6 +56,7 @@ import (
 
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/viper"
 )
 
@@ -129,7 +131,7 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 			if !ok || username == "" {
 				username, ok = claims["sub"].(string)
 				if !ok || username == "" {
-					fmt.Println("JWT解析失败：claims中未找到有效用户名（identity/sub均为空）")
+
 					return nil
 				}
 			}
@@ -167,55 +169,120 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 	return auth.NewJWTStrategy(*ginjwt), nil
 }
 
+// authoricator 认证逻辑：返回用户信息或具体错误
 func authoricator() func(c *gin.Context) (interface{}, error) {
 	return func(c *gin.Context) (interface{}, error) {
-		var err error
 		var login loginInfo
+		var err error
 
-		if c.Request.Header.Get("Authorization") != "" {
-			login, err = parseWithHeader(c)
+		// 1. 解析认证信息（Header/Body）：透传解析错误（已携带正确错误码）
+		if authHeader := c.Request.Header.Get("Authorization"); authHeader != "" {
+			login, err = parseWithHeader(c) // 之前已修复：返回 Basic 认证相关错误码（如 ErrInvalidAuthHeader）
 		} else {
-			login, err = parseWithBody(c)
+			login, err = parseWithBody(c) // 同理：返回 Body 解析相关错误码（如 ErrInvalidParameter）
 		}
 		if err != nil {
-			return nil, jwt.ErrFailedAuthentication // 返回nil而不是字符串
+			log.Errorf("parse authentication info failed: %v", err)
+			// 关键：直接透传解析错误（无需包装，parse 函数已返回带正确码和提示的 err）
+			return nil, err
 		}
 
+		// 2. 查询用户信息：透传 store 层错误（store 已按场景返回对应码）
 		user, err := store.Client().Users().Get(c, login.Username, metav1.GetOptions{})
 		if err != nil {
-			log.Errorf("get user information failed: %s", err.Error())
-			return nil, jwt.ErrFailedAuthentication
+			log.Errorf("get user information failed: username=%s, error=%v", login.Username, err)
+			// 关键：直接透传 store 错误（store 层已返回 ErrUserNotFound/ErrDatabaseTimeout/ErrDatabase）
+			return nil, err
 		}
 
+		// 3. 密码校验：新增“密码不匹配”场景的错误码（语义匹配）
 		if err := user.Compare(login.Password); err != nil {
-			return nil, jwt.ErrFailedAuthentication
+			log.Errorf("password compare failed: username=%s", login.Username)
+			// 场景：密码不正确 → 用通用授权错误码 ErrPasswordIncorrect（100206，401）
+			return nil, errors.WithCode(
+				code.ErrPasswordIncorrect,
+				"密码校验失败：用户名【%s】的密码不正确",
+				login.Username,
+			)
 		}
 
+		// 4. 更新登录时间：忽略非关键错误（仅日志记录，不阻断认证）
 		user.LoginedAt = time.Now()
-		_ = store.Client().Users().Update(c, user, metav1.UpdateOptions{})
-		return user, nil // 统一返回 *v1.User
+		if updateErr := store.Client().Users().Update(c, user, metav1.UpdateOptions{}); updateErr != nil {
+			log.Warnf("update user logined time failed: username=%s, error=%v", login.Username, updateErr)
+		}
+
+		// 认证成功：返回用户信息
+		return user, nil
 	}
 }
 
 //go:noinline  // 告诉编译器不要内联此函数
 func parseWithHeader(c *gin.Context) (loginInfo, error) {
-	auth := strings.SplitN(c.Request.Header.Get("Authorization"), " ", 2)
-	if len(auth) != 2 || auth[0] != "Basic" {
-		return loginInfo{}, jwt.ErrFailedAuthentication
+	// 1. 获取Authorization头
+	authHeader := c.Request.Header.Get("Authorization")
+	if authHeader == "" {
+		// 场景1：授权头为空 → 用通用“缺少授权头”错误码
+		return loginInfo{}, errors.WithCode(
+			code.ErrMissingHeader,
+			"Basic认证：缺少Authorization头，正确格式：Authorization: Basic {base64(username:password)}",
+		)
 	}
-	payload, err := base64.StdEncoding.DecodeString(auth[1])
-	pair := strings.SplitN(string(payload), ":", 2)
-	if len(pair) != 2 || err != nil {
-		return loginInfo{}, jwt.ErrEmptyAuthHeader
+
+	// 2. 分割前缀和内容（必须为"Basic " + 内容）
+	authParts := strings.SplitN(authHeader, " ", 2)
+	if len(authParts) != 2 || strings.TrimSpace(authParts[0]) != "Basic" {
+		// 场景2：非Basic前缀或分割后长度不对 → 用“授权头格式无效”错误码
+		return loginInfo{}, errors.WithCode(
+			code.ErrInvalidAuthHeader,
+			"Basic认证：授权头格式无效，正确格式：Authorization: Basic {base64(username:password)}（前缀必须为Basic）",
+		)
 	}
-	return loginInfo{pair[0], pair[1]}, nil
+	authPayload := strings.TrimSpace(authParts[1])
+	if authPayload == "" {
+		// 场景3：Basic前缀后无内容 → 单独判断，提示更精准
+		return loginInfo{}, errors.WithCode(
+			code.ErrInvalidAuthHeader,
+			"Basic认证：Authorization头中Basic前缀后无内容，请提供base64编码的username:password",
+		)
+	}
+
+	// 3. Base64解码（优先处理解码错误，不掩盖细节）
+	payload, decodeErr := base64.StdEncoding.DecodeString(authPayload)
+	if decodeErr != nil {
+		// 场景4：Base64解码失败 → 用“Base64解码失败”错误码
+		return loginInfo{}, errors.WithCode(
+			code.ErrBase64DecodeFail,
+			"Basic认证：Base64解码失败（%v），请确保内容是username:password的Base64编码",
+			decodeErr,
+		)
+	}
+
+	// 4. 分割用户名和密码（必须含冒号）
+	userPassPair := strings.SplitN(string(payload), ":", 2)
+	if len(userPassPair) != 2 || strings.TrimSpace(userPassPair[0]) == "" || strings.TrimSpace(userPassPair[1]) == "" {
+		// 场景5：解码后无冒号/用户名/密码为空 → 用“payload格式无效”错误码
+		return loginInfo{}, errors.WithCode(
+			code.ErrInvalidBasicPayload,
+			"Basic认证：解码后的内容格式无效，需用冒号分隔非空用户名和密码（如 username:password）",
+		)
+	}
+
+	// 解析成功，返回用户名密码（去除首尾空格）
+	return loginInfo{
+		Username: strings.TrimSpace(userPassPair[0]),
+		Password: strings.TrimSpace(userPassPair[1]),
+	}, nil
 }
 
 func parseWithBody(c *gin.Context) (loginInfo, error) {
 	var login loginInfo
 	err := c.ShouldBindJSON(&login)
 	if err != nil {
-		return loginInfo{}, jwt.ErrFailedAuthentication
+		return loginInfo{}, errors.WithCode(
+			code.ErrInvalidBasicPayload,
+			"Basic认证：解码后的内容格式无效，需用冒号分隔非空用户名和密码（如 username:password）",
+		)
 	}
 	return login, nil
 }
@@ -269,14 +336,44 @@ func refreshResponse() func(c *gin.Context, code int, token string, expire time.
 	}
 }
 
+// newAutoAuth 创建Auto认证策略（处理所有错误场景，避免panic）
 func newAutoAuth() (middleware.AuthStrategy, error) {
-	jwt, err := newJWTAuth()
+	// 1. 初始化JWT认证策略：处理初始化失败错误
+	jwtStrategy, err := newJWTAuth()
 	if err != nil {
-		return nil, err
+		// 场景1：JWT策略初始化失败（如密钥加载失败、配置错误）
+		return nil, errors.WithCode(
+			code.ErrInternalServer,
+			"Auto认证策略初始化失败：JWT认证策略创建失败，原因：%v",
+			err, // 携带原始错误原因，便于调试
+		)
 	}
-	jwtAuth, ok := jwt.(auth.JWTStrategy)
+
+	// 2. JWT策略类型转换：处理转换失败（避免强制断言panic）
+	jwtAuth, ok := jwtStrategy.(auth.JWTStrategy)
 	if !ok {
-		return nil, fmt.Errorf("转换JWTStrategy错误")
+		// 场景2：类型转换失败（明确预期类型和实际类型）
+		return nil, errors.WithCode(
+			code.ErrInternalServer,
+			"Auto认证策略初始化失败：JWT策略类型转换错误，预期类型为 auth.JWTStrategy，实际类型为 %T",
+			jwtStrategy, // 打印实际类型，快速定位依赖问题
+		)
 	}
-	return auth.NewAutoStrategy(newBasicAuth().(auth.BasicStrategy), jwtAuth), nil
+
+	// 3. 初始化Basic认证策略：补充错误处理（原代码直接断言，会panic）
+	basicStrategy := newBasicAuth()
+	// 3.1 Basic策略类型转换：处理转换失败
+	basicAuth, ok := basicStrategy.(auth.BasicStrategy)
+	if !ok {
+		// 场景3：Basic策略类型转换失败
+		return nil, errors.WithCode(
+			code.ErrInternalServer,
+			"Auto认证策略初始化失败：Basic策略类型转换错误，预期类型为 auth.BasicStrategy，实际类型为 %T",
+			basicStrategy,
+		)
+	}
+
+	// 4. 所有依赖初始化成功，创建AutoStrategy
+	autoAuth := auth.NewAutoStrategy(basicAuth, jwtAuth)
+	return autoAuth, nil
 }

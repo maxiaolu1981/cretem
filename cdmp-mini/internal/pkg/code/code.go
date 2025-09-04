@@ -5,10 +5,11 @@
 package code
 
 import (
+	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
-	"github.com/novalagung/gubrak"
 )
 
 // ErrCode implements `github.com/marmotedu/errors`.Coder interface.
@@ -54,24 +55,38 @@ func (coder ErrCode) HTTPStatus() int {
 	return coder.HTTP
 }
 
-// nolint: unparam
+// ==================== 关键修改：重构 register 函数 ====================
+// register 按 HTTP 通用规则注册错误码，支持所有合法 HTTP 状态码（100~599）
 func register(code int, httpStatus int, message string, refs ...string) {
-	found, _ := gubrak.Includes([]int{200, 400, 401, 403, 404, 500}, httpStatus)
-	if !found {
-		panic("http code not in `200, 400, 401, 403, 404, 500`")
+	// 1. 校验 HTTP 状态码是否符合通用规则（100~599 是标准 HTTP 状态码区间）
+	if httpStatus < 100 || httpStatus > 599 {
+		panic(fmt.Sprintf("HTTP 状态码 %d 不符合通用规则（必须在 100~599 之间）", httpStatus))
 	}
 
+	// 2. 可选：对常见状态码做语义提示（避免误用，如 404 用于非资源不存在场景）
+	switch httpStatus {
+	case 404:
+		if !strings.Contains(message, "不存在") && !strings.Contains(message, "未找到") {
+			fmt.Printf("[WARN] HTTP 404 建议用于「资源不存在」场景，当前描述：%s\n", message)
+		}
+	case 409:
+		if !strings.Contains(message, "冲突") && !strings.Contains(message, "已存在") {
+			fmt.Printf("[WARN] HTTP 409 建议用于「资源冲突」场景，当前描述：%s\n", message)
+		}
+	}
+
+	// 3. 处理参考文档（保持原有逻辑）
 	var reference string
 	if len(refs) > 0 {
 		reference = refs[0]
 	}
 
+	// 4. 注册错误码（保持原有逻辑）
 	coder := &ErrCode{
 		C:    code,
 		HTTP: httpStatus,
 		Ext:  message,
 		Ref:  reference,
 	}
-
 	errors.MustRegister(coder)
 }
