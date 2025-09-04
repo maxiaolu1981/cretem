@@ -156,9 +156,43 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 		LogoutResponse: func(c *gin.Context, code int) {
 			c.JSON(http.StatusOK, nil)
 		},
-		Unauthorized: func(c *gin.Context, code int, message string) {
-			c.JSON(code, gin.H{
+		Unauthorized: func(c *gin.Context, httpCode int, message string) {
+			// 1. 记录原始错误消息，便于调试（生产环境可移除或改为调试级别日志）
+			log.Debugf("JWT认证失败: HTTP状态码=%d, 错误消息=%s", httpCode, message)
+
+			// 2. 精确匹配错误消息，优先处理过期场景
+			var bizCode int
+			switch {
+			// 匹配Token过期（兼容gin-jwt可能返回的多种过期消息格式）
+			case strings.Contains(message, "token is expired"):
+				bizCode = code.ErrExpired // 100203（Token过期）
+
+			// 匹配签名无效（包括篡改、密钥不匹配等场景）
+			case strings.Contains(message, "signature is invalid"):
+				bizCode = code.ErrTokenInvalid // 100208（Token无效）
+
+			// 匹配Base64解码失败（如非法字符）
+			case strings.HasPrefix(message, "illegal base64 data"):
+				bizCode = code.ErrTokenInvalid // 100208（Token无效）
+
+			// 匹配缺少Authorization头
+			case message == "Authorization header is not present":
+				bizCode = code.ErrMissingHeader // 100205（缺少授权头）
+
+			// 匹配授权头格式错误（如无Bearer前缀）
+			case message == "invalid authorization header format":
+				bizCode = code.ErrInvalidAuthHeader // 100204（授权头格式无效）
+
+			// 其他未明确匹配的认证错误
+			default:
+				bizCode = code.ErrUnauthorized // 110003（未授权）
+			}
+
+			// 3. 返回符合规范的错误响应（包含code、message、data）
+			c.JSON(httpCode, gin.H{
+				"code":    bizCode,
 				"message": message,
+				"data":    nil,
 			})
 		},
 	})

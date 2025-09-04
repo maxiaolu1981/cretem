@@ -58,7 +58,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/pflag"
 )

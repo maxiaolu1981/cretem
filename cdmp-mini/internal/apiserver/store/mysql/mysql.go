@@ -18,9 +18,10 @@ import (
 	"sync"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/logger"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/db"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/logger"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
+
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"

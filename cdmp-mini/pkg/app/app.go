@@ -117,9 +117,8 @@ import (
 	"github.com/fatih/color"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
-
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
 
 	cliflag "github.com/maxiaolu1981/cretem/nexuscore/component-base/cli/flag"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/term"

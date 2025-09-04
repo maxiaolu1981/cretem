@@ -13,7 +13,6 @@ require (
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-sql-driver/mysql v1.8.1
 	github.com/mattn/go-isatty v0.0.20
-	github.com/maxiaolu1981/cretem/cdmp v0.0.0-20250903025346-41851f9eb91a
 	github.com/maxiaolu1981/cretem/nexuscore v0.0.0-20250901231038-fa914272025d
 	github.com/novalagung/gubrak v1.0.0
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b

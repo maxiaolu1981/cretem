@@ -116,10 +116,6 @@ func (u *userService) DeleteCollection(ctx context.Context, username []string, f
 	return nil
 }
 func (u *userService) Get(ctx context.Context, username string, opts metav1.GetOptions) (*v1.User, error) {
-	// 使用辅助函数获取上下文值
-	//requestID := common.GetRequestID(ctx)
-	//operator := common.GetUsername(ctx)
-
 	// 合并所有字段，只声明一次 logger
 	logger := log.L(ctx).WithValues(
 		"service", "UserService",
@@ -129,6 +125,7 @@ func (u *userService) Get(ctx context.Context, username string, opts metav1.GetO
 
 	user, err := u.store.Users().Get(ctx, username, opts)
 	if err != nil {
+		logger.Errorw("用户查询失败:", username, "error:", err.Error())
 		return nil, err
 	}
 	return user, nil

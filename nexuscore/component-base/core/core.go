@@ -67,3 +67,24 @@ func WriteDeleteSuccess(c *gin.Context) {
 	// 设置 204 状态码（成功且无内容），不写入任何响应体
 	c.Status(http.StatusNoContent)
 }
+
+// SuccessResponse 统一成功响应结构体
+type SuccessResponse struct {
+	Code    int         `json:"code"`    // 成功码固定为0（与错误码区分）
+	Message string      `json:"message"` // 成功提示信息
+	Data    interface{} `json:"data"`    // 业务数据（单资源对象）
+}
+
+// WriteSuccessResponse 写入成功响应（适用于所有成功场景，如GET单资源、创建资源等）
+// 参数：
+//   - c: gin上下文
+//   - message: 成功提示信息（如"查询用户详情成功"）
+//   - data: 业务数据（如单条用户记录）
+func WriteSuccessResponse(c *gin.Context, message string, data interface{}) {
+	// 成功响应HTTP状态码固定为200 OK（符合RESTful规范）
+	c.JSON(http.StatusOK, SuccessResponse{
+		Code:    0,       // 成功码固定为0，区别于错误码（如100004）
+		Message: message, // 自定义成功提示（语义化）
+		Data:    data,    // 单资源数据（如过滤后的用户对象）
+	})
+}

@@ -15,7 +15,8 @@ import (
 	"time"
 
 	"github.com/buger/jsonparser"
-	"github.com/maxiaolu1981/cretem/cdmp/third_party/forked/murmur3"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/third_party/forked/murmur3"
+
 	uuid "github.com/satori/go.uuid"
 )
 

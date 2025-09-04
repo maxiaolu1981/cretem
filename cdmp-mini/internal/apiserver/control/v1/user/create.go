@@ -10,8 +10,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/code"
+
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/auth"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"

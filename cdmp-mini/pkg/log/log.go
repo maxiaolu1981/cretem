@@ -25,7 +25,7 @@ import (
 	"log"
 	"sync"
 
-	"github.com/maxiaolu1981/cretem/cdmp/backend/pkg/log/klog"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log/klog"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )

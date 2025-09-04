@@ -154,7 +154,7 @@ func (b BasicStrategy) AuthFunc() gin.HandlerFunc {
 
 		// 4. 第四步：验证用户名密码（修正逻辑反置问题）
 		if !b.compare(username, password) { // 验证失败（compare返回false）才返回错误
-			// 场景5：密码不正确 → 用 ErrPasswordIncorrect（而非 ErrInvalidAuthHeader）
+			// 场景5：密码不正确 → 用 ErrPasswordIncorrect（而非 
 			err := errors.WithCode(
 				code.ErrPasswordIncorrect,
 				"Basic认证失败：用户名或密码不正确",

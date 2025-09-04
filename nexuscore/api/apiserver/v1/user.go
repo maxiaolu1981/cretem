@@ -86,3 +86,29 @@ func (u *User) AfterCreate(tx *gorm.DB) error {
 	// 保存更新后的实例 ID 到数据库
 	return tx.Save(u).Error
 }
+
+// 辅助函数：过滤敏感字段，返回前端可展示的用户信息
+func ConvertToPublicUser(rawUser *User) *PublicUser {
+	return &PublicUser{
+		ID:        rawUser.ID,
+		Username:  rawUser.Name,
+		Nickname:  rawUser.Nickname,
+		Email:     rawUser.Email,
+		Phone:     rawUser.Phone,
+		IsAdmin:   rawUser.IsAdmin,
+		CreatedAt: rawUser.CreatedAt,
+		UpdatedAt: rawUser.UpdatedAt,
+		// 刻意排除敏感字段：PasswordHash、Token、Secret等
+	}
+}
+
+type PublicUser struct {
+	ID        uint64
+	Username  string
+	Nickname  string
+	Email     string
+	Phone     string
+	IsAdmin   int
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}

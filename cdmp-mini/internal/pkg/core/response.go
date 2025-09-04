@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
@@ -11,6 +12,12 @@ import (
 func WriteResponse(c *gin.Context, err error, data interface{}) {
 	// 1. 处理错误场景
 	if err != nil {
+		log.Infof("WriteResponse错误处理：")
+		log.Infof("  错误类型: %T", err)
+		log.Infof("  IsWithCode: %v", errors.IsWithCode(err))
+		log.Infof("  GetCode: %d", errors.GetCode(err))
+		log.Infof("  GetHTTPStatus原始值: %d", errors.GetHTTPStatus(err)) // 关键
+
 		// 用 errors 包工具函数判断是否为 withCode 错误（无反射）
 		if errors.IsWithCode(err) {
 			// 提取业务码、HTTP状态码、错误消息（均为直接访问，无性能损耗）

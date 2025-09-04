@@ -32,6 +32,16 @@ func init() {
 	register(ErrPasswordIncorrect, 401, "密码不正确")          // 401：密码错误导致未授权
 	register(ErrPermissionDenied, 403, "权限不足，无操作权限")      // 403 Forbidden：已授权但无权限
 	register(ErrTokenInvalid, 401, "令牌无效（格式/签名错误）")       // 401：令牌本身无效
+	register(
+		ErrBase64DecodeFail,
+		400,
+		"Basic认证 payload Base64解码失败（请确保格式为 username:password 的Base64编码）",
+	)
+	register(
+		ErrInvalidBasicPayload,
+		400,
+		"Basic认证 payload格式无效（需用冒号分隔用户名和密码，如 username:password）",
+	)
 
 	// 4. 通用加解码错误（1003xx）
 	register(ErrEncodingFailed, 500, "数据编码失败")          // 500：服务端编码逻辑错误
@@ -59,17 +69,6 @@ func init() {
 	// 7. iam-apiserver 策略模块（1102xx）
 	register(ErrPolicyNotFound, 404, "策略不存在") // 404：策略资源不存在
 
-	// 注册新增错误码（init 函数中）
-	register(
-		ErrBase64DecodeFail,
-		400,
-		"Basic认证 payload Base64解码失败（请确保格式为 username:password 的Base64编码）",
-	)
-	register(
-		ErrInvalidBasicPayload,
-		400,
-		"Basic认证 payload格式无效（需用冒号分隔用户名和密码，如 username:password）",
-	)
 	// 列出所有错误码（验证注册结果）
 	errors.ListAllCodes()
 }

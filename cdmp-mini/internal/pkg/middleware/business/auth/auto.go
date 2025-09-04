@@ -141,7 +141,7 @@ func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 			operator.SetAuthStrategy(a.jwtStrategy)
 		default:
 			err := errors.WithCode(
-				code.ErrInvalidAuthHeader,
+				code.ErrTokenInvalid,
 				"未识别的认证方式，仅支持两种：\n1. Basic认证（用户名密码）\n2. Bearer认证（JWT令牌）",
 			)
 			core.WriteResponse(c, err, nil)
@@ -180,8 +180,10 @@ func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 		// 第六步：同步用户名到上下文
 		c.Set(common.UsernameKey, username)
 		newCtx := context.WithValue(c.Request.Context(), common.KeyUsername, username)
-		c.Request = c.Request.WithContext(newCtx)
 
+		c.Request = c.Request.WithContext(newCtx)
+		//log.Infof("AuthFunc认证成功，准备调用c.Next()，请求路径：%s", c.Request.URL.Path) // 新增日志
 		c.Next()
+		//log.Infof("AuthFunc的c.Next()执行完成，请求路径：%s", c.Request.URL.Path) // 新增日志
 	}
 }
