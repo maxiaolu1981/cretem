@@ -40,13 +40,13 @@ func (u *users) Delete(ctx context.Context, username string, opts metav1.DeleteO
 }
 
 func (u *users) DeleteForce(ctx context.Context, username string, opts metav1.DeleteOptions) error {
-		logger := log.L(ctx).WithValues(
-	   "method", "DeleteForce",
-		"unscoped",true,
+	logger := log.L(ctx).WithValues(
+		"method", "DeleteForce",
+		"unscoped", true,
 	)
 
 	startTime := time.Now()
-	logger.Infow("开始用户删除操作", "start_time", startTime)
+	logger.Infow("存储层:开始用户删除操作", "start_time", startTime)
 
 	err := u.executeInTransaction(ctx, logger, func(tx *gorm.DB) error {
 		// 1. 删除关联数据
@@ -54,25 +54,25 @@ func (u *users) DeleteForce(ctx context.Context, username string, opts metav1.De
 		if err := u.deleteUserAssociations(tx, username, opts); err != nil {
 			return err
 		}
-		logger.Infow("关联数据删除完成", "duration_ms", time.Since(assocStart).Milliseconds())
+		logger.Infow("存储层:关联数据删除完成", "duration_ms", time.Since(assocStart).Milliseconds())
 
 		// 2. 删除用户主体数据
 		mainStart := time.Now()
 		if err := u.deleteUserMainData(tx, username, opts); err != nil {
 			return err
 		}
-		logger.Infow("主体数据删除完成", "duration_ms", time.Since(mainStart).Milliseconds())
+		logger.Infow("存储层:主体数据删除完成", "duration_ms", time.Since(mainStart).Milliseconds())
 
 		return nil
 	})
 
 	totalDuration := time.Since(startTime)
 	if err != nil {
-		logger.Errorw("用户删除失败", "error", err, "total_duration_ms", totalDuration.Milliseconds(), "status", "failed")
+		logger.Errorw("存储层:用户删除失败", "error", err, "total_duration_ms", totalDuration.Milliseconds(), "status", "failed")
 		return err
 	}
 
-	logger.Infow("用户删除成功", "total_duration_ms", totalDuration.Milliseconds(), "status", "success")
+	//logger.Infow("用户删除成功", "total_duration_ms", totalDuration.Milliseconds(), "status", "success")
 	return nil
 }
 
@@ -86,12 +86,12 @@ func (u *users) deleteUserAssociations(tx *gorm.DB, username string, opts metav1
 	policyStart := time.Now()
 	if err := pol.DeleteByUser(context.Background(), username, opts); err != nil {
 		policyDuration := time.Since(policyStart)
-		logger.Errorw("删除用户策略失败", "error", err, "policy_duration_ms", policyDuration.Milliseconds())
-		return errors.Wrap(err, "删除用户策略失败")
+		logger.Errorw("存储层:删除用户策略失败", "error", err, "policy_duration_ms", policyDuration.Milliseconds())
+		return errors.Wrap(err, "存储层:删除用户策略失败")
 	}
 
 	policyDuration := time.Since(policyStart)
-	logger.Debugw("用户策略删除完成", "policy_duration_ms", policyDuration.Milliseconds())
+	logger.Debugw("存储层:用户策略删除完成", "policy_duration_ms", policyDuration.Milliseconds())
 
 	return nil
 }
@@ -107,7 +107,7 @@ func (u *users) deleteUserMainData(tx *gorm.DB, username string, opts metav1.Del
 	db := tx
 	if opts.Unscoped {
 		db = db.Unscoped()
-		logger.Debug("使用硬删除模式")
+		logger.Debug("存储层:使用硬删除模式")
 	}
 
 	// 记录删除操作时间
@@ -116,7 +116,7 @@ func (u *users) deleteUserMainData(tx *gorm.DB, username string, opts metav1.Del
 	deleteDuration := time.Since(deleteStart)
 
 	if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		logger.Errorw("删除用户失败",
+		logger.Errorw("存储层:删除用户失败",
 			"error", result.Error,
 			"delete_duration_ms", deleteDuration.Milliseconds(),
 		)
@@ -124,13 +124,13 @@ func (u *users) deleteUserMainData(tx *gorm.DB, username string, opts metav1.Del
 	}
 
 	if result.RowsAffected == 0 {
-		logger.Warnw("未找到要删除的用户",
+		logger.Warnw("存储层:未找到要删除的用户",
 			"delete_duration_ms", deleteDuration.Milliseconds(),
 		)
-		return errors.WithCode(code.ErrUserNotFound, "用户不存在")
+		return errors.WithCode(code.ErrUserNotFound, "存储层:用户不存在")
 	}
 
-	logger.Infow("用户主体数据删除成功",
+	logger.Infow("存储层:用户主体数据删除成功",
 		"rows_affected", result.RowsAffected,
 		"delete_duration_ms", deleteDuration.Milliseconds(),
 	)
@@ -175,7 +175,7 @@ func (u *users) Create(ctx context.Context, user *v1.User, opts metav1.CreateOpt
 // Get 查询用户（按用户名）
 func (u *users) Get(ctx context.Context, username string, opts metav1.GetOptions) (*v1.User, error) {
 	logger := u.getLogger(ctx)
-	logger.Info("开始查询用户信息")
+	logger.Debug("存储层:开始查询用户信息")
 
 	// 设置超时上下文
 	dbCtx, cancel := u.createTimeoutContext(ctx)
@@ -300,6 +300,10 @@ func (u *users) handleGetError(err error, username string, logger log.Logger, co
 			log.String("username", username),
 			log.String("error", err.Error()),
 		)
+
+		coder := errors.ParseCoderByErr(err)
+		log.Debugf("store:返回的业务码%v", coder.Code())
+
 		return errors.WithCode(code.ErrUserNotFound, "用户[%s]不存在", username)
 
 	case errors.Is(err, context.DeadlineExceeded):

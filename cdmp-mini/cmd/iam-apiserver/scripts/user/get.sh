@@ -7,18 +7,18 @@ BASE_URL="http://localhost:8080"          # 完整基础URL（不可缺少http:/
 API_VERSION="v1"                          # API版本
 
 # 测试用户数据（与数据库一致）
-VALID_USER="gettest-user101"              # 普通用户（IsAdmin=0，存在）
+VALID_USER="gettest-user104"              # 普通用户（IsAdmin=0，存在）
 ADMIN_USER="admin"                        # 管理员用户（IsAdmin=1，存在，用于测试权限）
 INVALID_USER="non-existent-user-999"      # 不存在的用户（用于404测试）
 INVALID_ROUTE_PATH="invalid-route-123"    # 完全不存在的路由（非/users路径下）
 
 # 认证Token（均为签名有效、sub/identity正确的Token）
 # 1. 管理员Token（查所有用户有权限）
-VALID_TOKEN="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzA3MTc3OCwiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ19pYXQiOjE3NTY5ODUzNzgsInN1YiI6ImFkbWluIn0.1JYTDvhxwOFvL3GTR73bCSqtcT1QhK3hK9uvcntLbVY"
+VALID_TOKEN="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzE2Mjc0MCwiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ19pYXQiOjE3NTcwNzYzNDAsInN1YiI6ImFkbWluIn0.zQ-NDeRDyCDeSc3uZSO3YYKO1SS2tzVuStapG22J0EM"
 # 2. 普通用户Token（sub=gettest-user101，IsAdmin=0）
-NO_PERMISSION_TOKEN="Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1Njk5ODkzNiwiaWRlbnRpdHkiOiJnZXR0ZXN0LXVzZXIxMDEiLCJpc3MiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsIm9yaWdpbl9pYXQiOjE3NTY5OTg5MzYsInN1YiI6ImdldHRlc3QtdXNlcjEwMSJ9.sGW3Q41zz7ZH8p0TBsAZqbIKp2u7SVmnC_51m9src0g"
+NO_PERMISSION_TOKEN="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzE2MzA4OCwiaWRlbnRpdHkiOiJnZXR0ZXN0LXVzZXIxMDQiLCJpc3MiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsIm9yaWdfaWF0IjoxNzU3MDc2Njg4LCJzdWIiOiJnZXR0ZXN0LXVzZXIxMDQifQ.REIjlW628JsELJkgPyiBvM51wltIl8rvR7PLNIkPn1s"
 # 3. 过期Token（格式正确，已过期）
-EXPIRED_TOKEN="Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1Njk4MzE2MywiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ2luX2lhdCI6MTc1Njk4MzE2Mywic3ViIjoiZ2V0dGVzdC11c2VyMTAxIn0.teom6K1tEciPlVbKqDIXCVRb4r-EJZhdtDSBoanrrds"
+EXPIRED_TOKEN="Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzA3OTgyMSwiaWRlbnRpdHkiOiJnZXR0ZXN0LXVzZXIxMDEiLCJpc3MiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsIm9yaWdpbl9pYXQiOjE3NTcwNzk4MjEsInN1YiI6ImdldHRlc3QtdXNlcjEwNCJ9.2ynNNWPl8q4I3yHkdebpgAY_QAQ0rX5nw1sEP5ru-Jg"
 # 4. 格式无效Token（无Bearer前缀）
 INVALID_FORMAT_TOKEN="invalid_token_without_bearer"
 # 5. 内容无效Token（格式正确，签名错误）
@@ -28,7 +28,7 @@ INVALID_CONTENT_TOKEN="Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZ
 ERR_SUCCESS_CODE=0                        # 成功（200）
 ERR_USER_NOT_FOUND=110001                 # 用户不存在（404）
 ERR_TOKEN_BASE64_INVALID=100208           # Token Base64无效（401）
-ERR_TOKEN_EXPIRED=110003                  # Token过期（401，服务端实际返回）
+ERR_TOKEN_EXPIRED=100203                  # Token过期（401，服务端实际返回）
 ERR_MISSING_HEADER=100205                 # 缺少Authorization头（401）
 ERR_INVALID_HEADER=100204                 # Authorization格式无效（400）
 ERR_PERMISSION_DENIED=100207              # 无权限（403）

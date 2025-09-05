@@ -73,8 +73,8 @@ const (
 )
 
 type loginInfo struct {
-	Username string `form:"username" json:"username" binding:"required,username"`
-	Password string `form:"password" json:"password" binding:"required,password"`
+	Username string `form:"username" json:"username" binding:"required"` // 仅校验非空
+	Password string `form:"password" json:"password" binding:"required"` // 仅校验非空
 }
 
 func newBasicAuth() middleware.AuthStrategy {
@@ -159,47 +159,64 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 			c.JSON(http.StatusOK, nil)
 		},
 		Unauthorized: func(c *gin.Context, httpCode int, message string) {
-			// 1. 记录原始错误消息，便于调试（生产环境可移除或改为调试级别日志）
-			log.Debugf("JWT认证失败: HTTP状态码=%d, 错误消息=%s", httpCode, message)
-
-			// 2. 精确匹配错误消息，优先处理过期场景
 			var bizCode int
-			switch {
-			// 匹配Token过期（兼容gin-jwt可能返回的多种过期消息格式）
-			case strings.Contains(message, "token is expired"):
-				bizCode = code.ErrExpired // 100203（Token过期）
+			if len(c.Errors) > 0 {
+				// 获取最后一个错误（通常是 Authenticator 返回的自定义错误）
+				rawErr := c.Errors.Last().Err
+				// 断言为你的自定义错误类型（仅需实现 Code() 方法）
+				if customErr, ok := rawErr.(interface{ Code() int }); ok {
+					// 直接使用原始错误的业务码（无需依赖 message）
+					bizCode = customErr.Code()
+					// 新增日志：确认是否提取到正确的 bizCode（如 code.ErrValidation=100004）
+					log.Errorf("提取到自定义错误，bizCode=%d", bizCode)
 
-			// 匹配签名无效（包括篡改、密钥不匹配等场景）
-			case strings.Contains(message, "signature is invalid"):
-				bizCode = code.ErrTokenInvalid // 100208（Token无效）
+				}
+			}
+			if bizCode == 0 {
+				switch {
+				// 匹配Token过期（兼容gin-jwt可能返回的多种过期消息格式）
+				case strings.Contains(strings.ToLower(message), "token is expired"):
+					bizCode = code.ErrExpired // 100203（Token过期）
 
-			// 匹配Base64解码失败（如非法字符）
-			case strings.HasPrefix(message, "illegal base64 data"):
-				bizCode = code.ErrTokenInvalid // 100208（Token无效）
+				// 匹配签名无效（包括篡改、密钥不匹配等场景）
+				case strings.Contains(message, "signature is invalid"):
+					bizCode = code.ErrTokenInvalid // 100208（Token无效）
 
-			// 匹配缺少Authorization头
-			case message == "Authorization header is not present":
-				bizCode = code.ErrMissingHeader // 100205（缺少授权头）
+				// 匹配Base64解码失败（如非法字符）
+				case strings.HasPrefix(message, "illegal base64 data"):
+					bizCode = code.ErrTokenInvalid // 100208（Token无效）
 
-			// 匹配授权头格式错误（如无Bearer前缀）
-			case message == "invalid authorization header format":
-				bizCode = code.ErrInvalidAuthHeader // 100204（授权头格式无效）
+				// 匹配缺少Authorization头
+				case message == "Authorization header is not present":
+					bizCode = code.ErrMissingHeader // 100205（缺少授权头）
 
-			// 其他未明确匹配的认证错误
-			default:
-				bizCode = code.ErrUnauthorized // 110003（未授权）
+				// 匹配授权头格式错误（如无Bearer前缀）
+				case message == "invalid authorization header format":
+					bizCode = code.ErrInvalidAuthHeader // 100204（授权头格式无效）
+
+				// 其他未明确匹配的认证错误
+				default:
+					bizCode = code.ErrUnauthorized // 110003（未授权）
+					log.Errorf("进入默认分支，bizCode=%d", bizCode)
+				}
+			}
+			// c.JSON(httpCode, gin.H{
+			// 	"code":    bizCode,
+			// 	"message": message,
+			// 	"data":    nil,
+			// })
+			err := errors.WithCode(bizCode, message) // 关键修改：移除 "%s" 格式化
+			// 新增日志：确认错误的 HTTP 状态码
+			if errors.IsWithCode(err) {
+				log.Errorf("错误对应的 HTTP 状态码: %d", errors.GetHTTPStatus(err))
 			}
 
-			// 3. 返回符合规范的错误响应（包含code、message、data）
-			c.JSON(httpCode, gin.H{
-				"code":    bizCode,
-				"message": message,
-				"data":    nil,
-			})
+			core.WriteResponse(c, err, nil)
+			c.Abort()
 		},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("create JWT middleware failed: %w", err)
+		return nil, fmt.Errorf("建立 JWT middleware 失败: %w", err)
 	}
 
 	return auth.NewJWTStrategy(*ginjwt), nil
@@ -226,14 +243,26 @@ func authoricator() func(c *gin.Context) (interface{}, error) {
 		if errs := validation.IsQualifiedName(login.Username); len(errs) > 0 {
 			errsMsg := strings.Join(errs, ":")
 			log.Warnw("用户名不合法:", errsMsg)
-			err := errors.WithCode(code.ErrValidation, "用户名无效:%s", errsMsg)
-			core.WriteResponse(c, err, nil)
-			return nil, err
+
+			// 直接向上下文写入422响应，不返回错误给框架
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"code":    code.ErrValidation,
+				"message": errsMsg,
+				"data":    nil,
+			})
+			c.AbortWithStatus(http.StatusUnprocessableEntity) // 强制终止，不进入框架错误处理
+			return nil, nil                                   // 返回nil表示“无错误”，避免框架二次处理
 		}
 		if err := validation.IsValidPassword(login.Password); err != nil {
+			errMsg := "密码不合法：" + err.Error()
 			log.Warnw("密码格式不符合要求", err.Error())
-			core.WriteResponse(c, errors.WithCode(code.ErrValidation, "密码格式不符合要求%s", err), nil)
-			return nil, err
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"code":    code.ErrValidation,
+				"message": errMsg,
+				"data":    nil,
+			})
+			c.AbortWithStatus(http.StatusUnprocessableEntity)
+			return nil, nil
 		}
 
 		// 2. 查询用户信息：透传 store 层错误（store 已按场景返回对应码）
@@ -325,13 +354,23 @@ func parseWithHeader(c *gin.Context) (loginInfo, error) {
 
 func parseWithBody(c *gin.Context) (loginInfo, error) {
 	var login loginInfo
-	err := c.ShouldBindJSON(&login)
-	if err != nil {
+	// 关键：使用 ShouldBindJSON 解析JSON格式的请求体（与测试用例的Content-Type: application/json匹配）
+	if err := c.ShouldBindJSON(&login); err != nil {
+		// 解析失败时，返回参数错误码（如100004或100006，而非100210）
 		return loginInfo{}, errors.WithCode(
-			code.ErrInvalidBasicPayload,
-			"Basic认证：解码后的内容格式无效，需用冒号分隔非空用户名和密码（如 username:password）",
+			code.ErrInvalidParameter, // 参数错误码（对应400或422，非401）
+			"Body参数解析失败：请检查JSON格式是否正确，包含username和password字段",
 		)
 	}
+
+	// 检查用户名/密码是否为空（基础校验）
+	if login.Username == "" || login.Password == "" {
+		return loginInfo{}, errors.WithCode(
+			code.ErrInvalidParameter,
+			"Body参数错误：username和password不能为空",
+		)
+	}
+
 	return login, nil
 }
 

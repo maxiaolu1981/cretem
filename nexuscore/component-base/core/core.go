@@ -46,6 +46,8 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 		// 2. 将错误解析为自定义错误编码结构（包含业务码、HTTP状态码等）
 		coder := errors.ParseCoderByErr(err)
 
+		log.Debugf("core:返回的业务码%v", coder.Code())
+
 		// 3. 构建错误响应并返回（使用错误编码中定义的 HTTP 状态码）
 		c.JSON(coder.HTTPStatus(), ErrResponse{
 			Code:      coder.Code(),      // 业务错误码

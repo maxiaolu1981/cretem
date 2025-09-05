@@ -5,8 +5,8 @@
 
 # ==================== 配置区（必须修改！） ====================
 API_BASE_URL="http://127.0.0.1:8080/v1/users"  # 接口地址
-TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzAyMTA4MCwiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ19pYXQiOjE3NTY5MzQ2ODAsInN1YiI6ImFkbWluIn0.8URnCUoBEM-adaeV3bMJeU9Hiazebf00-9Ws8DC5GYA"  # 你的有效令牌
-VALID_USER="gettest-user109"  # 确认：这个用户必须存在！否则会触发404
+TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzE1Nzg0MCwiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ19pYXQiOjE3NTcwNzE0NDAsInN1YiI6ImFkbWluIn0.1nXWXRqevSUD8TDNEdksXaexQEZZkAd47V2uUGV4AA4"  # 你的有效令牌
+VALID_USER="gettest-user103"  # 确认：这个用户必须存在！否则会触发404
 NON_EXIST_USER="non_exist_$(date +%s)"  # 随机不存在的用户（404测试）
 INVALID_USER="invalid@user"   # 格式无效的用户（400测试）
 TIMEOUT=10  # 超时时间

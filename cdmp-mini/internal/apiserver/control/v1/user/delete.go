@@ -99,7 +99,7 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	// 3. 校验：获取操作者（未登录场景）
 	operator := common.GetUsername(stdCtx)
 	if operator == "" {
-		logger.Warn("failed to get operator username: user not logged in")
+		logger.Warn("用户没有登录,无法进行删除")
 		// 用 errors.WithCode 创建“未登录”错误（业务码→HTTP 401）
 		err := errors.WithCode(
 			code.ErrUnauthorized, // 业务码：1001（未授权）
@@ -110,12 +110,11 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	}
 	// 补全操作者日志（后续所有日志均包含操作者）
 	logger = logger.WithValues("operator", operator)
-	logger.Infof("operator [%s] initiated user force delete request", operator)
 
 	// 4. 校验：提取并检查待删除用户名（参数无效场景）
 	deleteUsername := ctx.Param("name")
 	if strings.TrimSpace(deleteUsername) == "" {
-		logger.Error("invalid request parameter: delete username is empty")
+		logger.Warnf("用户名为空,无法删除")
 		// 用 errors.WithCode 创建“参数无效”错误（业务码→HTTP 400）
 		err := errors.WithCode(
 			code.ErrInvalidParameter, // 业务码：1002（参数错误）
@@ -128,20 +127,18 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	if errs := validation.IsQualifiedName(deleteUsername); len(errs) > 0 {
 		errsMsg := strings.Join(errs, ":")
 		log.Warnw("用户名不合法:", errsMsg)
-		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errsMsg), nil)
+		core.WriteResponse(ctx, errors.WithCode(code.ErrInvalidParameter, "用户名不合法:%s", errsMsg), nil)
 		return
 	}
 	// 补全待删除用户名日志
 	logger = logger.WithValues("delete_username", deleteUsername)
-	logger.Info("start processing user force delete workflow")
 
 	// 5. 业务校验：查询用户是否存在（资源不存在/服务端错误场景）
-	logger.Debugf("querying user [%s] existence from store", deleteUsername)
 	_, rawGetErr := store.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{})
 	if rawGetErr != nil {
 		// 子场景1：用户不存在（业务码→HTTP 404）
 		if errors.IsCode(rawGetErr, code.ErrUserNotFound) {
-			logger.Infof("user [%s] does not exist, no need to delete", deleteUsername)
+			logger.Warnf("用户 [%s]不存在,无法删除", deleteUsername)
 			// 用 errors.WrapC 包装原始错误（保留错误链），绑定“用户不存在”业务码
 			err := errors.WrapC(
 				rawGetErr,            // 原始查询错误（含堆栈，便于调试）
@@ -154,7 +151,7 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 		}
 
 		// 子场景2：查询失败（服务端错误，业务码→HTTP 500）
-		logger.Errorf("failed to query user [%s] from store: %+v", deleteUsername, rawGetErr)
+		logger.Warnf("数据库错误 [%s]: %+v", deleteUsername, rawGetErr)
 		// 用 errors.WrapC 包装原始错误，绑定“服务端内部错误”业务码
 		err := errors.WrapC(
 			rawGetErr,              // 原始错误（如 DB 超时、权限不足）
@@ -165,10 +162,10 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 		core.WriteResponse(ctx, err, nil)
 		return
 	}
-	logger.Infof("user [%s] exists, start executing delete logic", deleteUsername)
+	logger.Infof("用户 [%s] 存在, 开始进行删除", deleteUsername)
 
 	// 6. 核心业务：调用服务层执行强制删除（删除失败场景）
-	logger.Debugf("calling user service to force delete user [%s]", deleteUsername)
+	logger.Debugf("控制层:调用服务层方法,开始删除用户[%s]", deleteUsername)
 	rawDelErr := u.srv.Users().Delete(
 		stdCtx,
 		deleteUsername,
@@ -176,7 +173,7 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 		metav1.DeleteOptions{Unscoped: true}, // Unscoped：忽略命名空间限制
 	)
 	if rawDelErr != nil {
-		logger.Errorf("failed to force delete user [%s]: %+v", deleteUsername, rawDelErr)
+		logger.Errorf("失败删除用户:[%s]: %+v", deleteUsername, rawDelErr)
 		// 用 errors.WrapC 包装删除错误，绑定“服务端错误”业务码
 		err := errors.WrapC(
 			rawDelErr,              // 原始删除错误（如 DB 事务失败、锁冲突）
@@ -189,6 +186,6 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	}
 
 	// 7. 成功场景：返回 RESTful 标准 204 No Content（无响应体）
-	logger.Infof("user [%s] force delete success", deleteUsername)
+	logger.Infof("用户[%s]已经删除", deleteUsername)
 	core.WriteDeleteSuccess(ctx)
 }

@@ -85,6 +85,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+	"github.com/maxiaolu1981/cretem/nexuscore/log"
 )
 
 const authHeaderCount = 2
@@ -104,6 +105,15 @@ func NewAutoStrategy(basic, jwt middleware.AuthStrategy) AutoStrategy {
 // AuthFunc 生成 Gin 中间件函数（核心认证逻辑）
 func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		log.Errorf("c.path", c.FullPath())
+		// 关键：在所有认证逻辑前添加/login白名单，直接放行
+		if c.FullPath() == "/login" {
+			// 打印日志便于调试（生产环境可移除）
+			//	log.Infof("[AutoStrategy] 白名单放行：%s %s（跳过所有认证）", c.Request.Method, c.FullPath())
+			c.Next() // 直接进入后续处理器（如createAuthHandler）
+			return
+		}
+
 		// 初始化 AuthOperator 并设置到上下文
 		operator := middleware.AuthOperator{}
 		c.Set("AuthOperator", &operator)

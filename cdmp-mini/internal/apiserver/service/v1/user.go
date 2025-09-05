@@ -125,11 +125,15 @@ func (u *userService) Get(ctx context.Context, username string, opts metav1.GetO
 		"service", "UserService",
 		"operation", "Get",
 	)
-	logger.Info("开始执行用户查询逻辑")
+	logger.Debugf("服务层:开始执行用户查询逻辑")
 
 	user, err := u.store.Users().Get(ctx, username, opts)
 	if err != nil {
-		logger.Errorw("用户查询失败:", username, "error:", err.Error())
+
+		coder := errors.ParseCoderByErr(err)
+		log.Debugf("service:返回的业务码%v", coder.Code())
+
+		logger.Debugw("服务层:用户查询失败:", username, "error:", err.Error())
 		return nil, err
 	}
 	return user, nil
@@ -183,15 +187,6 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 		}
 	}()
 
-	logger.Infow("开始执行用户删除")
-
-	// 参数校验
-	if username == "" {
-		err := errors.WithCode(code.ErrInvalidParameter, "用户名不能为空")
-		logger.Errorw("参数错误", "error", err)
-		return err
-	}
-
 	// 解析业务锁配置
 	var bizConfig *pkgopt.BusinessLockOptions
 	bizConfig, exists := lockConfig.Business[bizLockKey]
@@ -203,7 +198,7 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 			Retry:     lockConfig.DefaultRetry,
 			ForceLock: false,
 		}
-		logger.Debugw("使用全局默认锁配置",
+		logger.Debugw("服务层:使用全局默认锁配置",
 			"timeout_ms", bizConfig.Timeout.Milliseconds(),
 		)
 	} else {
@@ -224,7 +219,7 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 		if !bizConfig.ForceLock && !bizConfig.Enabled {
 			bizConfig.Enabled = lockConfig.Enabled
 		}
-		logger.Debugw("使用业务级锁配置",
+		logger.Debugw("服务层:使用业务级锁配置",
 			"force_lock", bizConfig.ForceLock,
 			"timeout_ms", bizConfig.Timeout.Milliseconds(),
 		)
@@ -233,12 +228,12 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 	// 明确判断是否需要加锁，确保needLock在所有路径被使用
 	needLock := bizConfig.ForceLock || bizConfig.Enabled
 	if !needLock {
-		logger.Debugw("无需加锁，直接执行删除")
+		logger.Debugf("服务层:开始删除用户[%s](未加锁)", username)
 		return u.executeDelete(ctx, username, force, opts, logger)
 	}
 
 	// 走到这里说明需要加锁，消除未使用警告
-	logger.Debugw("需要加锁，执行加锁逻辑",
+	logger.Debugw("服务层:需要加锁，执行加锁逻辑",
 		"force_lock", bizConfig.ForceLock,
 		"biz_enabled", bizConfig.Enabled,
 	)
@@ -247,7 +242,7 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 	redisAvailable := true
 	if u.redis == nil {
 		redisAvailable = false
-		logger.Warnw("RedisCluster实例未初始化，无法执行分布式锁操作")
+		logger.Warnw("服务层:RedisCluster实例未初始化，无法执行分布式锁操作")
 	} else {
 		// 1. 明确获取客户端并断言为redis.UniversalClient（适配redis v8）
 		redisClient := u.redis.GetClient()
@@ -255,31 +250,31 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 		// 2. 调用适配redis v8的pingRedis函数
 		if err := pingRedis(redisClient); err != nil {
 			redisAvailable = false
-			logger.Errorw("Redis服务连接失败",
+			logger.Errorw("服务层:Redis服务连接失败",
 				"error", err,
 				"client_type", fmt.Sprintf("%T", redisClient),
 			)
 		} else {
-			logger.Debugw("Redis服务连接正常")
+			logger.Debugw("服务层:Redis服务连接正常")
 		}
 
 	}
 	// 处理Redis不可用降级
 	if !redisAvailable {
 		if !lockConfig.Fallback.Enabled {
-			err := errors.WithCode(code.ErrInternal, "Redis不可用且未启用降级")
-			logger.Errorw("操作失败", "error", err)
+			err := errors.WithCode(code.ErrInternal, "服务层:Redis不可用且未启用降级")
+			logger.Errorw("服务层:操作失败", "error", err)
 			return err
 		}
 
-		logger.Warnw("Redis不可用，触发降级", "action", lockConfig.Fallback.RedisDownAction)
+		logger.Warnw("服务层:Redis不可用，触发降级", "action", lockConfig.Fallback.RedisDownAction)
 		switch lockConfig.Fallback.RedisDownAction {
 		case "fail":
-			return errors.WithCode(code.ErrInternal, "Redis不可用，拒绝操作")
+			return errors.WithCode(code.ErrInternal, "服务层:Redis不可用，拒绝操作")
 		case "skip":
 			return u.executeDelete(ctx, username, force, opts, logger)
 		default:
-			return errors.WithCode(code.ErrInternal, "无效的降级策略")
+			return errors.WithCode(code.ErrInternal, "服务层:无效的降级策略")
 		}
 	}
 
@@ -290,7 +285,7 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 		username,
 	)
 	redisLock := lock.NewRedisLock(u.redis, fullLockKey, bizConfig.Timeout)
-	logger.Debugw("锁初始化完成",
+	logger.Debugw("服务层:锁初始化完成",
 		"full_lock_key", fullLockKey,
 		"timeout_ms", bizConfig.Timeout.Milliseconds(),
 	)
@@ -303,16 +298,16 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 			Interval:    100 * time.Millisecond,
 			BackoffType: "fixed",
 		}
-		logger.Warnw("重试配置为空，使用默认值")
+		logger.Warnw("服务层:重试配置为空，使用默认值")
 	}
 
 	acquired, err := u.acquireLockWithRetry(ctx, redisLock, retryConfig, logger)
 	if err != nil {
-		logger.Errorw("获取锁失败", "error", err)
-		return errors.WithCode(code.ErrInternal, "获取锁失败，请重试")
+		logger.Errorw("服务层:获取锁失败", "error", err)
+		return errors.WithCode(code.ErrInternal, "服务层:获取锁失败，请重试")
 	}
 	if !acquired {
-		return errors.WithCode(code.ErrResourceConflict, "资源冲突，请稍后重试")
+		return errors.WithCode(code.ErrResourceConflict, "服务层:资源冲突，请稍后重试")
 	}
 
 	// 启动锁续约
@@ -321,7 +316,7 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 		keepAliveCtx, cancel := context.WithCancel(ctx)
 		keepAliveCancel = cancel
 		go u.keepLockAlive(keepAliveCtx, redisLock, fullLockKey, lockConfig.Redis.KeepAliveInterval, logger)
-		logger.Debugw("锁续约协程启动", "interval_ms", lockConfig.Redis.KeepAliveInterval.Milliseconds())
+		logger.Debugw("服务层:锁续约协程启动", "interval_ms", lockConfig.Redis.KeepAliveInterval.Milliseconds())
 	}
 
 	// 确保锁释放
@@ -330,14 +325,14 @@ func (u *userService) Delete(ctx context.Context, username string, force bool, o
 			keepAliveCancel()
 		}
 		if err := redisLock.Release(ctx); err != nil {
-			logger.Errorw("释放锁失败", "error", err, "lock_key", fullLockKey)
+			logger.Errorw("服务层:释放锁失败", "error", err, "lock_key", fullLockKey)
 		} else {
-			logger.Debugw("释放锁成功", "lock_key", fullLockKey)
+			logger.Debugw("服务层:释放锁成功", "lock_key", fullLockKey)
 		}
 	}()
 
 	// 执行删除逻辑
-	logger.Infow("获取锁成功，执行删除", "lock_key", fullLockKey)
+	logger.Debugw("服务层:获取锁成功，执行删除", "lock_key", fullLockKey)
 	return u.executeDelete(ctx, username, force, opts, logger)
 }
 
@@ -353,11 +348,11 @@ func (u *userService) executeDelete(ctx context.Context, username string, force 
 	}
 
 	if err != nil {
-		logger.Errorw("用户删除失败", "username", username, "error", err)
+		//	logger.Errorw("用户删除失败", "username", username, "error", err)
 		return err
 	}
 
-	logger.Infow("用户删除成功", "username", username)
+	//	logger.Infow("用户删除成功", "username", username)
 	return nil
 }
 
@@ -369,7 +364,7 @@ func (u *userService) acquireLockWithRetry(
 	logger log.Logger,
 ) (bool, error) {
 	lockKey := redisLock.GetKey()
-	logger.Debugw("开始尝试获取锁",
+	logger.Debugw("服务层:开始尝试获取锁",
 		"lock_key", lockKey,
 		"max_retry", retryConfig.MaxCount,
 		"interval_ms", retryConfig.Interval.Milliseconds(),
@@ -378,21 +373,21 @@ func (u *userService) acquireLockWithRetry(
 	for i := 0; i <= retryConfig.MaxCount; i++ {
 		select {
 		case <-ctx.Done():
-			return false, fmt.Errorf("上下文取消: %w", ctx.Err())
+			return false, fmt.Errorf("服务层:上下文取消: %w", ctx.Err())
 		default:
 			acquired, err := redisLock.Acquire(ctx)
 			if err == nil && acquired {
-				logger.Debugw("获取锁成功", "retry_count", i, "lock_key", lockKey)
+				logger.Debugw("服务层:获取锁成功", "retry_count", i, "lock_key", lockKey)
 				return true, nil
 			}
 
 			if err != nil && !isRetryableError(err) {
-				return false, fmt.Errorf("非重试错误: %w", err)
+				return false, fmt.Errorf("服务层:非重试错误: %w", err)
 			}
 
 			if i < retryConfig.MaxCount {
 				interval := getRetryInterval(retryConfig, i)
-				logger.Debugw("获取锁失败，准备重试",
+				logger.Debugw("服务层:获取锁失败，准备重试",
 					"retry_count", i,
 					"next_interval_ms", interval.Milliseconds(),
 					"lock_key", lockKey,
@@ -402,7 +397,7 @@ func (u *userService) acquireLockWithRetry(
 		}
 	}
 
-	logger.Warnw("重试耗尽，未获取到锁", "lock_key", lockKey)
+	logger.Warnw("服务层:重试耗尽，未获取到锁", "lock_key", lockKey)
 	return false, nil
 }
 
@@ -420,17 +415,17 @@ func (u *userService) keepLockAlive(
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Debugw("锁续约协程退出", "lock_key", lockKey)
+			logger.Debugw("服务层:锁续约协程退出", "lock_key", lockKey)
 			return
 		case <-ticker.C:
 			renewed, err := redisLock.Renew(ctx)
 			if err != nil {
-				logger.Errorw("锁续约失败", "lock_key", lockKey, "error", err)
+				logger.Errorw("服务层:锁续约失败", "lock_key", lockKey, "error", err)
 			} else if !renewed {
-				logger.Warnw("锁已失效，停止续约", "lock_key", lockKey)
+				logger.Warnw("服务层:锁已失效，停止续约", "lock_key", lockKey)
 				return
 			} else {
-				logger.Debugw("锁续约成功", "lock_key", lockKey)
+				logger.Debugw("服务层:锁续约成功", "lock_key", lockKey)
 			}
 		}
 	}
@@ -469,7 +464,7 @@ func getRetryInterval(retryConfig *pkgopt.RetryOptions, retryCount int) time.Dur
 // 关键修正：适配redis v8的pingRedis函数
 func pingRedis(client redis.UniversalClient) error {
 	if client == nil {
-		return errors.New("Redis客户端未初始化（nil）")
+		return errors.New("服务层:Redis客户端未初始化（nil）")
 	}
 
 	// 1. 创建带超时的上下文（redis v8要求显式传递ctx）
@@ -480,12 +475,12 @@ func pingRedis(client redis.UniversalClient) error {
 	// 注意：redis v8中Ping返回*redis.StatusCmd，需通过Err()获取错误
 	statusCmd := client.Ping(ctx)
 	if err := statusCmd.Err(); err != nil {
-		return fmt.Errorf("Redis Ping失败: %w", err) // 包装原始错误，保留堆栈
+		return fmt.Errorf("服务层:Redis Ping失败: %w", err) // 包装原始错误，保留堆栈
 	}
 
 	// 3. 验证返回值（redis规范响应应为"PONG"）
 	if statusCmd.Val() != "PONG" {
-		return fmt.Errorf("Redis响应异常，预期'PONG'，实际: %s", statusCmd.Val())
+		return fmt.Errorf("服务层:Redis响应异常，预期'PONG'，实际: %s", statusCmd.Val())
 	}
 
 	return nil

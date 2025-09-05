@@ -26,7 +26,7 @@ func (u *UserController) Get(c *gin.Context) {
 		"resource_id", username,
 		"user_agent", c.Request.UserAgent(),
 	)
-	logger.Info("开始处理用户查询请求(单资源)")
+	logger.Debugf("开始处理用户查询请求(单资源)")
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errMsg := strings.Join(errs, ":")
 		log.Warnw("用户名参数校验失败:", "error", errMsg)
@@ -36,9 +36,14 @@ func (u *UserController) Get(c *gin.Context) {
 	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{})
 	if err != nil {
 		log.Errorw("查询用户失败", "username:", username, "error:", err.Error())
+
+		coder := errors.ParseCoderByErr(err)
+		log.Debugf("cotrol:返回的业务码%v", coder.Code())
+
 		core.WriteResponse(c, err, nil)
 		return
 	}
 	publicUser := v1.ConvertToPublicUser(user)
+	log.Info("用户查询成功")
 	core.WriteSuccessResponse(c, "查询用户详情成功", publicUser)
 }

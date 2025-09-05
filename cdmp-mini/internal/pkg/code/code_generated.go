@@ -13,11 +13,13 @@ import "github.com/maxiaolu1981/cretem/nexuscore/errors"
 // init 函数：按 HTTP 通用规则注册所有错误码
 func init() {
 	// 1. 通用基本错误（1000xx）
-	register(ErrSuccess, 200, "成功")            // 200 OK：请求成功
-	register(ErrUnknown, 500, "内部服务器错误")       // 500：服务端未知错误
-	register(ErrBind, 400, "请求体绑定结构体失败")       // 400 Bad Request：请求格式错误
-	register(ErrValidation, 422, "请求数据语义校验失败") // 422 Unprocessable Entity：格式正确但语义错误（如字段值超出范围）
-	register(ErrPageNotFound, 404, "页面不存在")    // 404 Not Found：资源不存在
+	register(ErrSuccess, 200, "成功")                                                // 200 OK：请求成功
+	register(ErrUnknown, 500, "内部服务器错误")                                           // 500：服务端未知错误
+	register(ErrBind, 400, "请求体绑定结构体失败")                                           // 400 Bad Request：请求格式错误
+	register(ErrValidation, 422, "请求数据语义校验失败")                                     // 422 Unprocessable Entity：格式正确但语义错误（如字段值超出范围）
+	register(ErrPageNotFound, 404, "页面不存在")                                        // 404 Not Found：资源不存在
+	register(ErrMethodNotAllowed, 405, "方法不允许")                                    // 405 Not Found：方法不允许
+	register(ErrUnsupportedMediaType, 415, "不支持的Content-Type，仅支持application/json") // 415 Not Found：格式不支持
 
 	// 2. 通用数据库错误（1001xx）
 	register(ErrDatabase, 500, "数据库操作错误")        // 500：服务端数据库层错误
@@ -70,5 +72,6 @@ func init() {
 	register(ErrPolicyNotFound, 404, "策略不存在") // 404：策略资源不存在
 
 	// 列出所有错误码（验证注册结果）
+
 	errors.ListAllCodes()
 }

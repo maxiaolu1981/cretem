@@ -74,6 +74,7 @@ func Context() gin.HandlerFunc {
 		// 1. 设置Gin上下文的值（保持向后兼容）
 		requestID := c.GetString(XRequestIDKey)
 		username := c.GetString(UsernameKey)
+		//	log.Debugf("common.Context：成功读取到 requestid 中间件的值 → RequestID=%s, Username=%s", requestID, username)
 
 		c.Set(log.KeyRequestID, requestID)
 		c.Set(log.KeyUsername, username)

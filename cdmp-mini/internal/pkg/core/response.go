@@ -6,55 +6,45 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-// WriteResponse 高频调用安全版：无反射，通过工具函数解析错误
+// WriteResponse 处理HTTP响应，确保状态码正确设置且不被覆盖
 func WriteResponse(c *gin.Context, err error, data interface{}) {
-	// 1. 处理错误场景
 	if err != nil {
-		log.Infof("WriteResponse错误处理：")
-		log.Infof("  错误类型: %T", err)
-		log.Infof("  IsWithCode: %v", errors.IsWithCode(err))
-		log.Infof("  GetCode: %d", errors.GetCode(err))
-		log.Infof("  GetHTTPStatus原始值: %d", errors.GetHTTPStatus(err)) // 关键
-
-		// 用 errors 包工具函数判断是否为 withCode 错误（无反射）
 		if errors.IsWithCode(err) {
-			// 提取业务码、HTTP状态码、错误消息（均为直接访问，无性能损耗）
 			code := errors.GetCode(err)
 			httpStatus := errors.GetHTTPStatus(err)
 			message := errors.GetMessage(err)
 
-			// 生成 RESTful 响应
-			c.Status(httpStatus)
+			// 设置响应并强制终止后续处理
 			c.JSON(httpStatus, gin.H{
 				"code":    code,
 				"message": message,
 				"data":    nil,
 			})
+			c.AbortWithStatus(httpStatus) // 关键：强制使用当前状态码并终止
 			return
 		}
 
-		// 非 withCode 错误（默认 500）
-		c.Status(http.StatusInternalServerError)
+		
 		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    5001, // 默认服务端错误码
+			"code":    5001,
 			"message": "服务内部错误：" + errors.GetMessage(err),
 			"data":    nil,
 		})
+		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
-	// 2. 处理成功场景（非 DELETE 操作）
-	c.Status(http.StatusOK)
+	// 处理成功场景
 	c.JSON(http.StatusOK, gin.H{
-		"code":    0, // 成功业务码
+		"code":    0,
 		"message": "操作成功",
 		"data":    data,
 	})
+	c.AbortWithStatus(http.StatusOK)
 }
 
 // -------------------------- 新增：WriteDeleteSuccess --------------------------

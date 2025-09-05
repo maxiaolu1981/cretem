@@ -14,7 +14,7 @@ payload = {
     "identity": "gettest-user101",  # ✅ 修正：与 sub 一致
     "iss": APIServerIssuer,
     "origin_iat": EXP,
-    "sub": "gettest-user101"        # ✅ 正确：目标用户名
+    "sub": "gettest-user104"        # ✅ 正确：目标用户名
 }
 
 # 生成 Token

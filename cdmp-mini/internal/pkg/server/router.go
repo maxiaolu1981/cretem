@@ -79,6 +79,8 @@ package server
 
 import (
 	"fmt"
+	"net/http"
+	"strings"
 
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
@@ -159,7 +161,8 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 	if !ok {
 		return fmt.Errorf("转换jwtStrategy错误")
 	}
-	g.POST("/login", jwt.LoginHandler)
+	g.Handle(http.MethodPost, "/login", createAutHandler(jwt.LoginHandler))
+
 	g.POST("/logout", jwt.LogoutHandler)
 	g.POST("/refresh", jwt.RefreshHandler)
 	return nil
@@ -170,16 +173,24 @@ func (g *GenericAPIServer) installApiRoutes() error {
 	if err != nil {
 		return err
 	}
-	g.NoRoute(auto.AuthFunc(), func(c *gin.Context) {
-		// 关键验证：打印ErrPageNotFound的实际值
-		//	log.Infof("ErrPageNotFound实际值: %d", code.ErrPageNotFound) // 预期100005，实际可能100006
+	g.NoRoute(func(c *gin.Context) {
+		// 1. 校验请求方法必须为POST
+		if c.Request.Method != http.MethodPost {
+			c.Header("Allow", http.MethodPost)
+			core.WriteResponse(
+				c,
+				errors.WithCode(code.ErrMethodNotAllowed, "仅支持POST方法"),
+				nil,
+			)
+			return
+		}
 
-		//err := errors.WithCode(code.ErrPageNotFound, "没有到请求的页面")
-		//log.Infof("WithCode生成的错误码: %d", errors.GetCode(err)) // 验证错误码是否正确
-
-		//	core.WriteResponse(c, err, nil)
-		core.WriteResponse(c, errors.WithCode(code.ErrPageNotFound, "没有到请求的页面"), nil)
-
+		// 4. 若不存在允许的方法（说明是“路径不存在”），返回 404
+		core.WriteResponse(
+			c,
+			errors.WithCode(code.ErrPageNotFound, "业务不存在"),
+			nil,
+		)
 	})
 	storeIns, _ := mysql.GetMySQLFactoryOr(nil)
 	v1 := g.Group("/v1")
@@ -196,4 +207,17 @@ func (g *GenericAPIServer) installApiRoutes() error {
 
 	}
 	return nil
+}
+
+func createAutHandler(jwtHandler gin.HandlerFunc) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		contentType := c.ContentType()
+		if !strings.HasPrefix(strings.ToLower(contentType), "application/json") {
+			// 表单格式会触发此逻辑，返回 415 + 100007
+			core.WriteResponse(c, errors.WithCode(code.ErrUnsupportedMediaType, "不支持的Content-Type..."), nil)
+			c.Abort()
+			return
+		}
+		jwtHandler(c) // 格式正确才进入实际登录逻辑
+	}
 }

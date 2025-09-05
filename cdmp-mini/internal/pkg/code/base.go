@@ -18,11 +18,16 @@ const (
 	// ErrBind - 400: 请求体绑定结构体失败
 	ErrBind // 100003
 
-	// ErrValidation - 400: 数据验证失败
+	// ErrValidation - 422: 数据验证失败
 	ErrValidation // 100004
 
 	// ErrPageNotFound - 404: 页面不存在
 	ErrPageNotFound // 100005
+
+	//ErrMethodNotAllowed - 405 方法不存在
+	ErrMethodNotAllowed //100006
+	//ErrUnsupportedMediaType 415 不支持的Content-Type，仅支持application/json
+	ErrUnsupportedMediaType //100007
 )
 
 // 通用数据库错误（1001xx）：服务10 + 模块01 + 序号
@@ -61,10 +66,10 @@ const (
 	ErrTokenInvalid // 100208（补充：归为授权错误更合理）
 
 	//100209 ErrBase64DecodeFail - 400: Basic认证 payload Base64解码失败
-	ErrBase64DecodeFail 
+	ErrBase64DecodeFail
 
 	// 100210 ErrInvalidBasicPayload - 400: Basic认证 payload格式无效（缺少冒号分隔）
-    ErrInvalidBasicPayload
+	ErrInvalidBasicPayload
 )
 
 // 通用加解码错误（1003xx）：服务10 + 模块03 + 序号
