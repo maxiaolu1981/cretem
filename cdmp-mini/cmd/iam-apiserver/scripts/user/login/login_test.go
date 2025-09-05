@@ -13,7 +13,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 颜色定义
+// 颜色定义（完全保留）
 var (
 	colorPass    = color.New(color.FgGreen).Add(color.Bold)
 	colorFail    = color.New(color.FgRed).Add(color.Bold)
@@ -24,7 +24,7 @@ var (
 	colorReset   = color.New(color.Reset)
 )
 
-// 错误码结构体定义
+// 错误码结构体定义（完全保留）
 type ErrorCode struct {
 	Code         int
 	ConstantName string
@@ -32,7 +32,7 @@ type ErrorCode struct {
 	Description  string
 }
 
-// 错误码库 - 实际业务中使用的完整错误码集合
+// 错误码库（完全保留）
 var errorCodeLibrary = map[string][]ErrorCode{
 	"基本错误": {
 		{1, "未知常量名", 500, "发生了内部服务器错误,请参阅http://git..."},
@@ -90,7 +90,7 @@ var errorCodeLibrary = map[string][]ErrorCode{
 	},
 }
 
-// 打印错误码库信息
+// 打印错误码库信息（完全保留）
 func printErrorCodeLibrary() {
 	colorInfo.Println("\n" + strings.Repeat("=", 100))
 	colorInfo.Println("业务错误码库信息")
@@ -103,7 +103,6 @@ func printErrorCodeLibrary() {
 		fmt.Println(strings.Repeat("-", 100))
 
 		for _, code := range codes {
-			// 400相关错误码用特殊颜色显示
 			if code.HTTPStatus == 400 {
 				colorCode400.Printf("%-10d ", code.Code)
 			} else {
@@ -120,11 +119,15 @@ func printErrorCodeLibrary() {
 	color.Unset()
 }
 
-// 路由处理逻辑
+// 路由处理逻辑（修复：关闭GIN默认日志）
 func setupTestRouter() *gin.Engine {
-	r := gin.Default()
+	// 关闭GIN默认日志输出（避免干扰测试结果）
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	// 仅保留Recovery中间件（避免panic导致测试崩溃）
+	r.Use(gin.Recovery())
+
 	r.POST("/login", func(c *gin.Context) {
-		// 检查Content-Type
 		contentType := c.Request.Header.Get("Content-Type")
 		if !strings.Contains(contentType, "application/json") {
 			c.JSON(http.StatusUnsupportedMediaType, gin.H{
@@ -134,7 +137,6 @@ func setupTestRouter() *gin.Engine {
 			return
 		}
 
-		// 处理Basic认证
 		authHeader := c.Request.Header.Get("Authorization")
 		if strings.HasPrefix(authHeader, "Basic ") {
 			encoded := strings.TrimPrefix(authHeader, "Basic ")
@@ -148,7 +150,6 @@ func setupTestRouter() *gin.Engine {
 			}
 		}
 
-		// 解析请求体
 		var req struct {
 			Username string `json:"username"`
 			Password string `json:"password"`
@@ -161,7 +162,6 @@ func setupTestRouter() *gin.Engine {
 			return
 		}
 
-		// 参数校验
 		if req.Username == "" {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"code":    100004,
@@ -184,7 +184,6 @@ func setupTestRouter() *gin.Engine {
 			return
 		}
 
-		// 认证逻辑
 		switch {
 		case req.Username == "notexist":
 			c.JSON(http.StatusNotFound, gin.H{
@@ -212,7 +211,7 @@ func setupTestRouter() *gin.Engine {
 	return r
 }
 
-// 打印测试结果统计
+// 打印测试结果统计（完全保留）
 func printSummary(total, passed, failed int) {
 	colorInfo.Println("\n" + strings.Repeat("=", 80))
 	colorInfo.Printf("测试总结: 总用例数: %d, 通过: %d, 失败: %d\n", total, passed, failed)
@@ -226,14 +225,1132 @@ func printSummary(total, passed, failed int) {
 	color.Unset()
 }
 
-// 测试用例执行
-func TestLoginAllCases(t *testing.T) {
-	gin.SetMode(gin.TestMode)
+// 根据业务码获取对应的HTTP状态码（完全保留）
+func getHTTPStatusForCode(code int) int {
+	for _, category := range errorCodeLibrary {
+		for _, ec := range category {
+			if ec.Code == code {
+				return ec.HTTPStatus
+			}
+		}
+	}
+	return 0
+}
+
+// ------------------------------ 独立测试用例（保留原输出格式） ------------------------------
+// 用例1：用户名含非法字符@
+func TestLogin_InvalidCharAt(t *testing.T) {
+	router := setupTestRouter()
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "用户名含非法字符@",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/json"},
+		body:           `{"username":"invalid@user","password":"Admin@2021"}`,
+		expectedStatus: http.StatusUnprocessableEntity,
+		expectedCode:   100004,
+	}
+
+	colorCase.Printf("用例 1: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// 用例2：用户名为空
+func TestLogin_EmptyUsername(t *testing.T) {
+	router := setupTestRouter()
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "用户名为空",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/json"},
+		body:           `{"username":"","password":"Admin@2021"}`,
+		expectedStatus: http.StatusUnprocessableEntity,
+		expectedCode:   100004,
+	}
+
+	colorCase.Printf("用例 2: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// 用例3：密码过短（仅3位）
+func TestLogin_ShortPassword(t *testing.T) {
+	router := setupTestRouter()
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "密码过短（仅3位）",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/json"},
+		body:           `{"username":"validuser","password":"123"}`,
+		expectedStatus: http.StatusUnprocessableEntity,
+		expectedCode:   100004,
+	}
+
+	colorCase.Printf("用例 3: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// 用例4：JSON格式错误（缺少引号）
+func TestLogin_InvalidJSONFormat(t *testing.T) {
+	router := setupTestRouter()
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "JSON格式错误（缺少引号）",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/json"},
+		body:           `{"username":"validuser",password:"Valid@2021"}`,
+		expectedStatus: http.StatusUnprocessableEntity,
+		expectedCode:   100004,
+	}
+
+	colorCase.Printf("用例 4: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// 用例5：缺少password字段
+func TestLogin_MissingPassword(t *testing.T) {
+	router := setupTestRouter()
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "缺少password字段",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/json"},
+		body:           `{"username":"validuser"}`,
+		expectedStatus: http.StatusUnprocessableEntity,
+		expectedCode:   100004,
+	}
+
+	colorCase.Printf("用例 5: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// 用例6：用户不存在
+func TestLogin_UserNotFound(t *testing.T) {
+	router := setupTestRouter()
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "用户不存在",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/json"},
+		body:           `{"username":"notexist","password":"AnyPass@2021"}`,
+		expectedStatus: http.StatusNotFound,
+		expectedCode:   110001,
+	}
+
+	colorCase.Printf("用例 6: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// 用例7：密码不正确
+func TestLogin_WrongPassword(t *testing.T) {
+	router := setupTestRouter()
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "密码不正确",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/json"},
+		body:           `{"username":"validuser","password":"Wrong@2021"}`,
+		expectedStatus: http.StatusUnauthorized,
+		expectedCode:   100206,
+	}
+
+	colorCase.Printf("用例 7: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// 用例8：登录成功（返回token）
+func TestLogin_SuccessWithToken(t *testing.T) {
+	router := setupTestRouter()
+	// 定义独立的verifyData函数（修复语法错误）
+	verifyToken := func(data map[string]interface{}) error {
+		if _, ok := data["token"].(string); !ok {
+			return fmt.Errorf("token缺失")
+		}
+		return nil
+	}
+
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "登录成功（返回token）",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/json"},
+		body:           `{"username":"validuser","password":"Valid@2021"}`,
+		expectedStatus: http.StatusOK,
+		expectedCode:   100001,
+		verifyData:     verifyToken, // 引用独立函数，避免匿名函数语法错误
+	}
+
+	colorCase.Printf("用例 8: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// 用例9：不支持的Content-Type（表单）
+func TestLogin_UnsupportedContentType(t *testing.T) {
+	router := setupTestRouter()
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "不支持的Content-Type（表单）",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
+		body:           "username=validuser&password=Valid@2021",
+		expectedStatus: http.StatusUnsupportedMediaType,
+		expectedCode:   100007,
+	}
+
+	colorCase.Printf("用例 9: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// 用例10：Basic认证格式错误（无效token）
+func TestLogin_InvalidBasicAuth(t *testing.T) {
+	router := setupTestRouter()
+	tc := struct {
+		name           string
+		method         string
+		headers        map[string]string
+		body           string
+		expectedStatus int
+		expectedCode   int
+		verifyData     func(map[string]interface{}) error
+	}{
+		name:           "Basic认证格式错误（无效token）",
+		method:         http.MethodPost,
+		headers:        map[string]string{"Content-Type": "application/json", "Authorization": "Basic invalid-base64-token"},
+		body:           `{"username":"validuser","password":"Valid@2021"}`,
+		expectedStatus: http.StatusBadRequest,
+		expectedCode:   100209,
+	}
+
+	colorCase.Printf("用例 10: %s\n", tc.name)
+	colorInfo.Println("----------------------------------------")
+
+	req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
+	for k, v := range tc.headers {
+		req.Header.Set(k, v)
+	}
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+	resp := w.Result()
+	defer resp.Body.Close()
+
+	var respBody map[string]interface{}
+	var parseErr error
+	if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
+		colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
+	}
+
+	if parseErr == nil {
+		actualCode, codeOk := respBody["code"].(float64)
+		message, msgOk := respBody["message"].(string)
+
+		colorInfo.Print("实际返回: ")
+		if codeOk {
+			if int(actualCode) == 400 || getHTTPStatusForCode(int(actualCode)) == 400 {
+				colorCode400.Printf("code=%d ", int(actualCode))
+			} else {
+				colorCode.Printf("code=%d ", int(actualCode))
+			}
+		} else {
+			colorFail.Print("code=未知 ")
+		}
+
+		if msgOk {
+			fmt.Printf("message=%s\n", message)
+		} else {
+			colorFail.Print("message=未知\n")
+		}
+	}
+
+	casePassed := true
+	if resp.StatusCode != tc.expectedStatus {
+		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
+		casePassed = false
+	} else {
+		colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
+	}
+
+	if parseErr == nil {
+		actualCode, ok := respBody["code"].(float64)
+		if !ok {
+			colorFail.Println("❌ 响应缺少code字段")
+			casePassed = false
+		} else if int(actualCode) != tc.expectedCode {
+			colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
+			casePassed = false
+		} else {
+			colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
+		}
+	} else {
+		casePassed = false
+	}
+
+	if tc.verifyData != nil && casePassed && parseErr == nil {
+		if data, ok := respBody["data"].(map[string]interface{}); ok {
+			if err := tc.verifyData(data); err != nil {
+				colorFail.Printf("❌ 数据校验失败: %v\n", err)
+				casePassed = false
+			} else {
+				colorInfo.Println("✅ 响应数据校验通过")
+			}
+		} else {
+			colorFail.Println("❌ data字段格式错误")
+			casePassed = false
+		}
+	}
+
+	if casePassed {
+		colorPass.Println("----------------------------------------")
+		colorPass.Println("用例执行通过 ✅\n")
+	} else {
+		colorFail.Println("----------------------------------------")
+		colorFail.Println("用例执行失败 ❌\n")
+		t.Fatalf("用例「%s」执行失败", tc.name)
+	}
+	color.Unset()
+}
+
+// ------------------------------ 执行所有用例入口（修复语法错误） ------------------------------
+func TestLogin_AllCases(t *testing.T) {
 	router := setupTestRouter()
 	var total, passed, failed int
 
-	// 首先打印错误码库信息
 	printErrorCodeLibrary()
+
+	// 定义独立的verifyData函数（修复匿名函数语法错误）
+	verifyToken := func(data map[string]interface{}) error {
+		if _, ok := data["token"].(string); !ok {
+			return fmt.Errorf("token缺失")
+		}
+		return nil
+	}
 
 	testCases := []struct {
 		name           string
@@ -244,132 +1361,46 @@ func TestLoginAllCases(t *testing.T) {
 		expectedCode   int
 		verifyData     func(map[string]interface{}) error
 	}{
-		// 参数校验场景
-		{
-			name:           "用户名含非法字符@",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/json"},
-			body:           `{"username":"invalid@user","password":"Admin@2021"}`,
-			expectedStatus: http.StatusUnprocessableEntity,
-			expectedCode:   100004,
-		},
-		{
-			name:           "用户名为空",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/json"},
-			body:           `{"username":"","password":"Admin@2021"}`,
-			expectedStatus: http.StatusUnprocessableEntity,
-			expectedCode:   100004,
-		},
-		{
-			name:           "密码过短（仅3位）",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/json"},
-			body:           `{"username":"validuser","password":"123"}`,
-			expectedStatus: http.StatusUnprocessableEntity,
-			expectedCode:   100004,
-		},
-		{
-			name:           "JSON格式错误（缺少引号）",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/json"},
-			body:           `{"username":"validuser",password:"Valid@2021"}`,
-			expectedStatus: http.StatusUnprocessableEntity,
-			expectedCode:   100004,
-		},
-		{
-			name:           "缺少password字段",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/json"},
-			body:           `{"username":"validuser"}`,
-			expectedStatus: http.StatusUnprocessableEntity,
-			expectedCode:   100004,
-		},
-		// 认证逻辑场景
-		{
-			name:           "用户不存在",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/json"},
-			body:           `{"username":"notexist","password":"AnyPass@2021"}`,
-			expectedStatus: http.StatusNotFound,
-			expectedCode:   110001,
-		},
-		{
-			name:           "密码不正确",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/json"},
-			body:           `{"username":"validuser","password":"Wrong@2021"}`,
-			expectedStatus: http.StatusUnauthorized,
-			expectedCode:   100206,
-		},
-		// 成功场景
-		{
-			name:           "登录成功（返回token）",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/json"},
-			body:           `{"username":"validuser","password":"Valid@2021"}`,
-			expectedStatus: http.StatusOK,
-			expectedCode:   100001,
-			verifyData: func(data map[string]interface{}) error {
-				if _, ok := data["token"].(string); !ok {
-					return fmt.Errorf("token缺失")
-				}
-				return nil
-			},
-		},
-		// 其他格式场景
-		{
-			name:           "不支持的Content-Type（表单）",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/x-www-form-urlencoded"},
-			body:           "username=validuser&password=Valid@2021",
-			expectedStatus: http.StatusUnsupportedMediaType,
-			expectedCode:   100007,
-		},
-		{
-			name:           "Basic认证格式错误（无效token）",
-			method:         http.MethodPost,
-			headers:        map[string]string{"Content-Type": "application/json", "Authorization": "Basic invalid-base64-token"},
-			body:           `{"username":"validuser","password":"Valid@2021"}`,
-			expectedStatus: http.StatusBadRequest,
-			expectedCode:   100209,
-		},
+		{name: "用户名含非法字符@", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"invalid@user","password":"Admin@2021"}`, expectedStatus: http.StatusUnprocessableEntity, expectedCode: 100004},
+		{name: "用户名为空", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"","password":"Admin@2021"}`, expectedStatus: http.StatusUnprocessableEntity, expectedCode: 100004},
+		{name: "密码过短（仅3位）", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"validuser","password":"123"}`, expectedStatus: http.StatusUnprocessableEntity, expectedCode: 100004},
+		{name: "JSON格式错误（缺少引号）", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"validuser",password:"Valid@2021"}`, expectedStatus: http.StatusUnprocessableEntity, expectedCode: 100004},
+		{name: "缺少password字段", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"validuser"}`, expectedStatus: http.StatusUnprocessableEntity, expectedCode: 100004},
+		{name: "用户不存在", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"notexist","password":"AnyPass@2021"}`, expectedStatus: http.StatusNotFound, expectedCode: 110001},
+		{name: "密码不正确", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"validuser","password":"Wrong@2021"}`, expectedStatus: http.StatusUnauthorized, expectedCode: 100206},
+		// 修复：引用独立函数，避免匿名函数在结构体初始化中语法错误
+		{name: "登录成功（返回token）", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"validuser","password":"Valid@2021"}`, expectedStatus: http.StatusOK, expectedCode: 100001, verifyData: verifyToken},
+		{name: "不支持的Content-Type（表单）", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, body: "username=validuser&password=Valid@2021", expectedStatus: http.StatusUnsupportedMediaType, expectedCode: 100007},
+		{name: "Basic认证格式错误（无效token）", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json", "Authorization": "Basic invalid-base64-token"}, body: `{"username":"validuser","password":"Valid@2021"}`, expectedStatus: http.StatusBadRequest, expectedCode: 100209},
 	}
 
-	// 打印测试开始信息
 	colorInfo.Println(strings.Repeat("=", 80))
 	colorInfo.Println("开始执行登录接口测试用例")
 	colorInfo.Println(strings.Repeat("=", 80) + "\n")
 
-	// 执行测试用例
 	for idx, tc := range testCases {
 		total++
 		caseIdx := idx + 1
 
-		// 打印用例标题
 		colorCase.Printf("用例 %d: %s\n", caseIdx, tc.name)
 		colorInfo.Println("----------------------------------------")
 
-		// 创建请求
 		req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
 		for k, v := range tc.headers {
 			req.Header.Set(k, v)
 		}
 
-		// 发送请求
 		w := httptest.NewRecorder()
 		router.ServeHTTP(w, req)
 		resp := w.Result()
 		defer resp.Body.Close()
 
-		// 解析响应体
 		var respBody map[string]interface{}
 		var parseErr error
 		if parseErr = json.NewDecoder(resp.Body).Decode(&respBody); parseErr != nil {
 			colorFail.Printf("❌ 响应解析失败: %v\n", parseErr)
 		}
 
-		// 打印实际返回的业务码和消息
 		if parseErr == nil {
 			actualCode, codeOk := respBody["code"].(float64)
 			message, msgOk := respBody["message"].(string)
@@ -392,25 +1423,21 @@ func TestLoginAllCases(t *testing.T) {
 			}
 		}
 
-		// 校验状态码
 		casePassed := true
 		if resp.StatusCode != tc.expectedStatus {
-			colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n",
-				tc.expectedStatus, resp.StatusCode)
+			colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", tc.expectedStatus, resp.StatusCode)
 			casePassed = false
 		} else {
 			colorInfo.Printf("✅ 状态码正确: %d\n", resp.StatusCode)
 		}
 
-		// 校验业务码
 		if parseErr == nil {
 			actualCode, ok := respBody["code"].(float64)
 			if !ok {
 				colorFail.Println("❌ 响应缺少code字段")
 				casePassed = false
 			} else if int(actualCode) != tc.expectedCode {
-				colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n",
-					tc.expectedCode, int(actualCode))
+				colorFail.Printf("❌ 业务码错误: 预期 %d, 实际 %d\n", tc.expectedCode, int(actualCode))
 				casePassed = false
 			} else {
 				colorCode.Printf("✅ 业务码正确: %d\n", int(actualCode))
@@ -419,7 +1446,6 @@ func TestLoginAllCases(t *testing.T) {
 			casePassed = false
 		}
 
-		// 校验成功场景数据
 		if tc.verifyData != nil && casePassed && parseErr == nil {
 			if data, ok := respBody["data"].(map[string]interface{}); ok {
 				if err := tc.verifyData(data); err != nil {
@@ -434,7 +1460,6 @@ func TestLoginAllCases(t *testing.T) {
 			}
 		}
 
-		// 统计结果
 		if casePassed {
 			passed++
 			colorPass.Println("----------------------------------------")
@@ -447,27 +1472,5 @@ func TestLoginAllCases(t *testing.T) {
 		color.Unset()
 	}
 
-	// 打印总结
 	printSummary(total, passed, failed)
-}
-
-// 根据业务码获取对应的HTTP状态码（用于颜色显示）
-func getHTTPStatusForCode(code int) int {
-	for _, category := range errorCodeLibrary {
-		for _, ec := range category {
-			if ec.Code == code {
-				return ec.HTTPStatus
-			}
-		}
-	}
-	return 0
-}
-
-// 支持go run执行
-func main() {
-	testing.Main(
-		func(pat, str string) (bool, error) { return true, nil },
-		[]testing.InternalTest{{Name: "TestLoginAllCases", F: TestLoginAllCases}},
-		nil, nil,
-	)
 }
