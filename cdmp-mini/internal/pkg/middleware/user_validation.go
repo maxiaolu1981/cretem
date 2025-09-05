@@ -44,16 +44,16 @@ func Validation() gin.HandlerFunc {
 			// 第二步：仅处理「非管理员」错误（403），按路径判断权限
 			fullPath := c.FullPath()
 			switch fullPath {
-			case RouteUsersCreate:
-				// 非管理员仅允许 POST（创建用户），其他方法（GET/DELETE 等）返回 403
-				if c.Request.Method != http.MethodPost {
-					core.WriteResponse(c,
-						errors.WithCode(code.ErrPermissionDenied, "非管理员仅允许创建用户，不允许执行其他操作"),
-						nil,
-					)
-					c.Abort()
-					return
-				}
+			// case RouteUsersCreate:
+			// 	// 非管理员仅允许 POST（创建用户），其他方法（GET/DELETE 等）返回 403
+			// 	if c.Request.Method != http.MethodPost {
+			// 		core.WriteResponse(c,
+			// 			errors.WithCode(code.ErrPermissionDenied, "非管理员仅允许创建用户，不允许执行其他操作"),
+			// 			nil,
+			// 		)
+			// 		c.Abort()
+			// 		return
+			// 	}
 
 			case RouteUsersDetail, RouteUsersChangePassword:
 				// 1. 正确获取用户名（用统一的 common.UsernameKey，避免硬编码）

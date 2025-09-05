@@ -40,6 +40,7 @@ func (u *UserController) Create(ctx *gin.Context) {
 	var r v1.User
 
 	if err := ctx.ShouldBindJSON(&r); err != nil {
+		log.Errorw("请求体绑定结构体失败", "requestID", ctx.Request.Header.Get("X-Request-ID"), "error", err)
 		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "参数绑定失败:%v", err.Error()), nil)
 		return
 	}

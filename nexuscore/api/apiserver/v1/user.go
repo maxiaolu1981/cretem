@@ -33,7 +33,7 @@ type User struct {
 	Status int `json:"status" gorm:"column:status" validate:"omitempty"` // 用户状态（如启用/禁用）
 
 	// Required: true（必填项）
-	Nickname string `json:"nickname" gorm:"column:nickname" validate:"required,min=1,max=30"` // 用户昵称（1-30字符）
+	Nickname string `json:"nickname" gorm:"column:nickname" validate:"omitempty,min=1,max=30"` // 用户昵称（1-30字符）
 
 	// Required: true（必填项）
 	Password string `json:"password,omitempty" gorm:"column:password" validate:"required"` // 加密存储的密码（JSON 序列化时忽略）

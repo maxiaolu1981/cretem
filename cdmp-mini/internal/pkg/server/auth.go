@@ -48,6 +48,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/core"
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
@@ -56,6 +57,7 @@ import (
 
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/spf13/viper"
 )
@@ -221,6 +223,19 @@ func authoricator() func(c *gin.Context) (interface{}, error) {
 			return nil, err
 		}
 
+		if errs := validation.IsQualifiedName(login.Username); len(errs) > 0 {
+			errsMsg := strings.Join(errs, ":")
+			log.Warnw("用户名不合法:", errsMsg)
+			err := errors.WithCode(code.ErrValidation, "用户名无效:%s", errsMsg)
+			core.WriteResponse(c, err, nil)
+			return nil, err
+		}
+		if err := validation.IsValidPassword(login.Password); err != nil {
+			log.Warnw("密码格式不符合要求", err.Error())
+			core.WriteResponse(c, errors.WithCode(code.ErrValidation, "密码格式不符合要求%s", err), nil)
+			return nil, err
+		}
+
 		// 2. 查询用户信息：透传 store 层错误（store 已按场景返回对应码）
 		user, err := store.Client().Users().Get(c, login.Username, metav1.GetOptions{})
 		if err != nil {
@@ -246,7 +261,6 @@ func authoricator() func(c *gin.Context) (interface{}, error) {
 			log.Warnf("update user logined time failed: username=%s, error=%v", login.Username, updateErr)
 		}
 
-		// 认证成功：返回用户信息
 		return user, nil
 	}
 }
@@ -354,16 +368,21 @@ func authorizator() func(data interface{}, c *gin.Context) bool {
 
 func loginResponse() func(c *gin.Context, code int, token string, expire time.Time) {
 	return func(c *gin.Context, code int, token string, expire time.Time) {
-		c.JSON(http.StatusOK, gin.H{
+		// 加日志：记录当前响应函数被调用
+		core.WriteResponse(c, nil, map[string]string{
 			"token":  token,
 			"expire": expire.Format(time.RFC3339),
 		})
+		// c.JSON(http.StatusOK, gin.H{
+		// 	"token":  token,
+		// 	"expire": expire.Format(time.RFC3339),
+		// })
 	}
 }
 
 func refreshResponse() func(c *gin.Context, code int, token string, expire time.Time) {
 	return func(c *gin.Context, code int, token string, expire time.Time) {
-		c.JSON(http.StatusOK, gin.H{
+		core.WriteResponse(c, nil, map[string]string{
 			"token":  token,
 			"expire": expire.Format(time.RFC3339),
 		})

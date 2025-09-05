@@ -1,7 +1,6 @@
 package user
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
@@ -125,14 +125,12 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 		return
 	}
 
-	var usernameRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,30}$`)
-	if !usernameRegex.MatchString(deleteUsername) {
-		logger.Errorf("invalid username format: %s", deleteUsername)
-		err := errors.WithCode(code.ErrInvalidParameter, "参数错误：用户名格式无效（仅允许字母、数字、_、-，3-30位）")
-		core.WriteResponse(ctx, err, nil)
+	if errs := validation.IsQualifiedName(deleteUsername); len(errs) > 0 {
+		errsMsg := strings.Join(errs, ":")
+		log.Warnw("用户名不合法:", errsMsg)
+		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errsMsg), nil)
 		return
 	}
-
 	// 补全待删除用户名日志
 	logger = logger.WithValues("delete_username", deleteUsername)
 	logger.Info("start processing user force delete workflow")

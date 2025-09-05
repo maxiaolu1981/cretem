@@ -88,7 +88,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
@@ -173,12 +172,12 @@ func (g *GenericAPIServer) installApiRoutes() error {
 	}
 	g.NoRoute(auto.AuthFunc(), func(c *gin.Context) {
 		// 关键验证：打印ErrPageNotFound的实际值
-		log.Infof("ErrPageNotFound实际值: %d", code.ErrPageNotFound) // 预期100005，实际可能100006
+		//	log.Infof("ErrPageNotFound实际值: %d", code.ErrPageNotFound) // 预期100005，实际可能100006
 
-		err := errors.WithCode(code.ErrPageNotFound, "没有到请求的页面")
-		log.Infof("WithCode生成的错误码: %d", errors.GetCode(err)) // 验证错误码是否正确
+		//err := errors.WithCode(code.ErrPageNotFound, "没有到请求的页面")
+		//log.Infof("WithCode生成的错误码: %d", errors.GetCode(err)) // 验证错误码是否正确
 
-		core.WriteResponse(c, err, nil)
+		//	core.WriteResponse(c, err, nil)
 		core.WriteResponse(c, errors.WithCode(code.ErrPageNotFound, "没有到请求的页面"), nil)
 
 	})
