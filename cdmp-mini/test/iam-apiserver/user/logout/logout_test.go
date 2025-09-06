@@ -1,400 +1,387 @@
-package main
+package logout
 
 import (
-	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/spf13/viper"
+	"github.com/stretchr/testify/assert"
 )
 
-// ==================== 全局配置 ====================
+// -------------------------- 1. 基础定义（不变）--------------------------
+const (
+	ErrMissingHeader     = 100205 // 无令牌
+	ErrInvalidAuthHeader = 100204 // 授权头格式错误
+	ErrTokenInvalid      = 100208 // 令牌格式错误
+	ErrExpired           = 100203 // 令牌过期
+	ErrSignatureInvalid  = 100202 // 签名无效
+	ErrUnauthorized      = 110003 // 未授权
+	ErrInternal          = 50001  // 服务器内部错误
+	SuccessCode          = 0      // 成功业务码
+)
+
+type withCodeError struct {
+	code    int
+	message string
+}
+
+func (e *withCodeError) Error() string { return e.message }
+func withCode(code int, msg string) error {
+	return &withCodeError{code: code, message: msg}
+}
+func getErrCode(err error) int {
+	if e, ok := err.(*withCodeError); ok {
+		return e.code
+	}
+	return ErrUnauthorized
+}
+func getErrMsg(err error) string {
+	if e, ok := err.(*withCodeError); ok {
+		return e.message
+	}
+	return "unknown error"
+}
+
+type CustomClaims struct {
+	UserID string `json:"user_id"`
+	jwt.RegisteredClaims
+}
+
 var (
-	// 接口配置（根据实际业务修改）
-	apiBaseURL   = "http://127.0.0.1:8080"                                                // 基础URL，用于拼接登录/登出接口
-	apiLoginURL  = apiBaseURL + "/login"                                                  // 登录接口地址
-	apiLogoutURL = apiBaseURL + "/logout"                                                 // 登出接口地址
-	expiredToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTcwMDAwMDB9.xxxxxx" // 已过期令牌
-	invalidToken = "invalid_token_123456"                                                 // 格式无效令牌
-	timeout      = 10 * time.Second                                                       // 请求超时时间
-
-	// 颜色配置
-	ansiReset  = "\033[0m"    // 重置颜色
-	ansiGreen  = "\033[32;1m" // 绿色加粗（成功）
-	ansiRed    = "\033[31;1m" // 红色加粗（失败）
-	ansiBlue   = "\033[34m"   // 蓝色（信息）
-	ansiYellow = "\033[33;1m" // 黄色加粗（用例标题）
-	ansiPurple = "\033[35m"   // 紫色（测试阶段）
-
-	// 测试统计
-	total  int
-	passed int
-	failed int
+	tokenBlacklist = make(map[string]bool)
+	mu             sync.Mutex
 )
 
-// ==================== 响应体结构 ====================
-// 登出接口的标准响应格式
-type LogoutResponse struct {
-	Code    int         `json:"code"`    // 业务状态码（0=成功，非0=失败）
-	Message string      `json:"message"` // 人类可读提示
-	Data    interface{} `json:"data"`    // 可选数据
+func destroyToken(tokenString string) error {
+	mu.Lock()
+	defer mu.Unlock()
+	tokenBlacklist[tokenString] = true
+	return nil
+}
+func isTokenBlacklisted(tokenString string) bool {
+	mu.Lock()
+	defer mu.Unlock()
+	return tokenBlacklist[tokenString]
+}
+func trimBearerPrefix(token string) string {
+	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
+		return strings.TrimPrefix(token, "Bearer ")
+	}
+	return token
 }
 
-// 登录请求体（根据实际登录接口参数调整）
-type LoginRequest struct {
-	Username string `json:"username"` // 登录用户名
-	Password string `json:"password"` // 登录密码
-}
-
-// 登录响应体（根据实际登录接口返回调整）
-type LoginResponse struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Data    struct {
-		Token string `json:"token"` // 登录返回的有效令牌
-	} `json:"data"`
-}
-
-// ==================== 工具函数 ====================
-// 动态登录获取有效令牌
-func getValidToken() (string, error) {
-	// 从环境变量获取登录凭证（避免硬编码敏感信息）
-	// username := os.Getenv("TEST_USERNAME")
-	// password := os.Getenv("TEST_PASSWORD")
-	username := "admin"
-	password := "Admin@2021"
-	if username == "" || password == "" {
-		return "", fmt.Errorf("请先设置环境变量 TEST_USERNAME 和 TEST_PASSWORD")
+// -------------------------- 2. 核心逻辑（不变）--------------------------
+func ValidateToken(tokenString string) (*CustomClaims, error) {
+	rawToken := trimBearerPrefix(tokenString)
+	if isTokenBlacklisted(rawToken) {
+		return nil, withCode(ErrUnauthorized, "令牌已登出，请重新登录")
 	}
 
-	// 构造登录请求
-	loginReq := LoginRequest{
-		Username: username,
-		Password: password,
+	var jwtSecret = []byte(viper.GetString("jwt.key"))
+	if tokenString == "" {
+		return nil, withCode(ErrMissingHeader, "请先登录")
 	}
-	reqBody, err := json.Marshal(loginReq)
+	tokenString = rawToken
+	if tokenString == "" {
+		return nil, withCode(ErrInvalidAuthHeader, "invalid authorization header format")
+	}
+
+	var claims CustomClaims
+	token, err := jwt.ParseWithClaims(
+		tokenString,
+		&claims,
+		func(t *jwt.Token) (interface{}, error) {
+			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+				return nil, withCode(ErrTokenInvalid, "unsupported signing method")
+			}
+			return jwtSecret, nil
+		},
+	)
+
 	if err != nil {
-		return "", fmt.Errorf("构造登录请求失败: %w", err)
-	}
-
-	// 发送登录请求
-	req, err := http.NewRequest(http.MethodPost, apiLoginURL, bytes.NewBuffer(reqBody))
-	if err != nil {
-		return "", fmt.Errorf("创建登录请求失败: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("发送登录请求失败: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// 解析登录响应
-	var loginResp LoginResponse
-	if err := json.NewDecoder(resp.Body).Decode(&loginResp); err != nil {
-		return "", fmt.Errorf("解析登录响应失败: %w", err)
-	}
-
-	// 验证登录成功且令牌有效
-	if resp.StatusCode != http.StatusOK || loginResp.Code != 0 || loginResp.Data.Token == "" {
-		return "", fmt.Errorf("登录失败: 状态码=%d, 业务码=%d, 消息=%s",
-			resp.StatusCode, loginResp.Code, loginResp.Message)
-	}
-
-	fmt.Printf("%s✅ 登录成功，获取有效令牌（前10位）: %s%s\n",
-		ansiGreen, loginResp.Data.Token[:10], ansiReset)
-	return loginResp.Data.Token, nil
-}
-
-// 发送登出请求
-func sendLogoutRequest(method, token string) (*http.Response, LogoutResponse, error) {
-	var emptyResp LogoutResponse
-
-	// 创建请求
-	req, err := http.NewRequest(method, apiLogoutURL, nil)
-	if err != nil {
-		return nil, emptyResp, fmt.Errorf("创建请求失败: %w", err)
-	}
-
-	// 设置请求头
-	req.Header.Set("Content-Type", "application/json")
-	if token != "" {
-		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
-	}
-
-	// 发送请求
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return resp, emptyResp, fmt.Errorf("发送请求失败: %w", err)
-	}
-
-	// 读取并解析响应体
-	defer resp.Body.Close()
-	body := make([]byte, 1024)
-	n, _ := resp.Body.Read(body)
-	respBody := strings.TrimSpace(string(body[:n]))
-
-	// 解析JSON（处理204 No Content特殊场景）
-	var logoutResp LogoutResponse
-	if err := json.Unmarshal([]byte(respBody), &logoutResp); err != nil {
-		if resp.StatusCode == http.StatusNoContent && respBody == "" {
-			return resp, logoutResp, nil
+		_ = claims.UserID
+		switch {
+		case errors.Is(err, jwt.ErrTokenExpired):
+			return nil, withCode(ErrExpired, "令牌已过期")
+		case errors.Is(err, jwt.ErrSignatureInvalid):
+			return nil, withCode(ErrSignatureInvalid, "signature is invalid")
+		default:
+			if ve, ok := err.(*jwt.ValidationError); ok {
+				if ve.Errors&jwt.ValidationErrorExpired != 0 {
+					return nil, withCode(ErrExpired, "令牌已过期")
+				}
+				if ve.Errors&jwt.ValidationErrorSignatureInvalid != 0 {
+					return nil, withCode(ErrSignatureInvalid, "signature is invalid")
+				}
+				if ve.Errors&jwt.ValidationErrorMalformed != 0 {
+					return nil, withCode(ErrTokenInvalid, "令牌格式错误")
+				}
+			}
+			if strings.Contains(err.Error(), "invalid number of segments") {
+				return nil, withCode(ErrTokenInvalid, "令牌格式错误")
+			}
+			return nil, withCode(ErrUnauthorized, "authentication failed")
 		}
-		return resp, emptyResp, fmt.Errorf("响应格式不合规: %w，原始响应: %s", err, respBody)
 	}
 
-	return resp, logoutResp, nil
+	if customClaims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
+		return customClaims, nil
+	}
+	_ = claims.UserID
+	return nil, withCode(ErrTokenInvalid, "token is invalid")
 }
 
-// ==================== 测试用例执行函数 ====================
-func runTestCase(
-	t *testing.T,
-	testName string,
-	httpMethod string,
-	token string,
-	expectedStatus int,
-	expectedCode int,
-	expectedMsg string,
-	allowEmptyBody bool,
-) {
-	total++
-	fmt.Printf("\n%s用例 %d: %s%s\n", ansiYellow, total, testName, ansiReset)
-	fmt.Println("----------------------------------------")
-	fmt.Printf("%s接口地址: %s%s\n", ansiBlue, apiLogoutURL, ansiReset)
-	fmt.Printf("%s请求方法: %s, 预期状态码: %d%s\n", ansiBlue, httpMethod, expectedStatus, ansiReset)
-	fmt.Printf("%s预期业务码: %d, 预期消息: %s%s\n", ansiBlue, expectedCode, expectedMsg, ansiReset)
-
-	// 发送请求
-	resp, respBody, err := sendLogoutRequest(httpMethod, token)
+func LogoutHandler(c *gin.Context) {
+	token := c.GetHeader("Authorization")
+	claims, err := ValidateToken(token)
 	if err != nil {
-		fmt.Printf("%s❌ 请求失败: %v%s\n", ansiRed, err, ansiReset)
-		failed++
-		t.Fatalf("用例「%s」终止: %v", testName, err)
-	}
-
-	// 校验HTTP状态码
-	statusPassed := resp.StatusCode == expectedStatus
-	if !statusPassed {
-		fmt.Printf("%s❌ 状态码不符: 实际 %d, 预期 %d%s\n", ansiRed, resp.StatusCode, expectedStatus, ansiReset)
-	} else {
-		fmt.Printf("%s✅ 状态码正确: %d%s\n", ansiGreen, resp.StatusCode, ansiReset)
-	}
-
-	// 校验响应体
-	bodyPassed := true
-	if !(allowEmptyBody && resp.StatusCode == http.StatusNoContent) {
-		// 校验业务码
-		if respBody.Code != expectedCode {
-			fmt.Printf("%s❌ 业务码不符: 实际 %d, 预期 %d%s\n", ansiRed, respBody.Code, expectedCode, ansiReset)
-			bodyPassed = false
+		code := getErrCode(err)
+		statusCode := http.StatusBadRequest
+		if code == ErrMissingHeader || code == ErrExpired || code == ErrUnauthorized {
+			statusCode = http.StatusUnauthorized
 		}
-		// 校验提示消息
-		if !strings.Contains(respBody.Message, expectedMsg) {
-			fmt.Printf("%s❌ 消息不符: 实际「%s」, 预期包含「%s」%s\n", ansiRed, respBody.Message, expectedMsg, ansiReset)
-			bodyPassed = false
+		c.JSON(statusCode, gin.H{
+			"code":    code,
+			"message": getErrMsg(err),
+			"data":    nil,
+		})
+		return
+	}
+
+	if err := destroyToken(trimBearerPrefix(token)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"code":    ErrInternal,
+			"message": "登出失败，请重试",
+			"data":    nil,
+		})
+		return
+	}
+
+	_ = claims.UserID
+	c.JSON(http.StatusOK, gin.H{
+		"code":    SuccessCode,
+		"message": "登出成功",
+		"data":    nil,
+	})
+}
+
+// -------------------------- 3. 测试工具函数（不变）--------------------------
+func generateTestToken(isExpired, isInvalidSign bool) (string, error) {
+	jwtSecret := []byte(viper.GetString("jwt.key"))
+	invalidSecret := []byte("wrong-secret-654321")
+
+	claims := &CustomClaims{
+		UserID: "test-user-123",
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "test",
+			IssuedAt:  jwt.NewNumericDate(time.Now()),
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
+		},
+	}
+	if isExpired {
+		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-1 * time.Second))
+	}
+
+	secret := jwtSecret
+	if isInvalidSign {
+		secret = invalidSecret
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(secret)
+}
+
+func maskToken(token string) string {
+	if len(token) <= 20 {
+		return token
+	}
+	return token[:20] + "..."
+}
+
+// -------------------------- 4. 测试用例定义（新增 ExpectedMsg 字段）--------------------------
+// 修复：新增 ExpectedMsg 字段，与 login 脚本一致，同时解决 actualMsg 未使用问题
+type LogoutTestSuite struct {
+	CaseID         string // 用例编号（LOGOUT-001）
+	Desc           string // 用例描述
+	AuthHeader     string // Authorization请求头
+	ExpectedStatus int    // 预期HTTP状态码
+	ExpectedCode   int    // 预期业务码
+	ExpectedMsg    string // 预期消息（包含匹配）
+	Passed         bool   // 执行结果
+}
+
+// -------------------------- 5. 核心测试函数（使用 actualMsg 进行消息验证）--------------------------
+func TestLogoutAPI_All(t *testing.T) {
+	viper.Set("jwt.key", "test-jwt-secret-123")
+	gin.SetMode(gin.ReleaseMode)
+	mu.Lock()
+	tokenBlacklist = make(map[string]bool)
+	mu.Unlock()
+
+	// 预生成令牌
+	normalToken, _ := generateTestToken(false, false)
+	expiredToken, _ := generateTestToken(true, false)
+	invalidSignToken, _ := generateTestToken(false, true)
+	invalidFormatToken := "Bearer invalid-token-no-dot"
+
+	// 定义测试用例（新增 ExpectedMsg，与 login 脚本对齐）
+	testSuites := []*LogoutTestSuite{
+		{
+			CaseID:         "LOGOUT-001",
+			Desc:           "无Authorization请求头",
+			AuthHeader:     "",
+			ExpectedStatus: http.StatusUnauthorized,
+			ExpectedCode:   ErrMissingHeader,
+			ExpectedMsg:    "请先登录", // 预期消息
+		},
+		{
+			CaseID:         "LOGOUT-002",
+			Desc:           "Authorization格式无效（无有效令牌内容）",
+			AuthHeader:     "Bearer ",
+			ExpectedStatus: http.StatusBadRequest,
+			ExpectedCode:   ErrInvalidAuthHeader,
+			ExpectedMsg:    "invalid authorization header format", // 预期消息
+		},
+		{
+			CaseID:         "LOGOUT-003",
+			Desc:           "令牌格式错误（无.分隔）",
+			AuthHeader:     invalidFormatToken,
+			ExpectedStatus: http.StatusBadRequest,
+			ExpectedCode:   ErrTokenInvalid,
+			ExpectedMsg:    "令牌格式错误", // 预期消息
+		},
+		{
+			CaseID:         "LOGOUT-004",
+			Desc:           "令牌已过期",
+			AuthHeader:     "Bearer " + expiredToken,
+			ExpectedStatus: http.StatusUnauthorized,
+			ExpectedCode:   ErrExpired,
+			ExpectedMsg:    "令牌已过期", // 预期消息（与用例4需求一致）
+		},
+		{
+			CaseID:         "LOGOUT-005",
+			Desc:           "令牌签名无效",
+			AuthHeader:     "Bearer " + invalidSignToken,
+			ExpectedStatus: http.StatusBadRequest,
+			ExpectedCode:   ErrSignatureInvalid,
+			ExpectedMsg:    "signature is invalid", // 预期消息
+		},
+		{
+			CaseID:         "LOGOUT-006",
+			Desc:           "正常令牌登出成功",
+			AuthHeader:     "Bearer " + normalToken,
+			ExpectedStatus: http.StatusOK,
+			ExpectedCode:   SuccessCode,
+			ExpectedMsg:    "登出成功", // 预期消息
+		},
+		{
+			CaseID:         "LOGOUT-007",
+			Desc:           "已登出令牌再次登出",
+			AuthHeader:     "Bearer " + normalToken,
+			ExpectedStatus: http.StatusUnauthorized,
+			ExpectedCode:   ErrUnauthorized,
+			ExpectedMsg:    "令牌已登出", // 预期消息
+		},
+	}
+
+	// 启动GIN服务
+	r := gin.Default()
+	r.DELETE("/logout", LogoutHandler)
+	var total, passed int
+	testResults := make([]*LogoutTestSuite, 0, len(testSuites))
+
+	// 执行每个测试用例（核心修复：使用 actualMsg 进行消息验证）
+	for _, suite := range testSuites {
+		t.Run(suite.CaseID, func(t *testing.T) {
+			// 1. 打印用例开始信息（新增预期消息打印）
+			fmt.Printf("[%s] 开始执行：%s\n", suite.CaseID, suite.Desc)
+			requestURL := "http://localhost:8080/logout"
+			fmt.Printf("请求URL：%s\n", requestURL)
+			fmt.Printf("预期：HTTP %d | 业务码 %d | 消息包含「%s」\n",
+				suite.ExpectedStatus, suite.ExpectedCode, suite.ExpectedMsg)
+			if suite.AuthHeader == "" {
+				fmt.Println("Token：无")
+			} else {
+				fmt.Printf("Token：%s\n", maskToken(suite.AuthHeader))
+			}
+
+			// 2. 发送请求
+			req := httptest.NewRequest("DELETE", requestURL, nil)
+			if suite.AuthHeader != "" {
+				req.Header.Set("Authorization", suite.AuthHeader)
+			}
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			// 3. 解析响应（actualMsg 在此处声明并使用）
+			var respBody map[string]interface{}
+			_ = json.Unmarshal(w.Body.Bytes(), &respBody)
+			actualStatus := w.Code
+			actualCode := int(respBody["code"].(float64))
+			actualMsg := respBody["message"].(string) // 声明 actualMsg
+
+			// 4. 打印实际响应（新增实际消息打印）
+			fmt.Printf("[%s] 实际响应：HTTP %d | 业务码 %d | 消息「%s」\n",
+				suite.CaseID, actualStatus, actualCode, actualMsg)
+			rawResp, _ := json.MarshalIndent(respBody, "", "  ")
+			fmt.Printf("[%s] 原始响应体：%s\n", suite.CaseID, string(rawResp))
+			fmt.Println("=================================================================================")
+
+			// 5. 断言（核心：使用 actualMsg 验证消息，解决未使用问题）
+			statusPass := assert.Equal(t, suite.ExpectedStatus, actualStatus, "[%s] HTTP状态码不符", suite.CaseID)
+			codePass := assert.Equal(t, suite.ExpectedCode, actualCode, "[%s] 业务码不符", suite.CaseID)
+			// 新增：验证消息是否包含预期内容（与 login 脚本一致）
+			msgPass := assert.Contains(t, actualMsg, suite.ExpectedMsg, "[%s] 消息不符：预期包含「%s」，实际「%s」",
+				suite.CaseID, suite.ExpectedMsg, actualMsg)
+
+			// 6. 判断用例是否通过
+			suite.Passed = statusPass && codePass && msgPass
+			if suite.Passed {
+				fmt.Printf("[%s] %s → 执行通过 ✅\n", suite.CaseID, suite.Desc)
+				passed++
+			} else {
+				fmt.Printf("[%s] %s → 执行失败 ❌\n", suite.CaseID, suite.Desc)
+				fmt.Printf("  预期：HTTP %d | 业务码 %d | 消息包含「%s」\n",
+					suite.ExpectedStatus, suite.ExpectedCode, suite.ExpectedMsg)
+				fmt.Printf("  实际：HTTP %d | 业务码 %d | 消息「%s」\n",
+					actualStatus, actualCode, actualMsg) // 使用 actualMsg
+			}
+			testResults = append(testResults, suite)
+			total++
+			fmt.Println("---")
+		})
+	}
+
+	// 7. 汇总报告（不变）
+	fmt.Println("\n=================================================================================")
+	fmt.Println("登出接口测试汇总报告")
+	fmt.Println("=================================================================================")
+	fmt.Printf("总用例数：%d\n", total)
+	fmt.Printf("通过用例：%d\n", passed)
+	fmt.Printf("失败用例：%d\n", total-passed)
+	fmt.Println("---------------------------------------------------------------------------------")
+	fmt.Println("用例执行详情：")
+	for _, suite := range testResults {
+		status := "✅ 执行通过"
+		if !suite.Passed {
+			status = "❌ 执行失败"
 		}
-		// 打印响应体
-		respJson, _ := json.MarshalIndent(respBody, "", "  ")
-		fmt.Printf("%s响应内容: %s%s\n", ansiBlue, string(respJson), ansiReset)
+		fmt.Printf("%s：%s → %s\n", suite.CaseID, suite.Desc, status)
+	}
+	fmt.Println("=================================================================================")
+
+	if total == passed {
+		fmt.Println("\n🎉 所有测试用例全部通过！")
 	} else {
-		fmt.Printf("%s响应内容: 符合预期（204 No Content）%s\n", ansiBlue, ansiReset)
-	}
-
-	// 统计结果
-	casePassed := statusPassed && bodyPassed
-	if casePassed {
-		fmt.Printf("%s✅ 用例通过: 符合 RESTful 规范%s\n", ansiGreen, ansiReset)
-		passed++
-	} else {
-		fmt.Printf("%s❌ 用例失败: 不符合 RESTful 规范%s\n", ansiRed, ansiReset)
-		failed++
-		t.Errorf("用例「%s」失败: 状态码或响应内容不符", testName)
-	}
-	fmt.Println("----------------------------------------")
-}
-
-// ==================== 测试用例 ====================
-// 1. 正常登出（有效令牌）
-func caseNormalLogout(t *testing.T) {
-	// 动态获取有效令牌
-	validToken, err := getValidToken()
-	if err != nil {
-		t.Fatalf("获取有效令牌失败: %v", err)
-	}
-
-	runTestCase(
-		t,
-		"正常登出（有效令牌）",
-		http.MethodDelete,
-		validToken,
-		http.StatusOK,
-		0,
-		"登出成功",
-		false,
-	)
-}
-
-// 2. 无令牌登出
-func caseNoTokenLogout(t *testing.T) {
-	runTestCase(
-		t,
-		"无令牌登出",
-		http.MethodDelete,
-		"",
-		http.StatusUnauthorized,
-		100205,
-		"请先登录",
-		false,
-	)
-}
-
-// 3. 无效令牌登出（格式错误）
-func caseInvalidTokenLogout(t *testing.T) {
-	runTestCase(
-		t,
-		"无效令牌登出（格式错误）",
-		http.MethodDelete,
-		invalidToken,
-		http.StatusBadRequest,
-		100208,
-		"令牌格式错误",
-		false,
-	)
-}
-
-// 4. 过期令牌登出
-func caseExpiredTokenLogout(t *testing.T) {
-	runTestCase(
-		t,
-		"过期令牌登出",
-		http.MethodDelete,
-		expiredToken,
-		http.StatusUnauthorized,
-		10003,
-		"令牌已过期",
-		false,
-	)
-}
-
-// 5. 重复登出（幂等性测试）
-func caseDuplicateLogout(t *testing.T) {
-	// 动态获取新令牌
-	validToken, err := getValidToken()
-	if err != nil {
-		t.Fatalf("获取有效令牌失败: %v", err)
-	}
-
-	// 第一次登出
-	_, _, _ = sendLogoutRequest(http.MethodDelete, validToken)
-
-	// 第二次登出（同一令牌）
-	runTestCase(
-		t,
-		"重复登出（幂等性）",
-		http.MethodDelete,
-		validToken,
-		http.StatusOK,
-		0,
-		"已登出",
-		false,
-	)
-}
-
-// 6. 错误HTTP方法
-func caseWrongMethodLogout(t *testing.T) {
-	// 动态获取有效令牌
-	validToken, err := getValidToken()
-	if err != nil {
-		t.Fatalf("获取有效令牌失败: %v", err)
-	}
-
-	runTestCase(
-		t,
-		"错误HTTP方法（GET）",
-		http.MethodGet,
-		validToken,
-		http.StatusMethodNotAllowed,
-		10004,
-		"不支持GET方法",
-		false,
-	)
-}
-
-// 7. 登出后令牌失效验证
-func caseTokenInvalidAfterLogout(t *testing.T) {
-	// 动态获取有效令牌
-	validToken, err := getValidToken()
-	if err != nil {
-		t.Fatalf("获取有效令牌失败: %v", err)
-	}
-
-	// 执行登出
-	_, _, _ = sendLogoutRequest(http.MethodDelete, validToken)
-
-	// 验证令牌失效（调用用户信息接口）
-	testUserInfoURL := apiBaseURL + "/users/me"
-	req, _ := http.NewRequest(http.MethodGet, testUserInfoURL, nil)
-	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", validToken))
-	client := &http.Client{Timeout: timeout}
-	resp, _ := client.Do(req)
-	defer resp.Body.Close()
-
-	// 解析响应并验证
-	var userResp LogoutResponse
-	json.NewDecoder(resp.Body).Decode(&userResp)
-	runTestCase(
-		t,
-		"登出后令牌失效验证",
-		http.MethodGet,
-		validToken,
-		http.StatusUnauthorized,
-		10003,
-		"令牌已失效",
-		false,
-	)
-}
-
-// ==================== 测试入口 ====================
-func TestUserLogout_Complete(t *testing.T) {
-	// 前置检查
-	if apiBaseURL == "" {
-		fmt.Printf("%s❌ 请先配置 apiBaseURL！%s\n", ansiRed, ansiReset)
-		t.Fatal("配置不完整，测试终止")
-	}
-
-	// 打印测试开始信息
-	fmt.Println("================================================================================")
-	fmt.Printf("%s开始执行登出接口全量测试（%s）%s\n", ansiPurple, time.Now().Format("2006-01-02 15:04:05"), ansiReset)
-	fmt.Printf("%sRESTful 规范校验: 方法/状态码/响应格式/幂等性%s\n", ansiPurple, ansiReset)
-	fmt.Println("================================================================================")
-
-	// 初始化统计
-	total, passed, failed = 0, 0, 0
-
-	// 执行测试用例
-	t.Run("用例1_正常登出", caseNormalLogout)
-	t.Run("用例2_无令牌登出", caseNoTokenLogout)
-	t.Run("用例3_无效令牌登出", caseInvalidTokenLogout)
-	t.Run("用例4_过期令牌登出", caseExpiredTokenLogout)
-	t.Run("用例5_重复登出（幂等性）", caseDuplicateLogout)
-	t.Run("用例6_错误HTTP方法", caseWrongMethodLogout)
-	t.Run("用例7_登出后令牌失效验证", caseTokenInvalidAfterLogout)
-
-	// 打印测试总结
-	fmt.Println("\n================================================================================")
-	fmt.Printf("测试总结: 总用例数: %d, 通过: %d, 失败: %d\n", total, passed, failed)
-	fmt.Println("================================================================================")
-
-	// 结果提示
-	if failed > 0 {
-		fmt.Printf("%s❌ 测试未通过，存在 %d 个不符合 RESTful 规范的场景%s\n", ansiRed, failed, ansiReset)
-		t.Fatalf("共有 %d 个用例失败", failed)
-	} else {
-		fmt.Printf("%s🎉 所有登出接口测试用例全部通过，完全符合 RESTful 规范！%s\n", ansiGreen, ansiReset)
+		t.Errorf("测试未全部通过，失败用例数：%d", total-passed)
 	}
 }

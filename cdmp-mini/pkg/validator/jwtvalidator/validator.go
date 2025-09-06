@@ -25,91 +25,139 @@ type CustomClaims struct {
 // - 校验失败：返回nil和*errors.withCode类型错误（含业务码和堆栈）
 func ValidateToken(tokenString string) (*CustomClaims, error) {
 	var jwtSecret = []byte(viper.GetString("jwt.key"))
-	// 1. 校验令牌为空场景
+	// 1. 校验令牌为空场景（基础校验，优先处理）
 	if tokenString == "" {
 		log.Errorf("令牌校验失败：缺少Authorization头")
 		return nil, errors.WithCode(
-			code.ErrMissingHeader, // 100205（与你的Unauthorized逻辑匹配）
+			code.ErrMissingHeader, // 100205
 			"Authorization header is not present",
 		)
 	}
 
-	// 2. 处理Bearer前缀并校验格式
+	// 2. 处理Bearer前缀并校验格式（避免空令牌进入后续解析）
 	tokenString = trimBearerPrefix(tokenString)
 	if tokenString == "" {
 		log.Errorf("令牌校验失败：授权头格式错误（无有效令牌内容）")
 		return nil, errors.WithCode(
-			code.ErrInvalidAuthHeader, // 100204（授权头格式无效）
+			code.ErrInvalidAuthHeader, // 100204
 			"invalid authorization header format",
 		)
 	}
 
-	// 3. 解析令牌并校验签名算法
+	// 3. 解析令牌并校验签名算法（核心解析逻辑）
 	var claims CustomClaims
 	token, err := jwt.ParseWithClaims(
 		tokenString,
-		&claims	// 校验签名算法是否为预期的HMAC类型
+		&claims,
+		func(token *jwt.Token) (interface{}, error) {
+			// 校验签名算法是否为预期的HMAC类型（防止算法篡改）
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				errMsg := "unsupported signing method: %v"
 				log.Errorf(errMsg, token.Header["alg"])
 				return nil, errors.WithCode(
-					code.ErrTokenInvalid, // 100208（令牌无效）
+					code.ErrTokenInvalid, // 100208（算法不支持属于令牌无效）
 					errMsg, token.Header["alg"],
 				)
 			}
-
+			// 算法合法，返回签名密钥（从配置读取，避免硬编码）
 			return jwtSecret, nil
 		},
 	)
 
-	// 4. 处理解析错误（映射为对应的业务码）
+	// 4. 处理解析错误（核心修复：严格按「格式错误→过期错误→签名错误」优先级）
 	if err != nil {
+		// 打印错误详情，方便后续排查（保留调试日志）
+		log.Errorf("解析错误详情：类型=%T, 内容=%+v, 消息=%s", err, err, err.Error())
+		errMsg := err.Error() // 统一获取错误消息，避免多次调用
+
+		// 4.1 第一步：优先处理「复合错误」（*jwt.ValidationError）
+		if ve, ok := err.(*jwt.ValidationError); ok {
+			log.Errorf("复合错误标志位：%v（Expired=%v, Malformed=%v, SignatureInvalid=%v）",
+				ve.Errors,
+				ve.Errors&jwt.ValidationErrorExpired != 0,
+				ve.Errors&jwt.ValidationErrorMalformed != 0,
+				ve.Errors&jwt.ValidationErrorSignatureInvalid != 0)
+
+			// 复合错误内优先级：格式错误（Malformed）→ 过期错误 → 签名无效
+			// 先处理「畸形令牌」（格式错误，如段数不对）
+			if ve.Errors&jwt.ValidationErrorMalformed != 0 {
+				log.Errorf("令牌校验失败：格式错误（复合错误）")
+				return nil, errors.WithCode(
+					code.ErrTokenInvalid, // 100208
+					"令牌格式错误",
+				)
+			}
+			// 再处理「过期令牌」（格式正确但已过期）
+			if ve.Errors&jwt.ValidationErrorExpired != 0 {
+				log.Errorf("令牌校验失败：已过期（复合错误）")
+				return nil, errors.WithCode(
+					code.ErrExpired, // 100203（与用例预期一致）
+					"令牌已过期",
+				)
+			}
+			// 最后处理「复合错误中的签名无效」（格式正确、未过期但签名错）
+			if ve.Errors&jwt.ValidationErrorSignatureInvalid != 0 {
+				log.Errorf("令牌校验失败：签名无效（复合错误）")
+				return nil, errors.WithCode(
+					code.ErrSignatureInvalid, // 100202
+					"signature is invalid",
+				)
+			}
+		}
+
+		// 4.2 第二步：处理「单一错误」（非复合错误，按优先级排序）
 		switch {
+		// 先处理「单一过期错误」（部分场景下库直接返回此错误）
 		case errors.Is(err, jwt.ErrTokenExpired):
-			// 令牌过期 → code.ErrExpired（100203）
-			log.Errorf("令牌校验失败：已过期")
+			log.Errorf("令牌校验失败：已过期（单一错误）")
 			return nil, errors.WithCode(
 				code.ErrExpired,
-				"token is expired",
+				"令牌已过期",
 			)
+
+		// 再处理「格式错误」（段数不对、Base64解码失败）
+		case strings.Contains(errMsg, "invalid number of segments"):
+			log.Errorf("令牌校验失败：格式错误（段数无效）")
+			return nil, errors.WithCode(
+				code.ErrTokenInvalid,
+				"令牌格式错误",
+			)
+		case strings.HasPrefix(errMsg, "illegal base64 data"):
+			log.Errorf("令牌校验失败：格式错误（Base64解码失败）")
+			return nil, errors.WithCode(
+				code.ErrTokenInvalid,
+				"令牌格式错误",
+			)
+
+		// 后处理「单一签名无效」（格式正确、未过期但签名错）
 		case errors.Is(err, jwt.ErrSignatureInvalid):
-			// 签名无效 → code.ErrSignatureInvalid（100202）
-			log.Errorf("令牌校验失败：签名无效")
+			log.Errorf("令牌校验失败：签名无效（单一错误）")
 			return nil, errors.WithCode(
 				code.ErrSignatureInvalid,
 				"signature is invalid",
 			)
-		case strings.Contains(errors.GetMessage(err), "invalid number of segments"):
-			return nil, errors.WithCode(code.ErrTokenInvalid, "令牌格式错误")
 
-		case strings.HasPrefix(err.Error(), "illegal base64 data"):
-			// Base64解码失败 → code.ErrTokenInvalid（100208）
-			log.Errorf("令牌校验失败：%v", err)
-			return nil, errors.WithCode(
-				code.ErrTokenInvalid,
-				err.Error(),
-			)
+		// 最后处理「其他未分类错误」
 		default:
-			// 其他解析错误 → code.ErrUnauthorized（110003）
-			log.Errorf("令牌校验失败：%v", err)
+			log.Errorf("令牌校验失败：未分类错误")
 			return nil, errors.WithCode(
-				code.ErrUnauthorized,
-				"authentication failed: %v", err,
+				code.ErrUnauthorized, // 110003
+				"authentication failed: %v", errMsg,
 			)
 		}
 	}
 
-	// 5. 校验令牌有效性并提取声明
-	if claims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
-		// 6. 业务规则校验（扩展你的自定义校验逻辑）
-		if err := validateCustomClaims(claims); err != nil {
-			return nil, err // 已包装为withCode错误
+	// 5. 校验令牌有效性并提取声明（解析无错后，确认令牌整体有效）
+	if customClaims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
+		// 业务自定义校验（如角色、用户状态等，已有封装）
+		if err := validateCustomClaims(customClaims); err != nil {
+			return nil, err
 		}
-		return claims, nil
+		return customClaims, nil
 	}
 
-	// 7. 令牌无效（未通过基础校验）
-	log.Errorf("令牌校验失败：无效的令牌内容")
+	// 6. 令牌无效（解析无错但基础校验不通过，如claims类型不匹配）
+	log.Errorf("令牌校验失败：无效的令牌内容（claims类型不匹配或令牌未通过基础校验）")
 	return nil, errors.WithCode(
 		code.ErrTokenInvalid, // 100208
 		"token is invalid",
