@@ -13,18 +13,20 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// 颜色定义（完全保留）
+// 颜色定义
 var (
-	colorPass    = color.New(color.FgGreen).Add(color.Bold)
-	colorFail    = color.New(color.FgRed).Add(color.Bold)
-	colorInfo    = color.New(color.FgCyan)
-	colorCase    = color.New(color.FgYellow).Add(color.Bold)
-	colorCode    = color.New(color.FgMagenta).Add(color.Bold)
-	colorCode400 = color.New(color.FgYellow).Add(color.Bold) // 400相关错误码颜色
-	colorReset   = color.New(color.Reset)
+	// 	colorPass    = color.New(color.FgGreen).Add(color.Bold)
+	// 	colorFail    = color.New(color.FgRed).Add(color.Bold)
+	// 	colorInfo    = color.New(color.FgCyan)
+	// 	colorCase    = color.New(color.FgYellow).Add(color.Bold)
+	// 	colorCode    = color.New(color.FgMagenta).Add(color.Bold)
+	// 	colorCode400 = color.New(color.FgYellow).Add(color.Bold) // 400相关错误码颜色
+	colorReset = color.New(color.Reset)
 )
 
-// 错误码结构体定义（完全保留）
+
+
+// 错误码结构体定义
 type ErrorCode struct {
 	Code         int
 	ConstantName string
@@ -32,7 +34,7 @@ type ErrorCode struct {
 	Description  string
 }
 
-// 错误码库（完全保留）
+// 错误码库
 var errorCodeLibrary = map[string][]ErrorCode{
 	"基本错误": {
 		{1, "未知常量名", 500, "发生了内部服务器错误,请参阅http://git..."},
@@ -90,9 +92,9 @@ var errorCodeLibrary = map[string][]ErrorCode{
 	},
 }
 
-// 打印错误码库信息（完全保留）
+// 打印错误码库信息
 func printErrorCodeLibrary() {
-	colorInfo.Println("\n" + strings.Repeat("=", 100))
+	colorInfo.Println(strings.Repeat("=", 100))
 	colorInfo.Println("业务错误码库信息")
 	colorInfo.Println(strings.Repeat("=", 100))
 
@@ -119,12 +121,11 @@ func printErrorCodeLibrary() {
 	color.Unset()
 }
 
-// 路由处理逻辑（修复：关闭GIN默认日志）
+// 路由处理逻辑
 func setupTestRouter() *gin.Engine {
-	// 关闭GIN默认日志输出（避免干扰测试结果）
+	// 关闭GIN默认日志输出
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	// 仅保留Recovery中间件（避免panic导致测试崩溃）
 	r.Use(gin.Recovery())
 
 	r.POST("/login", func(c *gin.Context) {
@@ -211,9 +212,9 @@ func setupTestRouter() *gin.Engine {
 	return r
 }
 
-// 打印测试结果统计（完全保留）
+// 打印测试结果统计
 func printSummary(total, passed, failed int) {
-	colorInfo.Println("\n" + strings.Repeat("=", 80))
+	colorInfo.Println(strings.Repeat("=", 80))
 	colorInfo.Printf("测试总结: 总用例数: %d, 通过: %d, 失败: %d\n", total, passed, failed)
 	colorInfo.Println(strings.Repeat("=", 80))
 
@@ -225,7 +226,7 @@ func printSummary(total, passed, failed int) {
 	color.Unset()
 }
 
-// 根据业务码获取对应的HTTP状态码（完全保留）
+// 根据业务码获取对应的HTTP状态码
 func getHTTPStatusForCode(code int) int {
 	for _, category := range errorCodeLibrary {
 		for _, ec := range category {
@@ -237,7 +238,6 @@ func getHTTPStatusForCode(code int) int {
 	return 0
 }
 
-// ------------------------------ 独立测试用例（保留原输出格式） ------------------------------
 // 用例1：用户名含非法字符@
 func TestLogin_InvalidCharAt(t *testing.T) {
 	router := setupTestRouter()
@@ -338,10 +338,10 @@ func TestLogin_InvalidCharAt(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
@@ -447,10 +447,10 @@ func TestLogin_EmptyUsername(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
@@ -556,10 +556,10 @@ func TestLogin_ShortPassword(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
@@ -665,10 +665,10 @@ func TestLogin_InvalidJSONFormat(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
@@ -774,10 +774,10 @@ func TestLogin_MissingPassword(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
@@ -883,10 +883,10 @@ func TestLogin_UserNotFound(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
@@ -992,10 +992,10 @@ func TestLogin_WrongPassword(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
@@ -1004,7 +1004,7 @@ func TestLogin_WrongPassword(t *testing.T) {
 // 用例8：登录成功（返回token）
 func TestLogin_SuccessWithToken(t *testing.T) {
 	router := setupTestRouter()
-	// 定义独立的verifyData函数（修复语法错误）
+	// 定义独立的verifyData函数
 	verifyToken := func(data map[string]interface{}) error {
 		if _, ok := data["token"].(string); !ok {
 			return fmt.Errorf("token缺失")
@@ -1027,7 +1027,7 @@ func TestLogin_SuccessWithToken(t *testing.T) {
 		body:           `{"username":"validuser","password":"Valid@2021"}`,
 		expectedStatus: http.StatusOK,
 		expectedCode:   100001,
-		verifyData:     verifyToken, // 引用独立函数，避免匿名函数语法错误
+		verifyData:     verifyToken,
 	}
 
 	colorCase.Printf("用例 8: %s\n", tc.name)
@@ -1110,10 +1110,10 @@ func TestLogin_SuccessWithToken(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
@@ -1219,10 +1219,10 @@ func TestLogin_UnsupportedContentType(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
@@ -1328,23 +1328,22 @@ func TestLogin_InvalidBasicAuth(t *testing.T) {
 
 	if casePassed {
 		colorPass.Println("----------------------------------------")
-		colorPass.Println("用例执行通过 ✅\n")
+		colorPass.Println("用例执行通过 ✅")
 	} else {
 		colorFail.Println("----------------------------------------")
-		colorFail.Println("用例执行失败 ❌\n")
+		colorFail.Println("用例执行失败 ❌")
 		t.Fatalf("用例「%s」执行失败", tc.name)
 	}
 	color.Unset()
 }
 
-// ------------------------------ 执行所有用例入口（修复语法错误） ------------------------------
+// 执行所有用例入口
 func TestLogin_AllCases(t *testing.T) {
-	router := setupTestRouter()
 	var total, passed, failed int
 
 	printErrorCodeLibrary()
 
-	// 定义独立的verifyData函数（修复匿名函数语法错误）
+	// 定义独立的verifyData函数
 	verifyToken := func(data map[string]interface{}) error {
 		if _, ok := data["token"].(string); !ok {
 			return fmt.Errorf("token缺失")
@@ -1368,7 +1367,6 @@ func TestLogin_AllCases(t *testing.T) {
 		{name: "缺少password字段", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"validuser"}`, expectedStatus: http.StatusUnprocessableEntity, expectedCode: 100004},
 		{name: "用户不存在", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"notexist","password":"AnyPass@2021"}`, expectedStatus: http.StatusNotFound, expectedCode: 110001},
 		{name: "密码不正确", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"validuser","password":"Wrong@2021"}`, expectedStatus: http.StatusUnauthorized, expectedCode: 100206},
-		// 修复：引用独立函数，避免匿名函数在结构体初始化中语法错误
 		{name: "登录成功（返回token）", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json"}, body: `{"username":"validuser","password":"Valid@2021"}`, expectedStatus: http.StatusOK, expectedCode: 100001, verifyData: verifyToken},
 		{name: "不支持的Content-Type（表单）", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/x-www-form-urlencoded"}, body: "username=validuser&password=Valid@2021", expectedStatus: http.StatusUnsupportedMediaType, expectedCode: 100007},
 		{name: "Basic认证格式错误（无效token）", method: http.MethodPost, headers: map[string]string{"Content-Type": "application/json", "Authorization": "Basic invalid-base64-token"}, body: `{"username":"validuser","password":"Valid@2021"}`, expectedStatus: http.StatusBadRequest, expectedCode: 100209},
@@ -1380,11 +1378,11 @@ func TestLogin_AllCases(t *testing.T) {
 
 	for idx, tc := range testCases {
 		total++
-		caseIdx := idx + 1
 
-		colorCase.Printf("用例 %d: %s\n", caseIdx, tc.name)
+		colorCase.Printf("用例 %d: %s\n", idx+1, tc.name)
 		colorInfo.Println("----------------------------------------")
 
+		router := setupTestRouter()
 		req := httptest.NewRequest(tc.method, "/login", strings.NewReader(tc.body))
 		for k, v := range tc.headers {
 			req.Header.Set(k, v)
@@ -1463,11 +1461,11 @@ func TestLogin_AllCases(t *testing.T) {
 		if casePassed {
 			passed++
 			colorPass.Println("----------------------------------------")
-			colorPass.Println("用例执行通过 ✅\n")
+			colorPass.Println("用例执行通过 ✅")
 		} else {
 			failed++
 			colorFail.Println("----------------------------------------")
-			colorFail.Println("用例执行失败 ❌\n")
+			colorFail.Println("用例执行失败 ❌")
 		}
 		color.Unset()
 	}
