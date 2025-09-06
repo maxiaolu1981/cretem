@@ -478,9 +478,10 @@ func loginResponse() func(c *gin.Context, code int, token string, expire time.Ti
 
 func refreshResponse() func(c *gin.Context, code int, token string, expire time.Time) {
 	return func(c *gin.Context, code int, token string, expire time.Time) {
+		
 		core.WriteResponse(c, nil, map[string]string{
-			"token":  token,
-			"expire": expire.Format(time.RFC3339),
+			"access_token": token,
+			"expire_in":    expire.Format(time.RFC3339),
 		})
 	}
 }
