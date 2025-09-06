@@ -163,8 +163,10 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 	}
 	g.Handle(http.MethodPost, "/login", createAutHandler(jwt.LoginHandler))
 
-	g.POST("/logout", jwt.LogoutHandler)
-	g.POST("/refresh", jwt.RefreshHandler)
+	g.Handle(http.MethodDelete, "/logout", createAutHandler(jwt.LogoutHandler))
+
+	g.Handle(http.MethodPost, "/refresh", createAutHandler(jwt.RefreshHandler))
+
 	return nil
 }
 

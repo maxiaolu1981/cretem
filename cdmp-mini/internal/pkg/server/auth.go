@@ -54,11 +54,13 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	_ "github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator/jwtvalidator"
 
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+
 	"github.com/spf13/viper"
 )
 
@@ -125,7 +127,6 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 		PayloadFunc:      payload(),
 		IdentityHandler: func(c *gin.Context) interface{} {
 			claims := jwt.ExtractClaims(c)
-
 			// 1. 优先从 jwt.IdentityKey 提取（与 payload 对应）
 			username, ok := claims[jwt.IdentityKey].(string)
 
@@ -155,9 +156,60 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 		Authorizator:    authorizator(),
 		LoginResponse:   loginResponse(),
 		RefreshResponse: refreshResponse(),
-		LogoutResponse: func(c *gin.Context, code int) {
-			c.JSON(http.StatusOK, nil)
+		LogoutResponse: func(c *gin.Context, codeId int) {
+			// 1. 获取请求头中的令牌（带Bearer前缀）
+			token := c.GetHeader("Authorization")
+			log.Infof("处理登出请求，令牌信息：%s", maskToken(token)) // 脱敏日志
+			// 2. 调用validation包的ValidateToken进行校验（已适配withCode错误）
+			claims, err := jwtvalidator.ValidateToken(token)
+			if err != nil {
+				if !errors.IsWithCode(err) {
+					// 非预期错误类型，返回默认未授权
+					c.JSON(http.StatusBadRequest, gin.H{
+						"code":    code.ErrUnauthorized,
+						"message": "令牌校验失败",
+					})
+					return
+				}
+				bid := errors.GetCode(err)
+				// 2.2 无令牌或令牌过期，友好返回已登出
+				if bid == code.ErrMissingHeader {
+					c.JSON(http.StatusUnauthorized, gin.H{
+						"code":    code.ErrMissingHeader,
+						"message": "请先登录",
+					})
+					return
+				}
+				if bid == code.ErrExpired {
+					c.JSON(http.StatusUnauthorized, gin.H{
+						"code":    code.ErrExpired,
+						"message": "令牌已经过期,请重新登录",
+					})
+					return
+				}
+				message := errors.GetMessage(err)
+				// 2.3 其他错误（如签名无效）返回具体业务码
+				c.JSON(http.StatusBadRequest, gin.H{
+					"code":    bid,
+					"message": message,
+				})
+				return
+			}
+
+			// 3. 令牌有效，执行登出核心逻辑（如加入黑名单）
+			if err := destroyToken(claims.UserID); err != nil {
+				log.Errorf("登出失败，user_id=%s，err=%v", claims.UserID, err)
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"code":    code.ErrInternal,
+					"message": "登出失败，请重试",
+				})
+				return
+			}
+			// 4. 登出成功响应
+			log.Infof("登出成功，user_id=%s", claims.UserID)
+			core.WriteResponse(c, nil, "登出成功")
 		},
+
 		Unauthorized: func(c *gin.Context, httpCode int, message string) {
 			var bizCode int
 			if len(c.Errors) > 0 {
@@ -376,6 +428,7 @@ func parseWithBody(c *gin.Context) (loginInfo, error) {
 
 func payload() func(data interface{}) jwt.MapClaims {
 	return func(data interface{}) jwt.MapClaims {
+
 		claims := jwt.MapClaims{
 			"iss": APIServerIssuer,
 			"aud": APIServerAudience,
@@ -383,6 +436,10 @@ func payload() func(data interface{}) jwt.MapClaims {
 		if u, ok := data.(*v1.User); ok {
 			claims[jwt.IdentityKey] = u.Name
 			claims["sub"] = u.Name
+			//先写死，后面再调整
+			claims["role"] = "admin"
+			claims["user_id"] = u.InstanceID
+
 		}
 		return claims
 	}
@@ -468,4 +525,21 @@ func newAutoAuth() (middleware.AuthStrategy, error) {
 	// 4. 所有依赖初始化成功，创建AutoStrategy
 	autoAuth := auth.NewAutoStrategy(basicAuth, jwtAuth)
 	return autoAuth, nil
+}
+
+// maskToken 令牌脱敏（仅保留前6位和后4位，避免日志泄露）
+func maskToken(token string) string {
+	if len(token) <= 10 {
+		return "******"
+	}
+	return token[:6] + "******" + token[len(token)-4:]
+}
+
+// destroyToken 执行登出逻辑（示例：将用户令牌加入黑名单）
+// 实际实现需根据你的业务（如Redis黑名单、会话销毁等）
+func destroyToken(userID string) error {
+	// 示例逻辑：写入Redis黑名单（key=userID，value=过期时间）
+	// ctx := context.Background()
+	// return redisClient.Set(ctx, "logout:"+userID, time.Now().Unix(), 24*time.Hour).Err()
+	return nil
 }

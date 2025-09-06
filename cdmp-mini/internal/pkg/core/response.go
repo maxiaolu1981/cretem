@@ -8,6 +8,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+	"github.com/maxiaolu1981/cretem/nexuscore/log"
 )
 
 // WriteResponse 处理HTTP响应，确保状态码正确设置且不被覆盖
@@ -15,6 +16,7 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 	if err != nil {
 		if errors.IsWithCode(err) {
 			code := errors.GetCode(err)
+			log.Debugf("core:code=%v", code)
 			httpStatus := errors.GetHTTPStatus(err)
 			message := errors.GetMessage(err)
 
@@ -28,7 +30,6 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 			return
 		}
 
-		
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"code":    5001,
 			"message": "服务内部错误：" + errors.GetMessage(err),
@@ -38,10 +39,11 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 		return
 	}
 
+	msg, _ := data.(string)
 	// 处理成功场景
 	c.JSON(http.StatusOK, gin.H{
 		"code":    0,
-		"message": "操作成功",
+		"message": msg,
 		"data":    data,
 	})
 	c.AbortWithStatus(http.StatusOK)

@@ -10,26 +10,22 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/fatih/color"
 )
 
-// ==================== 全局配置 ====================
+// ==================== 全局配置（删除fatih/color依赖，改用ANSI颜色码） ====================
 var (
-	baseURL      = "http://localhost:8080/v1/users"
-	adminToken   = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzIxNTE0OSwiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ19pYXQiOjE3NTcxMjg3NDksInN1YiI6ImFkbWluIn0.eHtg8U81RTlKPfgH5Y4hOkfMcdkgltO4POwcGzeDcuA"
-	userToken    = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzIxNTE5OSwiaWRlbnRpdHkiOiJnZXR0ZXN0LXVzZXIxMDQiLCJpc3MiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsIm9yaWdfaWF0IjoxNzU3MTI4Nzk5LCJzdWIiOiJnZXR0ZXN0LXVzZXIxMDQifQ.yy5HrwqH82Lkf-lFKP-ihwIN7VJF0ukQNzQLj3mtEzc"
-	tempDir      = "./temp_json"
-	testUsername = fmt.Sprintf("testuser%d", time.Now().Unix())
-	testEmail    = fmt.Sprintf("test%d@example.com", time.Now().Unix())
+	baseURL = "http://localhost:8080/v1/users"
+	// ！！！必须替换为有效令牌！！！
+	adminToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzIxODQ2OSwiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ19pYXQiOjE3NTcxMzIwNjksInN1YiI6ImFkbWluIn0.DWXPUWVSf3Zh1QM3G6zyNU5FlVUOkGTAooZGS5DX-wE"                            // 管理员有效令牌
+	userToken  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzIxODUxMSwiaWRlbnRpdHkiOiJnZXR0ZXN0LXVzZXIxMDQiLCJpc3MiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsIm9yaWdfaWF0IjoxNzU3MTMyMTExLCJzdWIiOiJnZXR0ZXN0LXVzZXIxMDQifQ.jzHM7hZBJL9e1WLBAkAtDf8KkMIXFXw0PfkwBhn8kko" // 普通用户有效令牌
+	tempDir    = "./temp_json"
 
-	// 颜色定义
-	colorPass  = color.New(color.FgGreen).Add(color.Bold)
-	colorFail  = color.New(color.FgRed).Add(color.Bold)
-	colorInfo  = color.New(color.FgBlue)
-	colorCase  = color.New(color.FgYellow).Add(color.Bold)
-	colorBlue  = color.New(color.FgBlue).Add(color.Bold)
-	colorReset = color.New(color.Reset)
+	// 原生ANSI颜色码（兼容性强，所有终端通用）
+	ansiReset  = "\033[0m"    // 重置颜色
+	ansiGreen  = "\033[32;1m" // 绿色加粗（通过提示）
+	ansiRed    = "\033[31;1m" // 红色加粗（失败提示）
+	ansiBlue   = "\033[34m"   // 蓝色（信息提示）
+	ansiYellow = "\033[33;1m" // 黄色加粗（用例标题）
 
 	// 测试统计
 	total  int
@@ -37,50 +33,34 @@ var (
 	failed int
 )
 
-// ==================== 数据结构 ====================
-type UserRequest struct {
-	Metadata struct {
-		Name       string                 `json:"name"`
-		InstanceID string                 `json:"instanceID"`
-		Extend     map[string]interface{} `json:"extend"`
-	} `json:"metadata"`
-	Email     string `json:"email"`
-	Password  string `json:"password"`
-	Nickname  string `json:"nickname"`
-	Phone     string `json:"phone,omitempty"`
-	Status    int    `json:"status"`
-	LoginedAt string `json:"loginedAt"`
+// ==================== 工具函数（替换彩色输出为原生ANSI码） ====================
+// 生成唯一ID（毫秒级，避免重复）
+func generateUniqueID(prefix string) string {
+	return fmt.Sprintf("%s%d", prefix, time.Now().UnixNano()/1e6)
 }
 
-type Response struct {
-	Code    int         `json:"code,omitempty"`
-	Message string      `json:"message,omitempty"`
-	Msg     string      `json:"msg,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
-}
-
-// ==================== 工具函数 ====================
 func initTempDir() error {
 	if _, err := os.Stat(tempDir); os.IsNotExist(err) {
 		if err := os.MkdirAll(tempDir, 0755); err != nil {
 			return fmt.Errorf("创建临时目录失败: %w", err)
 		}
-		colorInfo.Printf("[INFO] 临时目录创建成功: %s\n", tempDir)
+		// 蓝色信息提示（原生ANSI码）
+		fmt.Printf("%s[INFO] 临时目录创建成功: %s%s\n", ansiBlue, tempDir, ansiReset)
 	}
 	return nil
 }
 
 func generateInstanceID() string {
-	return fmt.Sprintf("usr%d", time.Now().Unix())
+	return generateUniqueID("usr")
 }
 
 func cleanupTemp() {
 	if _, err := os.Stat(tempDir); !os.IsNotExist(err) {
 		if err := os.RemoveAll(tempDir); err != nil {
-			colorInfo.Printf("[INFO] 临时文件清理失败: %v\n", err)
+			fmt.Printf("%s[INFO] 临时文件清理失败: %v%s\n", ansiBlue, err, ansiReset)
 			return
 		}
-		colorInfo.Println("[INFO] 临时文件已清理")
+		fmt.Printf("%s[INFO] 临时文件已清理%s\n", ansiBlue, ansiReset)
 	}
 }
 
@@ -143,80 +123,112 @@ func parseResponse(respBody []byte) (int, string, string) {
 	return resp.Code, message, string(respBody)
 }
 
-// ==================== 测试执行函数 ====================
+// ==================== 测试执行函数（原生ANSI彩色输出） ====================
 func runTestCase(t *testing.T, testName, description string, req UserRequest, token string, expectedHTTPStatus int, expectedMsg string) {
 	total++
-	colorCase.Printf("\n用例 %d: %s\n", total, testName)
+	// 黄色加粗：用例标题
+	fmt.Printf("\n%s用例 %d: %s%s\n", ansiYellow, total, testName, ansiReset)
 	fmt.Println("----------------------------------------")
-	colorInfo.Printf("描述: %s\n", description)
-	colorInfo.Println("请求体JSON内容（语法校验后）:")
+	// 蓝色：描述信息
+	fmt.Printf("%s描述: %s%s\n", ansiBlue, description, ansiReset)
+	fmt.Printf("%s请求体JSON内容（语法校验后）:%s\n", ansiBlue, ansiReset)
 
+	// 保存请求体到临时文件
 	jsonFile, err := saveJSONToTemp(fmt.Sprintf("test%d.json", total), req)
 	if err != nil {
-		colorFail.Printf("❌ %v\n", err)
+		// 红色：错误提示
+		fmt.Printf("%s❌ %v%s\n", ansiRed, err, ansiReset)
 		t.Fatalf("用例「%s」准备失败: %v", testName, err)
 	}
 	defer os.Remove(jsonFile)
 
+	// 读取并打印JSON内容
 	jsonContent, _ := os.ReadFile(jsonFile)
 	fmt.Println(string(jsonContent))
 
+	// 发送请求
 	resp, respBody, err := sendPostRequest(baseURL, token, jsonContent)
 	if err != nil {
-		colorFail.Printf("❌ 发送请求失败: %v\n", err)
+		fmt.Printf("%s❌ 发送请求失败: %v%s\n", ansiRed, err, ansiReset)
 		failed++
 		t.Fatalf("用例「%s」执行失败: %v", testName, err)
 	}
 
+	// 解析响应
 	respCode, respMsg, fullResp := parseResponse(respBody)
 	actualHTTPStatus := resp.StatusCode
 
+	// 打印响应信息
 	fmt.Printf("实际返回: code=%d message=%s\n", respCode, respMsg)
 	fmt.Printf("完整响应结果: %s\n", fullResp)
 
-	// 验证HTTP状态码
-	if actualHTTPStatus == expectedHTTPStatus {
-		colorPass.Printf("✅ 状态码正确: %d\n", actualHTTPStatus)
-	} else {
-		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", expectedHTTPStatus, actualHTTPStatus)
-	}
-
-	// 验证业务码和消息
+	// 验证结果
 	casePassed := true
-	if actualHTTPStatus != expectedHTTPStatus {
-		casePassed = false
-	}
-	if !strings.Contains(respMsg, expectedMsg) {
-		colorFail.Printf("❌ 消息错误: 预期包含「%s」, 实际「%s」\n", expectedMsg, respMsg)
-		casePassed = false
+	// 状态码验证
+	if actualHTTPStatus == expectedHTTPStatus {
+		fmt.Printf("%s✅ 状态码正确: %d%s\n", ansiGreen, actualHTTPStatus, ansiReset)
 	} else {
-		colorPass.Printf("✅ 消息正确: %s\n", respMsg)
+		fmt.Printf("%s❌ 状态码错误: 预期 %d, 实际 %d%s\n", ansiRed, expectedHTTPStatus, actualHTTPStatus, ansiReset)
+		casePassed = false
 	}
 
+	// 消息验证
+	if strings.Contains(respMsg, expectedMsg) {
+		fmt.Printf("%s✅ 消息正确: %s%s\n", ansiGreen, respMsg, ansiReset)
+	} else {
+		fmt.Printf("%s❌ 消息错误: 预期包含「%s」, 实际「%s」%s\n", ansiRed, expectedMsg, respMsg, ansiReset)
+		casePassed = false
+	}
+
+	// 统计结果
 	if casePassed {
-		colorPass.Println("----------------------------------------")
-		colorPass.Printf("用例执行通过 ✅\n")
+		fmt.Printf("%s----------------------------------------%s\n", ansiGreen, ansiReset)
+		fmt.Printf("%s✅ 用例执行通过 %s\n", ansiGreen, ansiReset)
 		passed++
 	} else {
-		colorFail.Println("----------------------------------------")
-		colorFail.Printf("用例执行失败 ❌\n")
+		fmt.Printf("%s----------------------------------------%s\n", ansiRed, ansiReset)
+		fmt.Printf("%s❌ 用例执行失败 %s\n", ansiRed, ansiReset)
 		failed++
+		t.Fatalf("用例「%s」执行失败", testName)
 	}
 }
 
-// ==================== 10个完整测试用例 ====================
+// ==================== 10个用例的内部实现（不变） ====================
+type UserRequest struct {
+	Metadata struct {
+		Name       string                 `json:"name"`
+		InstanceID string                 `json:"instanceID"`
+		Extend     map[string]interface{} `json:"extend"`
+	} `json:"metadata"`
+	Email     string `json:"email"`
+	Password  string `json:"password"`
+	Nickname  string `json:"nickname"`
+	Phone     string `json:"phone,omitempty"`
+	Status    int    `json:"status"`
+	LoginedAt string `json:"loginedAt"`
+}
 
-// 1. 使用正确参数创建用户
-func TestCreateUser_ValidParams(t *testing.T) {
+type Response struct {
+	Code    int         `json:"code,omitempty"`
+	Message string      `json:"message,omitempty"`
+	Msg     string      `json:"msg,omitempty"`
+	Data    interface{} `json:"data,omitempty"`
+}
+
+// 1. 用例1：使用正确参数创建用户
+func caseValidParams(t *testing.T) {
+	uniqueUsername := generateUniqueID("testuser")
+	uniqueEmail := generateUniqueID("test") + "@example.com"
+
 	req := UserRequest{
-		Email:     testEmail,
+		Email:     uniqueEmail,
 		Password:  "ValidPass123!",
 		Nickname:  "TestUserNickname",
 		Phone:     "13800138000",
 		Status:    1,
 		LoginedAt: "2024-09-05T12:00:00Z",
 	}
-	req.Metadata.Name = testUsername
+	req.Metadata.Name = uniqueUsername
 	req.Metadata.InstanceID = generateInstanceID()
 	req.Metadata.Extend = make(map[string]interface{})
 
@@ -231,41 +243,57 @@ func TestCreateUser_ValidParams(t *testing.T) {
 	)
 }
 
-// 2. 创建已存在的用户
-func TestCreateUser_DuplicateUsername(t *testing.T) {
-	req := UserRequest{
-		Email:     fmt.Sprintf("another%s", testEmail),
+// 2. 用例2：创建已存在的用户
+func caseDuplicateUsername(t *testing.T) {
+	// 先创建基础用户
+	baseUsername := generateUniqueID("duplicateuser")
+	baseEmail := generateUniqueID("duplicate") + "@example.com"
+	baseReq := UserRequest{
+		Email:     baseEmail,
+		Password:  "ValidPass123!",
+		Nickname:  "BaseUserNickname",
+		Status:    1,
+		LoginedAt: "2024-09-05T12:00:00Z",
+	}
+	baseReq.Metadata.Name = baseUsername
+	baseReq.Metadata.InstanceID = generateInstanceID()
+	baseReq.Metadata.Extend = make(map[string]interface{})
+	baseJSON, _ := json.Marshal(baseReq)
+	sendPostRequest(baseURL, adminToken, baseJSON)
+
+	// 重复创建
+	dupReq := UserRequest{
+		Email:     generateUniqueID("anotherduplicate") + "@example.com",
 		Password:  "ValidPass123!",
 		Nickname:  "DuplicateNickname",
 		Phone:     "13900139000",
 		Status:    1,
 		LoginedAt: "2024-09-05T12:00:00Z",
 	}
-	req.Metadata.Name = testUsername // 使用与用例1相同的用户名
-	req.Metadata.InstanceID = generateInstanceID()
-	req.Metadata.Extend = make(map[string]interface{})
+	dupReq.Metadata.Name = baseUsername
+	dupReq.Metadata.InstanceID = generateInstanceID()
+	dupReq.Metadata.Extend = make(map[string]interface{})
 
 	runTestCase(
 		t,
 		"创建已存在的用户",
 		"用户名重复，应返回409",
-		req,
+		dupReq,
 		adminToken,
 		http.StatusConflict,
 		"用户已经存在",
 	)
 }
 
-// 3. 缺少必填字段（metadata.name）
-func TestCreateUser_MissingRequiredField(t *testing.T) {
+// 3. 用例3：缺少必填字段（metadata.name）
+func caseMissingRequiredField(t *testing.T) {
 	req := UserRequest{
-		Email:     "missingusername@example.com",
+		Email:     generateUniqueID("missingname") + "@example.com",
 		Password:  "ValidPass123!",
 		Nickname:  "MissingNameNickname",
 		Status:    1,
 		LoginedAt: "2024-09-05T12:00:00Z",
 	}
-	// 故意不设置metadata.name（必填字段）
 	req.Metadata.InstanceID = generateInstanceID()
 	req.Metadata.Extend = make(map[string]interface{})
 
@@ -280,16 +308,16 @@ func TestCreateUser_MissingRequiredField(t *testing.T) {
 	)
 }
 
-// 4. 用户名不合法（含@）
-func TestCreateUser_InvalidUsername(t *testing.T) {
+// 4. 用例4：用户名不合法（含@）
+func caseInvalidUsername(t *testing.T) {
 	req := UserRequest{
-		Email:     "invalidusername@example.com",
+		Email:     generateUniqueID("invalidname") + "@example.com",
 		Password:  "ValidPass123!",
 		Nickname:  "InvalidNameNickname",
 		Status:    1,
 		LoginedAt: "2024-09-05T12:00:00Z",
 	}
-	req.Metadata.Name = "invalid@username" // 包含非法字符@
+	req.Metadata.Name = "invalid@username"
 	req.Metadata.InstanceID = generateInstanceID()
 	req.Metadata.Extend = make(map[string]interface{})
 
@@ -304,16 +332,16 @@ func TestCreateUser_InvalidUsername(t *testing.T) {
 	)
 }
 
-// 5. 密码不符合规则（弱密码123）
-func TestCreateUser_WeakPassword(t *testing.T) {
+// 5. 用例5：密码不符合规则（弱密码123）
+func caseWeakPassword(t *testing.T) {
 	req := UserRequest{
-		Email:     "weakpass@example.com",
-		Password:  "123", // 弱密码
+		Email:     generateUniqueID("weakpass") + "@example.com",
+		Password:  "123",
 		Nickname:  "WeakPassNickname",
 		Status:    1,
 		LoginedAt: "2024-09-05T12:00:00Z",
 	}
-	req.Metadata.Name = fmt.Sprintf("weakpassuser%d", time.Now().Unix())
+	req.Metadata.Name = generateUniqueID("weakpassuser")
 	req.Metadata.InstanceID = generateInstanceID()
 	req.Metadata.Extend = make(map[string]interface{})
 
@@ -328,16 +356,16 @@ func TestCreateUser_WeakPassword(t *testing.T) {
 	)
 }
 
-// 6. 未提供Authorization头
-func TestCreateUser_NoAuthHeader(t *testing.T) {
+// 6. 用例6：未提供Authorization头
+func caseNoAuthHeader(t *testing.T) {
 	req := UserRequest{
-		Email:     "noauth@example.com",
+		Email:     generateUniqueID("noauth") + "@example.com",
 		Password:  "ValidPass123!",
 		Nickname:  "NoAuthNickname",
 		Status:    1,
 		LoginedAt: "2024-09-05T12:00:00Z",
 	}
-	req.Metadata.Name = fmt.Sprintf("noauthuser%d", time.Now().Unix())
+	req.Metadata.Name = generateUniqueID("noauthuser")
 	req.Metadata.InstanceID = generateInstanceID()
 	req.Metadata.Extend = make(map[string]interface{})
 
@@ -346,22 +374,22 @@ func TestCreateUser_NoAuthHeader(t *testing.T) {
 		"未提供Authorization头",
 		"无认证令牌，应返回401",
 		req,
-		"", // 不传递token
+		"",
 		http.StatusUnauthorized,
 		"缺少 Authorization 头",
 	)
 }
 
-// 7. 使用无效token
-func TestCreateUser_InvalidToken(t *testing.T) {
+// 7. 用例7：使用无效token
+func caseInvalidToken(t *testing.T) {
 	req := UserRequest{
-		Email:     "invalidtoken@example.com",
+		Email:     generateUniqueID("invalidtoken") + "@example.com",
 		Password:  "ValidPass123!",
 		Nickname:  "InvalidTokenNickname",
 		Status:    1,
 		LoginedAt: "2024-09-05T12:00:00Z",
 	}
-	req.Metadata.Name = fmt.Sprintf("invalidtokenuser%d", time.Now().Unix())
+	req.Metadata.Name = generateUniqueID("invalidtokenuser")
 	req.Metadata.InstanceID = generateInstanceID()
 	req.Metadata.Extend = make(map[string]interface{})
 
@@ -370,22 +398,22 @@ func TestCreateUser_InvalidToken(t *testing.T) {
 		"使用无效token",
 		"令牌格式错误，应返回401",
 		req,
-		"invalid-token", // 无效token
+		"invalid-token",
 		http.StatusUnauthorized,
 		"token contains an invalid number of segments",
 	)
 }
 
-// 8. 权限不足（普通用户创建用户）
-func TestCreateUser_Forbidden(t *testing.T) {
+// 8. 用例8：权限不足（普通用户创建用户）
+func caseForbidden(t *testing.T) {
 	req := UserRequest{
-		Email:     "forbidden@example.com",
+		Email:     generateUniqueID("forbidden") + "@example.com",
 		Password:  "ValidPass123!",
 		Nickname:  "ForbiddenNickname",
 		Status:    1,
 		LoginedAt: "2024-09-05T12:00:00Z",
 	}
-	req.Metadata.Name = fmt.Sprintf("forbiddenuser%d", time.Now().Unix())
+	req.Metadata.Name = generateUniqueID("forbiddenuser")
 	req.Metadata.InstanceID = generateInstanceID()
 	req.Metadata.Extend = make(map[string]interface{})
 
@@ -394,74 +422,82 @@ func TestCreateUser_Forbidden(t *testing.T) {
 		"权限不足（普通用户创建用户）",
 		"普通用户无创建权限，应返回403",
 		req,
-		userToken, // 使用普通用户token
+		userToken,
 		http.StatusForbidden,
 		"权限不足",
 	)
 }
 
-// 9. 请求格式错误（非JSON）
-func TestCreateUser_NonJSONBody(t *testing.T) {
+// 9. 用例9：请求格式错误（非JSON）
+func caseNonJSONBody(t *testing.T) {
 	testName := "请求格式错误（非JSON）"
 	description := "非JSON请求体，应返回400"
 	expectedHTTPStatus := http.StatusBadRequest
 	expectedMsg := "参数绑定失败"
 
 	total++
-	colorCase.Printf("\n用例 %d: %s\n", total, testName)
+	// 黄色加粗：用例标题
+	fmt.Printf("\n%s用例 %d: %s%s\n", ansiYellow, total, testName, ansiReset)
 	fmt.Println("----------------------------------------")
-	colorInfo.Printf("描述: %s\n", description)
-	colorInfo.Println("请求体内容: invalid-json-format")
+	// 蓝色：描述信息
+	fmt.Printf("%s描述: %s%s\n", ansiBlue, description, ansiReset)
+	fmt.Printf("%s请求体内容: invalid-json-format%s\n", ansiBlue, ansiReset)
 
+	// 发送非JSON请求
 	resp, respBody, err := sendPostRequest(baseURL, adminToken, []byte("invalid-json-format"))
 	if err != nil {
-		colorFail.Printf("❌ 发送请求失败: %v\n", err)
+		fmt.Printf("%s❌ 发送请求失败: %v%s\n", ansiRed, err, ansiReset)
 		failed++
 		t.Fatalf("用例「%s」执行失败: %v", testName, err)
 	}
 
+	// 解析响应
 	respCode, respMsg, fullResp := parseResponse(respBody)
 	actualHTTPStatus := resp.StatusCode
 
+	// 打印响应信息
 	fmt.Printf("实际返回: code=%d message=%s\n", respCode, respMsg)
 	fmt.Printf("完整响应结果: %s\n", fullResp)
 
+	// 验证结果
 	casePassed := true
-	if actualHTTPStatus != expectedHTTPStatus {
-		colorFail.Printf("❌ 状态码错误: 预期 %d, 实际 %d\n", expectedHTTPStatus, actualHTTPStatus)
-		casePassed = false
+	if actualHTTPStatus == expectedHTTPStatus {
+		fmt.Printf("%s✅ 状态码正确: %d%s\n", ansiGreen, actualHTTPStatus, ansiReset)
 	} else {
-		colorPass.Printf("✅ 状态码正确: %d\n", actualHTTPStatus)
+		fmt.Printf("%s❌ 状态码错误: 预期 %d, 实际 %d%s\n", ansiRed, expectedHTTPStatus, actualHTTPStatus, ansiReset)
+		casePassed = false
 	}
 
-	if !strings.Contains(respMsg, expectedMsg) {
-		colorFail.Printf("❌ 消息错误: 预期包含「%s」, 实际「%s」\n", expectedMsg, respMsg)
-		casePassed = false
+	if strings.Contains(respMsg, expectedMsg) {
+		fmt.Printf("%s✅ 消息正确: %s%s\n", ansiGreen, respMsg, ansiReset)
 	} else {
-		colorPass.Printf("✅ 消息正确: %s\n", respMsg)
+		fmt.Printf("%s❌ 消息错误: 预期包含「%s」, 实际「%s」%s\n", ansiRed, expectedMsg, respMsg, ansiReset)
+		casePassed = false
 	}
 
+	// 统计结果
 	if casePassed {
-		colorPass.Println("----------------------------------------")
-		colorPass.Printf("用例执行通过 ✅\n")
+		fmt.Printf("%s----------------------------------------%s\n", ansiGreen, ansiReset)
+		fmt.Printf("%s✅ 用例执行通过 %s\n", ansiGreen, ansiReset)
 		passed++
 	} else {
-		colorFail.Println("----------------------------------------")
-		colorFail.Printf("用例执行失败 ❌\n")
+		fmt.Printf("%s----------------------------------------%s\n", ansiRed, ansiReset)
+		fmt.Printf("%s❌ 用例执行失败 %s\n", ansiRed, ansiReset)
 		failed++
+		t.Fatalf("用例「%s」执行失败", testName)
 	}
 }
 
-// 10. 邮箱格式不正确（无@）
-func TestCreateUser_InvalidEmail(t *testing.T) {
+// 10. 用例10：邮箱格式不正确（无@）
+func caseInvalidEmail(t *testing.T) {
 	req := UserRequest{
-		Email:     "notanemail", // 无效邮箱（无@）
+		Email:     "notanemail" + generateUniqueID(""),
 		Password:  "ValidPass123!",
 		Nickname:  "BadEmailNickname",
 		Status:    1,
 		LoginedAt: "2024-09-05T12:00:00Z",
 	}
-	req.Metadata.Name = fmt.Sprintf("bademailuser%d", time.Now().Unix())
+	req.Metadata.Name = generateUniqueID("bademailuser")
 	req.Metadata.InstanceID = generateInstanceID()
 	req.Metadata.Extend = make(map[string]interface{})
 
@@ -476,38 +512,43 @@ func TestCreateUser_InvalidEmail(t *testing.T) {
 	)
 }
 
-// ==================== 全用例入口 ====================
+// ==================== 唯一测试入口（原生ANSI彩色提示） ====================
 func TestCreateUser_AllCases(t *testing.T) {
-	// 添加「开始执行」提示
+	// 验证令牌是否已替换
+	if adminToken == "REPLACE_WITH_YOUR_VALID_ADMIN_TOKEN" || userToken == "REPLACE_WITH_YOUR_VALID_USER_TOKEN" {
+		fmt.Printf("%s❌ 请先替换代码中的 adminToken 和 userToken 为有效令牌！%s\n", ansiRed, ansiReset)
+		t.Fatal("令牌未替换，测试终止")
+	}
+
+	// 彩色开始提示
 	fmt.Println("================================================================================")
-	colorBlue.Println("开始执行创建用户接口测试用例")
+	fmt.Printf("%s开始执行创建用户接口测试用例%s\n", ansiBlue, ansiReset)
 	fmt.Println("================================================================================")
 
-	// 重置统计计数
 	total, passed, failed = 0, 0, 0
 	defer cleanupTemp()
 
-	// 按顺序执行所有10个用例
-	t.Run("Test1_ValidParams", TestCreateUser_ValidParams)
-	t.Run("Test2_DuplicateUsername", TestCreateUser_DuplicateUsername)
-	t.Run("Test3_MissingRequiredField", TestCreateUser_MissingRequiredField)
-	t.Run("Test4_InvalidUsername", TestCreateUser_InvalidUsername)
-	t.Run("Test5_WeakPassword", TestCreateUser_WeakPassword)
-	t.Run("Test6_NoAuthHeader", TestCreateUser_NoAuthHeader)
-	t.Run("Test7_InvalidToken", TestCreateUser_InvalidToken)
-	t.Run("Test8_Forbidden", TestCreateUser_Forbidden)
-	t.Run("Test9_NonJSONBody", TestCreateUser_NonJSONBody)
-	t.Run("Test10_InvalidEmail", TestCreateUser_InvalidEmail)
+	// 执行所有用例
+	t.Run("用例1_正确参数创建用户", func(t *testing.T) { caseValidParams(t) })
+	t.Run("用例2_重复用户名", func(t *testing.T) { caseDuplicateUsername(t) })
+	t.Run("用例3_缺少用户名", func(t *testing.T) { caseMissingRequiredField(t) })
+	t.Run("用例4_用户名含@", func(t *testing.T) { caseInvalidUsername(t) })
+	t.Run("用例5_弱密码", func(t *testing.T) { caseWeakPassword(t) })
+	t.Run("用例6_无认证头", func(t *testing.T) { caseNoAuthHeader(t) })
+	t.Run("用例7_无效token", func(t *testing.T) { caseInvalidToken(t) })
+	t.Run("用例8_权限不足", func(t *testing.T) { caseForbidden(t) })
+	t.Run("用例9_非JSON格式", func(t *testing.T) { caseNonJSONBody(t) })
+	t.Run("用例10_无效邮箱", func(t *testing.T) { caseInvalidEmail(t) })
 
-	// 测试总结
+	// 彩色总结
 	fmt.Println("\n================================================================================")
 	fmt.Printf("测试总结: 总用例数: %d, 通过: %d, 失败: %d\n", total, passed, failed)
 	fmt.Println("================================================================================")
 
 	if failed > 0 {
-		colorFail.Println("❌ 存在失败用例，请检查问题后重试!")
+		fmt.Printf("%s❌ 存在失败用例，请检查问题后重试!%s\n", ansiRed, ansiReset)
 		t.Fatalf("共有 %d 个用例失败", failed)
 	} else {
-		colorPass.Println("🎉 所有测试用例全部通过!")
+		fmt.Printf("%s🎉 所有测试用例全部通过!%s\n", ansiGreen, ansiReset)
 	}
 }
