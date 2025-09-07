@@ -65,6 +65,7 @@ type TypeMeta struct {
 // 一个资源只能包含 {ObjectMeta, ListMeta} 中的一个。
 type ListMeta struct {
 	TotalCount int64 `json:"totalCount,omitempty"` // 总记录数（用于分页）
+
 }
 
 // ObjectMeta 是所有持久化资源必须具有的元数据，包含所有对象的通用属性。
@@ -316,8 +317,8 @@ type UpdateOptions struct {
 
 	// 当存在时，表示修改不应被持久化。无效或未识别的 dryRun 指令将
 	// 导致错误响应，且请求不再进一步处理。有效值为：
-	// - All：处理所有 dry run 阶段
-	// +optional（可选）
+	// -空数组 [] 或 nil：关闭 DryRun 模式（实际执行操作）
+	//非空数组 ["All"]：开启 DryRun 模式（只验证不执行
 	DryRun []string `json:"dryRun,omitempty"` // 干跑模式
 }
 
@@ -334,3 +335,4 @@ type TableOptions struct {
 	// 可能在未来版本中作为字段移除。
 	NoHeaders bool `json:"-"` // 是否不返回表头
 }
+

@@ -8,13 +8,15 @@ import (
 )
 
 type UserController struct {
-	srv service.Service
+	srv     service.Service
+	options *options.Options
 }
 
 // NewUserController creates a user handler.
 func NewUserController(store store.Factory, redis *storage.RedisCluster, options *options.Options) *UserController {
 
 	return &UserController{
-		srv: service.NewService(store, redis, options),
+		srv:     service.NewService(store, redis, options),
+		options: options,
 	}
 }

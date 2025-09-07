@@ -176,16 +176,16 @@ func (g *GenericAPIServer) installApiRoutes() error {
 		return err
 	}
 	g.NoRoute(func(c *gin.Context) {
-		// 1. 校验请求方法必须为POST
-		if c.Request.Method != http.MethodPost {
-			c.Header("Allow", http.MethodPost)
-			core.WriteResponse(
-				c,
-				errors.WithCode(code.ErrMethodNotAllowed, "仅支持POST方法"),
-				nil,
-			)
-			return
-		}
+		// // 1. 校验请求方法必须为POST
+		// if c.Request.Method != http.MethodPost {
+		// 	c.Header("Allow", http.MethodPost)
+		// 	core.WriteResponse(
+		// 		c,
+		// 		errors.WithCode(code.ErrMethodNotAllowed, "仅支持POST方法"),
+		// 		nil,
+		// 	)
+		// 	return
+		// }
 
 		// 4. 若不存在允许的方法（说明是“路径不存在”），返回 404
 		core.WriteResponse(
@@ -193,6 +193,7 @@ func (g *GenericAPIServer) installApiRoutes() error {
 			errors.WithCode(code.ErrPageNotFound, "业务不存在"),
 			nil,
 		)
+
 	})
 	storeIns, _ := mysql.GetMySQLFactoryOr(nil)
 	v1 := g.Group("/v1")
@@ -205,6 +206,7 @@ func (g *GenericAPIServer) installApiRoutes() error {
 			userv1.DELETE(":name/force", userController.ForceDelete)
 			userv1.POST("", userController.Create)
 			userv1.GET(":name", userController.Get)
+			userv1.GET("", userController.List)
 		}
 
 	}

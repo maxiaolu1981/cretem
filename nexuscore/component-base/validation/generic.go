@@ -5,28 +5,21 @@
 核心功能
 1. 名称和标签验证
 合格名称验证：支持带DNS前缀的名称格式
-
 标签值验证：Kubernetes风格的标签验证
-
 DNS标签验证：DNS-1123标准标签验证
 
 2. 网络相关验证
 IP地址验证：IPv4和IPv6地址验证
-
 端口号验证：1-65535范围验证
-
 DNS子域名验证：完整的域名验证
 
 3. 格式验证
 百分比格式验证：数字+%格式验证
-
 密码强度验证：复杂度要求验证
 
 4. 辅助功能
 错误信息生成：标准化的错误提示生成
-
 范围验证：数值范围验证
-
 函数使用方法
 1. 基本名称验证
 go
@@ -291,6 +284,7 @@ import (
 	"strings"
 	"unicode"
 
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
 )
 
@@ -591,4 +585,219 @@ func IsValidPassword(password string) error {
 	}
 
 	return nil
+}
+
+
+// ValidateListOptionsBase 验证 ListOptions 基础参数（函数选项模式）
+func ValidateListOptionsBase(opts *v1.ListOptions, options ...ValidationOption) field.ErrorList {
+	if opts == nil {
+		return field.ErrorList{field.Required(field.NewPath("ListOptions"), "ListOptions 不能为空")}
+	}
+
+	var allErrors field.ErrorList
+	basePath := field.NewPath("ListOptions")
+
+	// 默认配置
+	config := validationConfig{
+		maxTimeout:     60,    // 默认60秒
+		maxOffset:      10000, // 默认10000
+		maxLimit:       100,   // 默认100条
+		maxSelectorLen: 1024,  // 默认1024字符
+	}
+
+	// 应用选项函数
+	for _, option := range options {
+		option(&config)
+	}
+
+	// 1. 校验 LabelSelector
+	if opts.LabelSelector != "" {
+		labelPath := basePath.Child("LabelSelector")
+		errors := validateLabelSelector(opts.LabelSelector, config.maxSelectorLen)
+		for _, err := range errors {
+			allErrors = append(allErrors, field.Invalid(labelPath, opts.LabelSelector, err))
+		}
+	}
+
+	// 2. 校验 FieldSelector
+	if opts.FieldSelector != "" {
+		fieldPath := basePath.Child("FieldSelector")
+		errors := validateFieldSelector(opts.FieldSelector, config.maxSelectorLen)
+		for _, err := range errors {
+			allErrors = append(allErrors, field.Invalid(fieldPath, opts.FieldSelector, err))
+		}
+	}
+
+	// 3. 校验 TimeoutSeconds 范围
+	if opts.TimeoutSeconds != nil {
+		timeoutPath := basePath.Child("TimeoutSeconds")
+		timeout := *opts.TimeoutSeconds
+		if timeout < 0 || timeout > config.maxTimeout {
+			allErrors = append(allErrors, field.Invalid(
+				timeoutPath,
+				timeout,
+				InclusiveRangeError(0, int(config.maxTimeout)),
+			))
+		}
+	}
+
+	// 4. 校验 Offset 范围
+	if opts.Offset != nil {
+		offsetPath := basePath.Child("Offset")
+		offset := *opts.Offset
+		if offset < 0 || offset > config.maxOffset {
+			allErrors = append(allErrors, field.Invalid(
+				offsetPath,
+				offset,
+				InclusiveRangeError(0, int(config.maxOffset)),
+			))
+		}
+	}
+
+	// 5. 校验 Limit 范围
+	if opts.Limit != nil {
+		limitPath := basePath.Child("Limit")
+		limit := *opts.Limit
+		if limit < 0 || limit > config.maxLimit {
+			allErrors = append(allErrors, field.Invalid(
+				limitPath,
+				limit,
+				InclusiveRangeError(0, int(config.maxLimit)),
+			))
+		}
+	}
+
+	return allErrors
+}
+
+// validateLabelSelector 校验标签选择器的完整语法和内容（带长度配置）
+func validateLabelSelector(selector string, maxSelectorLen int) []string {
+	var errs []string
+
+	// 1. 长度校验
+	if len(selector) > maxSelectorLen {
+		errs = append(errs, MaxLenError(maxSelectorLen))
+	}
+
+	// 2. 整体语法结构校验
+	labelPattern := `^[\w-]+(=|!=| in | notin )([\w-]+|\([\w-, ]+\))(,[\w-]+(=|!=| in | notin )([\w-]+|\([\w-, ]+\)))*$`
+	if !regexp.MustCompile(labelPattern).MatchString(selector) {
+		errs = append(errs, RegexError(
+			"标签选择器语法错误，支持 =, !=, in, notin",
+			labelPattern,
+			"env=prod",
+			"app in (api,web),env!=test",
+		))
+		return errs // 整体语法错误，无需继续解析
+	}
+
+	// 3. 拆分多条件并校验每个条件
+	conditions := strings.Split(selector, ",")
+	for _, cond := range conditions {
+		key, value := parseLabelCondition(cond)
+
+		// 3.1 校验标签键
+		if keyErrs := IsQualifiedName(key); len(keyErrs) > 0 {
+			errs = append(errs, prefixEach(keyErrs, "标签键 '"+key+"' 不合法：")...)
+		}
+
+		// 3.2 校验标签值（复用 IsValidLabelValue）
+		values := strings.Split(strings.Trim(value, "()"), ",") // 处理 in/notin 的值列表
+		for _, v := range values {
+			v = strings.TrimSpace(v)
+			if valueErrs := IsValidLabelValue(v); len(valueErrs) > 0 {
+				errs = append(errs, prefixEach(valueErrs, "标签值 '"+v+"' 不合法：")...)
+			}
+		}
+	}
+
+	return errs
+}
+
+// validateFieldSelector 校验字段选择器的完整语法（带长度配置）
+func validateFieldSelector(selector string, maxSelectorLen int) []string {
+	var errs []string
+
+	// 1. 长度校验
+	if len(selector) > maxSelectorLen {
+		errs = append(errs, MaxLenError(maxSelectorLen))
+	}
+
+	// 2. 语法结构校验
+	fieldPattern := `^[\w.]+(=|!=|>|<)([\w-]+|\d{4}-\d{2}-\d{2})(,[\w.]+(=|!=|>|<)([\w-]+|\d{4}-\d{2}-\d{2}))*$`
+	if !regexp.MustCompile(fieldPattern).MatchString(selector) {
+		errs = append(errs, RegexError(
+			"字段选择器语法错误，支持 =, !=, >, <",
+			fieldPattern,
+			"status=active",
+			"age>18,createTime<2024-01-01",
+		))
+	}
+
+	return errs
+}
+
+// parseLabelCondition 解析标签选择器条件，提取键、运算符和值
+func parseLabelCondition(cond string) (key, value string) {
+	cond = strings.TrimSpace(cond)
+
+	switch {
+	case strings.Contains(cond, " notin "):
+		parts := strings.SplitN(cond, " notin ", 2)
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	case strings.Contains(cond, " in "):
+		parts := strings.SplitN(cond, " in ", 2)
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	case strings.Contains(cond, "!="):
+		parts := strings.SplitN(cond, "!=", 2)
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	case strings.Contains(cond, "="):
+		parts := strings.SplitN(cond, "=", 2)
+		return strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	default:
+		return "", "" // 不应出现，已被正则校验拦截
+	}
+}
+
+// ValidationOption 验证选项函数类型
+type ValidationOption func(*validationConfig)
+
+type validationConfig struct {
+	maxTimeout     int64
+	maxOffset      int64
+	maxLimit       int64
+	maxSelectorLen int
+}
+
+// WithMaxTimeout 设置最大超时时间
+func WithMaxTimeout(timeout int64) ValidationOption {
+	return func(c *validationConfig) {
+		c.maxTimeout = timeout
+	}
+}
+
+// WithMaxOffset 设置最大偏移量
+func WithMaxOffset(offset int64) ValidationOption {
+	return func(c *validationConfig) {
+		c.maxOffset = offset
+	}
+}
+
+// WithMaxLimit 设置最大每页条数
+func WithMaxLimit(limit int64) ValidationOption {
+	return func(c *validationConfig) {
+		c.maxLimit = limit
+	}
+}
+
+// WithMaxSelectorLen 设置筛选器最大长度
+func WithMaxSelectorLen(length int) ValidationOption {
+	return func(c *validationConfig) {
+		c.maxSelectorLen = length
+	}
+}
+
+// ValidateListOptionsBaseWithDefault 使用默认配置验证
+func ValidateListOptionsBaseWithDefault(opts *v1.ListOptions) field.ErrorList {
+	return ValidateListOptionsBase(opts) // 使用所有默认值
 }

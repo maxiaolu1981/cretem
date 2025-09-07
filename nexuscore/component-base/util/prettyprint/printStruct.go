@@ -47,9 +47,24 @@ func PrintStruct(title string, data interface{}) (string, error) {
 	return buf.String(), nil
 }
 
-// printRecursive 递归打印
+// getFieldName 获取字段名
+func getFieldName(field reflect.StructField) string {
+	if jsonTag := field.Tag.Get("json"); jsonTag != "" {
+		if name := strings.Split(jsonTag, ",")[0]; name != "" && name != "-" {
+			return name
+		}
+	}
+	if mapTag := field.Tag.Get("mapstructure"); mapTag != "" {
+		return mapTag
+	}
+	return field.Name
+}
+
+// printRecursive 递归打印（支持指针类型）
 func printRecursive(tw *tabwriter.Writer, data interface{}, prefix string, depth int) error {
 	val := reflect.ValueOf(data)
+
+	// 处理指针类型
 	if val.Kind() == reflect.Ptr {
 		if val.IsNil() {
 			fmt.Fprintf(tw, "%s<nil>\n", prefix)
@@ -58,8 +73,9 @@ func printRecursive(tw *tabwriter.Writer, data interface{}, prefix string, depth
 		val = val.Elem()
 	}
 
+	// 如果不是结构体，直接打印值
 	if val.Kind() != reflect.Struct {
-		fmt.Fprintf(tw, "%s%v\n", prefix, val.Interface())
+		fmt.Fprintf(tw, "%s%v\n", prefix, formatValue(val))
 		return nil
 	}
 
@@ -81,29 +97,64 @@ func printRecursive(tw *tabwriter.Writer, data interface{}, prefix string, depth
 				return err
 			}
 		} else {
-			fmt.Fprintf(tw, "%s\t%v\n", fullPrefix, field.Interface())
+			// 使用 formatValue 来处理指针类型
+			fmt.Fprintf(tw, "%s\t%s\n", fullPrefix, formatValue(field))
 		}
 	}
 
 	return nil
 }
 
-// getFieldName 获取字段名
-func getFieldName(field reflect.StructField) string {
-	if jsonTag := field.Tag.Get("json"); jsonTag != "" {
-		if name := strings.Split(jsonTag, ",")[0]; name != "" && name != "-" {
-			return name
+// formatValue 格式化值，处理指针类型
+func formatValue(field reflect.Value) string {
+	// 处理指针类型
+	if field.Kind() == reflect.Ptr {
+		if field.IsNil() {
+			return "<nil>"
 		}
+		// 获取指针指向的值
+		elem := field.Elem()
+		return formatValue(elem)
 	}
-	if mapTag := field.Tag.Get("mapstructure"); mapTag != "" {
-		return mapTag
+
+	// 处理基本类型
+	switch field.Kind() {
+	case reflect.String:
+		return field.String()
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return fmt.Sprintf("%d", field.Int())
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return fmt.Sprintf("%d", field.Uint())
+	case reflect.Float32, reflect.Float64:
+		return fmt.Sprintf("%f", field.Float())
+	case reflect.Bool:
+		return fmt.Sprintf("%t", field.Bool())
+	case reflect.Slice, reflect.Array:
+		return formatSlice(field)
+	default:
+		return fmt.Sprintf("%v", field.Interface())
 	}
-	return field.Name
 }
 
-// isNestedStruct 判断嵌套结构体
+// formatSlice 格式化切片和数组
+func formatSlice(slice reflect.Value) string {
+	if slice.IsNil() {
+		return "<nil>"
+	}
+
+	var elements []string
+	for i := 0; i < slice.Len(); i++ {
+		element := slice.Index(i)
+		elements = append(elements, formatValue(element))
+	}
+	return "[" + strings.Join(elements, ", ") + "]"
+}
+
+// isNestedStruct 判断嵌套结构体（更新以处理指针）
 func isNestedStruct(field reflect.Value) bool {
 	kind := field.Kind()
+
+	// 处理指针类型
 	if kind == reflect.Ptr {
 		if field.IsNil() {
 			return false
@@ -111,5 +162,18 @@ func isNestedStruct(field reflect.Value) bool {
 		field = field.Elem()
 		kind = field.Kind()
 	}
-	return kind == reflect.Struct
+
+	// 如果是结构体，并且不是time.Time等内置类型
+	if kind == reflect.Struct {
+		// 排除一些常见的内置类型
+		typeName := field.Type().String()
+		if strings.HasPrefix(typeName, "time.") ||
+			strings.HasPrefix(typeName, "json.") ||
+			strings.HasPrefix(typeName, "fmt.") {
+			return false
+		}
+		return true
+	}
+
+	return false
 }

@@ -8,17 +8,16 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v4"
 )
 
 // 关键修复：初始化颜色时强制启用颜色输出（解决终端不兼容问题）
-// 兼容所有版本的颜色配置
 var (
-	// 初始化颜色并强制开启颜色模式
 	colorPass    = initColor(color.New(color.FgGreen).Add(color.Bold))
 	colorFail    = initColor(color.New(color.FgRed).Add(color.Bold))
 	colorInfo    = initColor(color.New(color.FgCyan))
@@ -29,21 +28,21 @@ var (
 
 // 初始化颜色并确保颜色启用的兼容函数
 func initColor(c *color.Color) *color.Color {
-	// 对不同版本做兼容处理
-	c.EnableColor()       // 尝试调用EnableColor()
-	color.NoColor = false // 强制关闭无颜色模式
+	c.EnableColor()
+	color.NoColor = false
 	return c
 }
 
-// 全局统计变量
+// 全局统计变量（添加互斥锁，避免并行执行时竞态）
 var (
 	total   int
 	passed  int
 	failed  int
-	results []string // 存储每个用例的执行结果
+	results []string
+	mu      sync.Mutex // 新增：统计变量的互斥锁
 )
 
-// 配置常量（修复Token中的拼写错误）
+// 配置常量（修复Token硬编码问题，新增JWT密钥）
 const (
 	// API基础信息
 	BASE_URL    = "http://localhost:8080"
@@ -55,14 +54,13 @@ const (
 	INVALID_USER  = "non-existent-user-999"
 	INVALID_ROUTE = "invalid-route-123"
 
-	// 认证Token（修复NO_PERMISSION_TOKEN的"Bearerarer"拼写错误）
-	VALID_TOKEN           = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzE2Mjc0MCwiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ19pYXQiOjE3NTcwNzYzNDAsInN1YiI6ImFkbWluIn0.zQ-NDeRDyCDeSc3uZSO3YYKO1SS2tzVuStapG22J0EM"
-	NO_PERMISSION_TOKEN   = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzE2MzA4OCwiaWRlbnRpdHkiOiJnZXR0ZXN0LXVzZXIxMDQiLCJpc3MiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsIm9yaWdfaWF0IjoxNzU3MDc2Njg4LCJzdWIiOiJnZXR0ZXN0LXVzZXIxMDQifQ.REIjlW628JsELJkgPyiBvM51wltIl8rvR7PLNIkPn1s"
-	EXPIRED_TOKEN         = "Bearer eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzA3OTgyMSwiaWRlbnRpdHkiOiJnZXR0ZXN0LXVzZXIxMDEiLCJpc3MiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsIm9yaWdpbl9pYXQiOjE3NTcwNzk4MjEsInN1YiI6ImdldHRlc3QtdXNlcjEwNCJ9.2ynNNWPl8q4I3yHkdebpgAY_QAQ0rX5nw1sEP5ru-Jg"
-	INVALID_FORMAT_TOKEN  = "invalid_token_without_bearer"
-	INVALID_CONTENT_TOKEN = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImJhc2ljX3Rva2VuXzEyMyJ9.xxx"
+	// 新增：JWT签名密钥（需与服务器一致！）
+	JWT_SECRET = "dfVpOK8LZeJLZHYmHdb1VdyRrACKpqoo" // 替换为你服务器的
+	// 真实JWT密钥
+	// Token有效期（测试用设为1小时，足够覆盖测试）
+	TOKEN_EXPIRE = 1 * time.Hour
 
-	// 业务错误码
+	// 业务错误码（保持不变）
 	ERR_SUCCESS_CODE        = 0
 	ERR_PAGE_NOT_FOUND      = 100005
 	ERR_METHOD_NOT_ALLOWED  = 100006
@@ -74,7 +72,55 @@ const (
 	ERR_USER_NOT_FOUND      = 110001
 )
 
-// 发送HTTP GET请求
+// 新增：JWT Claims结构（需与服务器一致）
+type JwtClaims struct {
+	Identity string `json:"identity"` // 服务器用的身份字段（如管理员/普通用户）
+	Sub      string `json:"sub"`      // 用户名/用户ID
+	jwt.RegisteredClaims
+}
+
+// 新增：动态生成JWT Token（避免硬编码过期问题）
+// tokenType: "admin"（管理员）、"normal"（普通用户）、"expired"（过期）
+func generateToken(tokenType string) (string, error) {
+	now := time.Now()
+	var expireTime time.Time
+
+	// 1. 先处理过期Token的时间（无论角色，过期时间都设为过去）
+	if tokenType == "expired" {
+		expireTime = now.Add(-1 * time.Hour) // 过期1小时（确保已过期）
+	} else {
+		expireTime = now.Add(TOKEN_EXPIRE) // 正常有效期
+	}
+
+	// 2. 设置不同角色的Claims（过期Token也需要正确的角色信息，只是时间过期）
+	var identity, sub string
+	switch tokenType {
+	case "admin", "expired": // 过期Token可以复用管理员的身份信息（只是时间过期）
+		identity = "admin"
+		sub = ADMIN_USER
+	case "normal":
+		identity = "gettest-user104"
+		sub = VALID_USER
+	default:
+		return "", fmt.Errorf("无效的token类型：%s", tokenType)
+	}
+
+	// 3. 生成Claims并签名
+	claims := JwtClaims{
+		Identity: identity,
+		Sub:      sub,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(expireTime),
+			IssuedAt:  jwt.NewNumericDate(now),
+			Issuer:    "iam-apiserver", // 与服务器一致
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString([]byte(JWT_SECRET))
+}
+
+// 发送HTTP GET请求（保持不变）
 func sendGetRequest(url, token string) (*http.Response, error) {
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
@@ -89,7 +135,7 @@ func sendGetRequest(url, token string) (*http.Response, error) {
 	return client.Do(req)
 }
 
-// 解析响应体
+// 解析响应体（保持不变）
 func parseRespBody(resp *http.Response, caseID string) (map[string]interface{}, error) {
 	defer resp.Body.Close()
 	if resp.Body == nil {
@@ -102,7 +148,6 @@ func parseRespBody(resp *http.Response, caseID string) (map[string]interface{}, 
 	}
 
 	resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-	// 修复：使用Println而非Printf，确保颜色生效
 	colorInfo.Println(fmt.Sprintf("[%s] 原始响应体：%s", caseID, string(bodyBytes)))
 	color.Unset()
 
@@ -113,7 +158,7 @@ func parseRespBody(resp *http.Response, caseID string) (map[string]interface{}, 
 	return respBody, nil
 }
 
-// 获取响应中的业务码
+// 获取响应中的业务码（保持不变）
 func getResponseCode(respBody map[string]interface{}, caseID string) (int, error) {
 	if codeVal, ok := respBody["code"]; ok {
 		if codeNum, ok := codeVal.(float64); ok {
@@ -131,8 +176,11 @@ func getResponseCode(respBody map[string]interface{}, caseID string) (int, error
 	return 0, fmt.Errorf("[%s] 响应体无code字段", caseID)
 }
 
-// 记录用例结果
+// 记录用例结果（新增互斥锁，避免并行竞态）
 func recordResult(caseID, caseName string, isPassed bool, failReason string) {
+	mu.Lock()
+	defer mu.Unlock()
+
 	total++
 	if isPassed {
 		passed++
@@ -143,20 +191,19 @@ func recordResult(caseID, caseName string, isPassed bool, failReason string) {
 	}
 }
 
-// 打印用例结果（修复颜色输出逻辑）
+// 打印用例结果（保持不变）
 func printCaseResult(caseID, caseName string, isPassed bool, failReason string) {
 	fmt.Println(strings.Repeat("=", 80))
 	if isPassed {
-		// 修复：使用Println确保颜色渲染
 		colorPass.Println(fmt.Sprintf("[%s] %s → 执行通过 ✅", caseID, caseName))
 	} else {
 		colorFail.Println(fmt.Sprintf("[%s] %s → 执行失败 ❌", caseID, caseName))
 		colorFail.Println(fmt.Sprintf("[%s] 失败原因：%s", caseID, failReason))
 	}
-	color.Unset() // 强制重置颜色
+	color.Unset()
 }
 
-// 打印测试汇总报告（修复颜色输出）
+// 打印测试汇总报告（保持不变）
 func printTestSummary() {
 	fmt.Println("\n" + strings.Repeat("=", 80))
 	colorInfo.Println("GET接口测试汇总报告")
@@ -179,9 +226,12 @@ func printTestSummary() {
 
 	if failed > 0 {
 		colorFail.Println("\n排查建议：")
-		colorFail.Println("1. HTTP 405错误（方法不允许）：")
-		colorFail.Println(fmt.Sprintf("   - 确认路由「%s」是否仅支持POST/PUT等其他方法", fmt.Sprintf("%s/%s/%s", BASE_URL, API_VERSION, INVALID_ROUTE)))
-		colorFail.Println("2. 执行单个用例命令示例：")
+		colorFail.Println("1. HTTP 401错误（未认证）：")
+		colorFail.Println("   - 确认JWT_SECRET是否与服务器一致")
+		colorFail.Println("   - 检查generateToken函数的Claims是否与服务器匹配")
+		colorFail.Println("2. HTTP 404错误（资源不存在）：")
+		colorFail.Println("   - 确认请求URL是否正确（如用户ID、路由路径）")
+		colorFail.Println("3. 执行单个用例命令示例：")
 		colorFail.Println("   - 执行用例8：go test -v -run \"TestUserGetAPI_GET008\" get_test.go")
 		colorFail.Println("   - 执行所有用例：go test -v -run \"TestUserGetAPI_All\" get_test.go")
 		color.Unset()
@@ -191,17 +241,23 @@ func printTestSummary() {
 	}
 }
 
-// 用例1：管理员查询普通用户（有权限）
+// 用例1：管理员查询普通用户（有权限）→ 修复Token生成
 func TestUserGetAPI_GET001(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	caseID := "GET-001"
 	caseName := "管理员查询普通用户（有权限）"
 	reqURL := fmt.Sprintf("%s/%s/users/%s", BASE_URL, API_VERSION, VALID_USER)
-	token := VALID_TOKEN
+	// 修复：动态生成管理员Token（避免过期）
+	adminToken, err := generateToken("admin")
+	if err != nil {
+		failReason := fmt.Sprintf("生成管理员Token失败：%v", err)
+		printCaseResult(caseID, caseName, false, failReason)
+		recordResult(caseID, caseName, false, failReason)
+		t.Fatal(failReason)
+	}
+	token := "Bearer " + adminToken // 拼接Bearer前缀
 	expectedStatus := http.StatusOK
 	expectedCode := ERR_SUCCESS_CODE
 
-	// 修复：使用Println确保颜色生效
 	colorCase.Println(fmt.Sprintf("[%s] 开始执行：%s", caseID, caseName))
 	colorInfo.Println(fmt.Sprintf("请求URL：%s", reqURL))
 	colorInfo.Println(fmt.Sprintf("预期：HTTP %d | 业务码 %d", expectedStatus, expectedCode))
@@ -248,6 +304,7 @@ func TestUserGetAPI_GET001(t *testing.T) {
 		t.Fatal(failReason)
 	}
 
+	// 修复：字段名兼容（先检查小写username，再检查大写Username）
 	data, ok := respBody["data"].(map[string]interface{})
 	if !ok {
 		failReason := "响应体缺少data字段或格式错误"
@@ -256,8 +313,21 @@ func TestUserGetAPI_GET001(t *testing.T) {
 		t.Fatal(failReason)
 	}
 
-	if data["Username"] != VALID_USER {
-		failReason := fmt.Sprintf("用户名不匹配：预期%s，实际%s", VALID_USER, data["Username"])
+	// 兼容服务器返回的字段名（小写username或大写Username）
+	var actualUser string
+	if userVal, ok := data["username"]; ok {
+		actualUser = fmt.Sprintf("%v", userVal)
+	} else if userVal, ok := data["Username"]; ok {
+		actualUser = fmt.Sprintf("%v", userVal)
+	} else {
+		failReason := "data字段中缺少username/Username字段"
+		printCaseResult(caseID, caseName, false, failReason)
+		recordResult(caseID, caseName, false, failReason)
+		t.Fatal(failReason)
+	}
+
+	if actualUser != VALID_USER {
+		failReason := fmt.Sprintf("用户名不匹配：预期%s，实际%s", VALID_USER, actualUser)
 		printCaseResult(caseID, caseName, false, failReason)
 		recordResult(caseID, caseName, false, failReason)
 		t.Fatal(failReason)
@@ -267,13 +337,20 @@ func TestUserGetAPI_GET001(t *testing.T) {
 	recordResult(caseID, caseName, true, "")
 }
 
-// 用例2：管理员查询不存在用户
+// 用例2：管理员查询不存在用户→ 修复Token生成
 func TestUserGetAPI_GET002(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	caseID := "GET-002"
 	caseName := "管理员查询不存在用户"
 	reqURL := fmt.Sprintf("%s/%s/users/%s", BASE_URL, API_VERSION, INVALID_USER)
-	token := VALID_TOKEN
+	// 修复：动态生成管理员Token
+	adminToken, err := generateToken("admin")
+	if err != nil {
+		failReason := fmt.Sprintf("生成管理员Token失败：%v", err)
+		printCaseResult(caseID, caseName, false, failReason)
+		recordResult(caseID, caseName, false, failReason)
+		t.Fatal(failReason)
+	}
+	token := "Bearer " + adminToken
 	expectedStatus := http.StatusNotFound
 	expectedCode := ERR_USER_NOT_FOUND
 
@@ -326,9 +403,8 @@ func TestUserGetAPI_GET002(t *testing.T) {
 	recordResult(caseID, caseName, true, "")
 }
 
-// 用例3：缺少Authorization请求头
+// 用例3：缺少Authorization请求头→ 无需修改（无Token）
 func TestUserGetAPI_GET003(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	caseID := "GET-003"
 	caseName := "缺少Authorization请求头"
 	reqURL := fmt.Sprintf("%s/%s/users/%s", BASE_URL, API_VERSION, VALID_USER)
@@ -386,20 +462,27 @@ func TestUserGetAPI_GET003(t *testing.T) {
 	recordResult(caseID, caseName, true, "")
 }
 
-// 用例4：Authorization格式无效（无Bearer前缀）
+// 用例4：Authorization格式无效（无Bearer前缀）→ 无需修改（固定无效格式）
 func TestUserGetAPI_GET004(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	caseID := "GET-004"
 	caseName := "Authorization格式无效（无Bearer前缀）"
 	reqURL := fmt.Sprintf("%s/%s/users/%s", BASE_URL, API_VERSION, VALID_USER)
-	token := INVALID_FORMAT_TOKEN
+	// 修复：动态生成有效Token但去掉Bearer前缀（确保格式无效，内容有效）
+	normalToken, err := generateToken("normal")
+	if err != nil {
+		failReason := fmt.Sprintf("生成普通用户Token失败：%v", err)
+		printCaseResult(caseID, caseName, false, failReason)
+		recordResult(caseID, caseName, false, failReason)
+		t.Fatal(failReason)
+	}
+	token := normalToken // 无Bearer前缀（格式无效）
 	expectedStatus := http.StatusBadRequest
 	expectedCode := ERR_INVALID_AUTH_HEADER
 
 	colorCase.Println(fmt.Sprintf("[%s] 开始执行：%s", caseID, caseName))
 	colorInfo.Println(fmt.Sprintf("请求URL：%s", reqURL))
 	colorInfo.Println(fmt.Sprintf("预期：HTTP %d | 业务码 %d", expectedStatus, expectedCode))
-	colorInfo.Println(fmt.Sprintf("Token：%s", token))
+	colorInfo.Println(fmt.Sprintf("Token：%s", token[:20]+"..."))
 	color.Unset()
 
 	resp, err := sendGetRequest(reqURL, token)
@@ -446,13 +529,31 @@ func TestUserGetAPI_GET004(t *testing.T) {
 	recordResult(caseID, caseName, true, "")
 }
 
-// 用例5：Token格式正确但内容无效（签名错误）
+// 用例5：Token格式正确但内容无效（签名错误）→ 修复无效Token生成
 func TestUserGetAPI_GET005(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	caseID := "GET-005"
 	caseName := "Token格式正确但内容无效（签名错误）"
 	reqURL := fmt.Sprintf("%s/%s/users/%s", BASE_URL, API_VERSION, VALID_USER)
-	token := INVALID_CONTENT_TOKEN
+	// 修复：用错误密钥生成Token（确保签名错误，格式正确）
+	wrongSecret := "wrong-jwt-secret-456" // 与服务器密钥不一致
+	now := time.Now()
+	claims := JwtClaims{
+		Identity: "normal",
+		Sub:      VALID_USER,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(now.Add(TOKEN_EXPIRE)),
+			IssuedAt:  jwt.NewNumericDate(now),
+		},
+	}
+	// 用错误密钥签名
+	invalidToken, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString([]byte(wrongSecret))
+	if err != nil {
+		failReason := fmt.Sprintf("生成无效Token失败：%v", err)
+		printCaseResult(caseID, caseName, false, failReason)
+		recordResult(caseID, caseName, false, failReason)
+		t.Fatal(failReason)
+	}
+	token := "Bearer " + invalidToken // 格式正确，内容无效
 	expectedStatus := http.StatusUnauthorized
 	expectedCode := ERR_TOKEN_INVALID
 
@@ -506,13 +607,20 @@ func TestUserGetAPI_GET005(t *testing.T) {
 	recordResult(caseID, caseName, true, "")
 }
 
-// 用例6：使用过期Token查询
+// 用例6：使用过期Token查询→ 修复过期Token生成
 func TestUserGetAPI_GET006(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	caseID := "GET-006"
 	caseName := "使用过期Token查询"
 	reqURL := fmt.Sprintf("%s/%s/users/%s", BASE_URL, API_VERSION, VALID_USER)
-	token := EXPIRED_TOKEN
+	// 修复：动态生成过期Token（无需硬编码）
+	expiredToken, err := generateToken("expired")
+	if err != nil {
+		failReason := fmt.Sprintf("生成过期Token失败：%v", err)
+		printCaseResult(caseID, caseName, false, failReason)
+		recordResult(caseID, caseName, false, failReason)
+		t.Fatal(failReason)
+	}
+	token := "Bearer " + expiredToken
 	expectedStatus := http.StatusUnauthorized
 	expectedCode := ERR_EXPIRED
 
@@ -566,13 +674,20 @@ func TestUserGetAPI_GET006(t *testing.T) {
 	recordResult(caseID, caseName, true, "")
 }
 
-// 用例7：普通用户查询管理员（无权限）
+// 用例7：普通用户查询管理员（无权限）→ 修复普通用户Token生成
 func TestUserGetAPI_GET007(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	caseID := "GET-007"
 	caseName := "普通用户查询管理员（无权限）"
 	reqURL := fmt.Sprintf("%s/%s/users/%s", BASE_URL, API_VERSION, ADMIN_USER)
-	token := NO_PERMISSION_TOKEN
+	// 修复：动态生成普通用户Token
+	normalToken, err := generateToken("normal")
+	if err != nil {
+		failReason := fmt.Sprintf("生成普通用户Token失败：%v", err)
+		printCaseResult(caseID, caseName, false, failReason)
+		recordResult(caseID, caseName, false, failReason)
+		t.Fatal(failReason)
+	}
+	token := "Bearer " + normalToken
 	expectedStatus := http.StatusForbidden
 	expectedCode := ERR_PERMISSION_DENIED
 
@@ -626,15 +741,23 @@ func TestUserGetAPI_GET007(t *testing.T) {
 	recordResult(caseID, caseName, true, "")
 }
 
-// 用例8：访问不存在的路由（非/users路径）
+// 用例8：访问不存在的路由（非/users路径）→ 修复预期状态码和业务码
 func TestUserGetAPI_GET008(t *testing.T) {
-	gin.SetMode(gin.TestMode)
 	caseID := "GET-008"
 	caseName := "访问不存在的路由（非/users路径）"
 	reqURL := fmt.Sprintf("%s/%s/%s", BASE_URL, API_VERSION, INVALID_ROUTE)
-	token := VALID_TOKEN
-	expectedStatus := http.StatusMethodNotAllowed
-	expectedCode := ERR_METHOD_NOT_ALLOWED
+	// 修复：动态生成管理员Token
+	adminToken, err := generateToken("admin")
+	if err != nil {
+		failReason := fmt.Sprintf("生成管理员Token失败：%v", err)
+		printCaseResult(caseID, caseName, false, failReason)
+		recordResult(caseID, caseName, false, failReason)
+		t.Fatal(failReason)
+	}
+	token := "Bearer " + adminToken
+	// 修复：不存在的路由预期404 + 100005（原预期405+100006错误）
+	expectedStatus := http.StatusNotFound
+	expectedCode := ERR_PAGE_NOT_FOUND
 
 	colorCase.Println(fmt.Sprintf("[%s] 开始执行：%s", caseID, caseName))
 	colorInfo.Println(fmt.Sprintf("请求URL：%s", reqURL))
@@ -686,13 +809,15 @@ func TestUserGetAPI_GET008(t *testing.T) {
 	recordResult(caseID, caseName, true, "")
 }
 
-// 执行所有用例的入口
+// 执行所有用例的入口（保持不变）
 func TestUserGetAPI_All(t *testing.T) {
 	// 重置统计变量
+	mu.Lock()
 	total = 0
 	passed = 0
 	failed = 0
 	results = []string{}
+	mu.Unlock()
 
 	// 执行所有用例
 	t.Run("GET-001", TestUserGetAPI_GET001)
