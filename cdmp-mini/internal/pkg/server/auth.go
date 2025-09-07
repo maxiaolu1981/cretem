@@ -249,7 +249,7 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 				// 其他未明确匹配的认证错误
 				default:
 					bizCode = code.ErrUnauthorized // 110003（未授权）
-					log.Errorf("进入默认分支，bizCode=%d", bizCode)
+					//log.Errorf("进入默认分支，bizCode=%d", bizCode)
 				}
 			}
 			// c.JSON(httpCode, gin.H{

@@ -23,10 +23,30 @@ func NewMetaOptions() *MetaOptions {
 			TimeoutSeconds: &timeout,
 			Offset:         &offset,
 			Limit:          &limit,
+			TypeMeta: v1.TypeMeta{
+				APIVersion: "v1",
+			},
 		},
-		UpdateOptions: &v1.UpdateOptions{},
-		DeleteOptions: &v1.DeleteOptions{},
-		CreateOptions: &v1.CreateOptions{},
+		GetOptions: &v1.GetOptions{
+			TypeMeta: v1.TypeMeta{
+				APIVersion: "v1",
+			},
+		},
+		UpdateOptions: &v1.UpdateOptions{
+			TypeMeta: v1.TypeMeta{
+				APIVersion: "v1",
+			},
+		},
+		DeleteOptions: &v1.DeleteOptions{
+			TypeMeta: v1.TypeMeta{
+				APIVersion: "v1",
+			},
+		},
+		CreateOptions: &v1.CreateOptions{
+			TypeMeta: v1.TypeMeta{
+				APIVersion: "v1",
+			},
+		},
 	}
 }
 

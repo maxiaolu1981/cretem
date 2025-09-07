@@ -210,6 +210,7 @@ var codeConstNames = map[int]string{
 	100005: "ErrPageNotFound",
 	100006: "ErrMethodNotAllowed",
 	100007: "ErrUnsupportedMediaType",
+	100008: "ErrContextCanceled",
 
 	// 通用数据库错误
 	100101: "ErrDatabase",

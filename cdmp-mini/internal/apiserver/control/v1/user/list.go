@@ -7,14 +7,13 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/core"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
-	v1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
 func (u *UserController) List(c *gin.Context) {
-	var r v1.ListOptions
+	var r metav1.ListOptions
 	if err := c.ShouldBindQuery(&r); err != nil {
 		core.WriteResponse(c, errors.WithCode(code.ErrBind, "传入的参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
 		return
@@ -35,8 +34,7 @@ func (u *UserController) List(c *gin.Context) {
 		"user_agent", c.Request.UserAgent(),
 	)
 	logger.Debugf("开始处理用户查询请求(多资源)")
-
-	errs := u.businessValidateListOptions(&r)
+	errs := u.validateListOptions(&r)
 	if len(errs) > 0 {
 		errDetails := make(map[string]string, len(errs))
 		for _, fieldErr := range errs {
@@ -48,11 +46,24 @@ func (u *UserController) List(c *gin.Context) {
 		return
 	}
 
-	//userList, err := store.Client().Users().List(c, r)
-	//if err != nil {
+	userList, err := u.srv.Users().List(c, r)
+	if err != nil {
+		errWrap := errors.WrapC(err, code.ErrInternal, "%s", errors.GetMessage(err))
+		core.WriteResponse(c, errWrap, nil)
+		return
+	}
 
-	//	}
+	var publicUser *v1.PublicUser
+	var publicUsers []*v1.PublicUser
+
+	if len(userList.Items) > 0 {
+		for _, u := range userList.Items {
+			publicUser = v1.ConvertToPublicUser(u)
+			publicUsers = append(publicUsers, publicUser)
+		}
+
+	}
+	log.Info("用户查询成功(批量资源)")
+	core.WriteResponse(c, nil, publicUsers)
 
 }
-
-

@@ -10,6 +10,13 @@ SetClient()	更换仓库供应商	设置具体仓库实现
 
 package store
 
+import (
+	"context"
+
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+)
+
 var client Factory
 
 type Factory interface {
@@ -25,4 +32,14 @@ func Client() Factory {
 }
 func SetClient(factory Factory) {
 	client = factory
+}
+
+type UserStore interface {
+	Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error
+	Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions) error
+	Delete(ctx context.Context, username string, opts metav1.DeleteOptions) error
+	DeleteForce(ctx context.Context, username string, opts metav1.DeleteOptions) error
+	DeleteCollection(ctx context.Context, usernames []string, opts metav1.DeleteOptions) error
+	Get(ctx context.Context, username string, opts metav1.GetOptions) (*v1.User, error)
+	List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error)
 }

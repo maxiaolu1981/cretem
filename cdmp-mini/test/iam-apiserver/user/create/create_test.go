@@ -12,15 +12,23 @@ import (
 	"time"
 )
 
-// ==================== 全局配置（删除fatih/color依赖，改用ANSI颜色码） ====================
+// ==================== 全局配置（新增登录相关配置，删除硬编码Token） ====================
 var (
-	baseURL = "http://localhost:8080/v1/users"
-	// ！！！必须替换为有效令牌！！！
-	adminToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzIxODQ2OSwiaWRlbnRpdHkiOiJhZG1pbiIsImlzcyI6Imh0dHBzOi8vZ2l0aHViLmNvbS9tYXhpYW9sdTE5ODEvY3JldGVtIiwib3JpZ19pYXQiOjE3NTcxMzIwNjksInN1YiI6ImFkbWluIn0.DWXPUWVSf3Zh1QM3G6zyNU5FlVUOkGTAooZGS5DX-wE"                            // 管理员有效令牌
-	userToken  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsImV4cCI6MTc1NzIxODUxMSwiaWRlbnRpdHkiOiJnZXR0ZXN0LXVzZXIxMDQiLCJpc3MiOiJodHRwczovL2dpdGh1Yi5jb20vbWF4aWFvbHUxOTgxL2NyZXRlbSIsIm9yaWdfaWF0IjoxNzU3MTMyMTExLCJzdWIiOiJnZXR0ZXN0LXVzZXIxMDQifQ.jzHM7hZBJL9e1WLBAkAtDf8KkMIXFXw0PfkwBhn8kko" // 普通用户有效令牌
-	tempDir    = "./temp_json"
+	baseURL  = "http://localhost:8080/v1/users"
+	loginURL = "http://localhost:8080/login" // 登录接口URL（需根据实际项目调整）
+	tempDir  = "./temp_json"
 
-	// 原生ANSI颜色码（兼容性强，所有终端通用）
+	// 测试账号（根据实际测试环境配置，建议从配置文件读取，此处暂用固定值）
+	adminUser  = "admin"           // 管理员用户名
+	adminPass  = "Admin@2021"      // 管理员密码（需替换为实际密码）
+	normalUser = "gettest-user104" // 普通用户用户名
+	normalPass = "TestPass123!"    // 普通用户密码（需替换为实际密码）
+
+	// 动态生成的Token（替代原硬编码，测试前自动赋值）
+	adminToken string
+	userToken  string
+
+	// 原生ANSI颜色码
 	ansiReset  = "\033[0m"    // 重置颜色
 	ansiGreen  = "\033[32;1m" // 绿色加粗（通过提示）
 	ansiRed    = "\033[31;1m" // 红色加粗（失败提示）
@@ -33,8 +41,25 @@ var (
 	failed int
 )
 
-// ==================== 工具函数（替换彩色输出为原生ANSI码） ====================
-// 生成唯一ID（毫秒级，避免重复）
+// ==================== 新增：登录相关结构体（需根据实际登录接口格式调整） ====================
+// LoginRequest 登录请求体（字段名需与登录接口的参数名完全一致）
+type LoginRequest struct {
+	Username string `json:"username"` // 登录接口的“用户名”参数名（如不同需改，例：userName）
+	Password string `json:"password"` // 登录接口的“密码”参数名（如不同需改，例：passWord）
+}
+
+// LoginResponse 登录响应体（字段名需与登录接口的返回格式完全一致）
+type LoginResponse struct {
+	Code    int    `json:"code"`    // 业务状态码（0=成功，匹配你的响应）
+	Message string `json:"message"` // 提示信息（你的响应中为空，不影响）
+	Data    struct {
+		Token  string `json:"token"`  // 修正：与实际返回的"token"字段匹配
+		Expire string `json:"expire"` // 修正：与实际返回的"expire"字段匹配（时间字符串）
+	} `json:"data"`
+}
+
+// ==================== 工具函数（不变，新增Token自动获取函数） ====================
+// generateUniqueID 生成唯一ID（毫秒级，避免重复）
 func generateUniqueID(prefix string) string {
 	return fmt.Sprintf("%s%d", prefix, time.Now().UnixNano()/1e6)
 }
@@ -44,7 +69,6 @@ func initTempDir() error {
 		if err := os.MkdirAll(tempDir, 0755); err != nil {
 			return fmt.Errorf("创建临时目录失败: %w", err)
 		}
-		// 蓝色信息提示（原生ANSI码）
 		fmt.Printf("%s[INFO] 临时目录创建成功: %s%s\n", ansiBlue, tempDir, ansiReset)
 	}
 	return nil
@@ -82,6 +106,7 @@ func saveJSONToTemp(filename string, data interface{}) (string, error) {
 	return filePath, nil
 }
 
+// sendPostRequest 通用POST请求发送函数（复用给“登录”和“创建用户”接口）
 func sendPostRequest(url, token string, requestBody []byte) (*http.Response, []byte, error) {
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(requestBody))
 	if err != nil {
@@ -123,30 +148,86 @@ func parseResponse(respBody []byte) (int, string, string) {
 	return resp.Code, message, string(respBody)
 }
 
-// ==================== 测试执行函数（原生ANSI彩色输出） ====================
+// ==================== 新增：Token自动获取函数 ====================
+// getToken 调用登录接口，根据用户名密码获取有效Token
+func getToken(username, password string) (string, error) {
+	// 1. 构建登录请求体
+	loginReq := LoginRequest{
+		Username: username,
+		Password: password,
+	}
+	reqBody, err := json.Marshal(loginReq)
+	if err != nil {
+		return "", fmt.Errorf("登录请求JSON序列化失败: %w", err)
+	}
+
+	// 2. 发送登录请求（登录接口无需Token，token参数传空）
+	fmt.Printf("%s[INFO] 正在为用户「%s」获取Token...%s\n", ansiBlue, username, ansiReset)
+	resp, respBody, err := sendPostRequest(loginURL, "", reqBody)
+	if err != nil {
+		return "", fmt.Errorf("发送登录请求失败: %w", err)
+	}
+
+	// 3. 校验登录请求的HTTP状态码（通常登录接口成功返回200 OK）
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf(
+			"登录请求HTTP状态码错误: 预期200，实际%d，响应内容: %s",
+			resp.StatusCode, string(respBody),
+		)
+	}
+
+	// 4. 解析登录响应，提取Token
+	var loginResp LoginResponse
+	if err := json.Unmarshal(respBody, &loginResp); err != nil {
+		return "", fmt.Errorf(
+			"登录响应JSON解析失败: %w，响应内容: %s",
+			err, string(respBody),
+		)
+	}
+
+	// 5. 校验业务状态（根据实际接口的成功码调整，例：code=0为成功）
+	if loginResp.Code != 0 {
+		return "", fmt.Errorf(
+			"登录业务失败: 业务码%d，提示: %s，响应内容: %s",
+			loginResp.Code, loginResp.Message, string(respBody),
+		)
+	}
+
+	// 6. 校验Token是否为空
+	if loginResp.Data.Token == "" {
+		return "", fmt.Errorf(
+			"登录响应未包含Token，响应内容: %s",
+			string(respBody),
+		)
+	}
+
+	// 7. 返回Token（附带有效期提示）
+	fmt.Printf(
+		"%s[INFO] 用户「%s」Token获取成功，有效期%v秒%s\n",
+		ansiGreen, username, loginResp.Data.Expire, ansiReset,
+	)
+	return loginResp.Data.Token, nil
+}
+
+// ==================== 测试执行函数（不变，Token来源改为自动获取） ====================
 func runTestCase(t *testing.T, testName, description string, req UserRequest, token string, expectedHTTPStatus int, expectedMsg string) {
+	// 原有逻辑不变...
 	total++
-	// 黄色加粗：用例标题
 	fmt.Printf("\n%s用例 %d: %s%s\n", ansiYellow, total, testName, ansiReset)
 	fmt.Println("----------------------------------------")
-	// 蓝色：描述信息
 	fmt.Printf("%s描述: %s%s\n", ansiBlue, description, ansiReset)
 	fmt.Printf("%s请求体JSON内容（语法校验后）:%s\n", ansiBlue, ansiReset)
 
-	// 保存请求体到临时文件
 	jsonFile, err := saveJSONToTemp(fmt.Sprintf("test%d.json", total), req)
 	if err != nil {
-		// 红色：错误提示
 		fmt.Printf("%s❌ %v%s\n", ansiRed, err, ansiReset)
 		t.Fatalf("用例「%s」准备失败: %v", testName, err)
 	}
 	defer os.Remove(jsonFile)
 
-	// 读取并打印JSON内容
 	jsonContent, _ := os.ReadFile(jsonFile)
 	fmt.Println(string(jsonContent))
 
-	// 发送请求
 	resp, respBody, err := sendPostRequest(baseURL, token, jsonContent)
 	if err != nil {
 		fmt.Printf("%s❌ 发送请求失败: %v%s\n", ansiRed, err, ansiReset)
@@ -154,17 +235,13 @@ func runTestCase(t *testing.T, testName, description string, req UserRequest, to
 		t.Fatalf("用例「%s」执行失败: %v", testName, err)
 	}
 
-	// 解析响应
 	respCode, respMsg, fullResp := parseResponse(respBody)
 	actualHTTPStatus := resp.StatusCode
 
-	// 打印响应信息
 	fmt.Printf("实际返回: code=%d message=%s\n", respCode, respMsg)
 	fmt.Printf("完整响应结果: %s\n", fullResp)
 
-	// 验证结果
 	casePassed := true
-	// 状态码验证
 	if actualHTTPStatus == expectedHTTPStatus {
 		fmt.Printf("%s✅ 状态码正确: %d%s\n", ansiGreen, actualHTTPStatus, ansiReset)
 	} else {
@@ -172,7 +249,6 @@ func runTestCase(t *testing.T, testName, description string, req UserRequest, to
 		casePassed = false
 	}
 
-	// 消息验证
 	if strings.Contains(respMsg, expectedMsg) {
 		fmt.Printf("%s✅ 消息正确: %s%s\n", ansiGreen, respMsg, ansiReset)
 	} else {
@@ -180,7 +256,6 @@ func runTestCase(t *testing.T, testName, description string, req UserRequest, to
 		casePassed = false
 	}
 
-	// 统计结果
 	if casePassed {
 		fmt.Printf("%s----------------------------------------%s\n", ansiGreen, ansiReset)
 		fmt.Printf("%s✅ 用例执行通过 %s\n", ansiGreen, ansiReset)
@@ -193,7 +268,7 @@ func runTestCase(t *testing.T, testName, description string, req UserRequest, to
 	}
 }
 
-// ==================== 10个用例的内部实现（不变） ====================
+// ==================== 10个用例的内部实现（不变，Token参数自动传递） ====================
 type UserRequest struct {
 	Metadata struct {
 		Name       string                 `json:"name"`
@@ -215,8 +290,9 @@ type Response struct {
 	Data    interface{} `json:"data,omitempty"`
 }
 
-// 1. 用例1：使用正确参数创建用户
+// 1. 用例1：使用正确参数创建用户（用管理员Token）
 func caseValidParams(t *testing.T) {
+	// 原有逻辑不变...
 	uniqueUsername := generateUniqueID("testuser")
 	uniqueEmail := generateUniqueID("test") + "@example.com"
 
@@ -237,15 +313,15 @@ func caseValidParams(t *testing.T) {
 		"使用正确参数创建用户",
 		"JSON无注释+含必填nickname，应返回201",
 		req,
-		adminToken,
+		adminToken, // 自动获取的管理员Token
 		http.StatusCreated,
 		"用户创建成功",
 	)
 }
 
-// 2. 用例2：创建已存在的用户
+// 2. 用例2：创建已存在的用户（用管理员Token）
 func caseDuplicateUsername(t *testing.T) {
-	// 先创建基础用户
+	// 原有逻辑不变...
 	baseUsername := generateUniqueID("duplicateuser")
 	baseEmail := generateUniqueID("duplicate") + "@example.com"
 	baseReq := UserRequest{
@@ -261,7 +337,6 @@ func caseDuplicateUsername(t *testing.T) {
 	baseJSON, _ := json.Marshal(baseReq)
 	sendPostRequest(baseURL, adminToken, baseJSON)
 
-	// 重复创建
 	dupReq := UserRequest{
 		Email:     generateUniqueID("anotherduplicate") + "@example.com",
 		Password:  "ValidPass123!",
@@ -279,14 +354,15 @@ func caseDuplicateUsername(t *testing.T) {
 		"创建已存在的用户",
 		"用户名重复，应返回409",
 		dupReq,
-		adminToken,
+		adminToken, // 自动获取的管理员Token
 		http.StatusConflict,
 		"用户已经存在",
 	)
 }
 
-// 3. 用例3：缺少必填字段（metadata.name）
+// 3. 用例3：缺少必填字段（metadata.name）（用管理员Token）
 func caseMissingRequiredField(t *testing.T) {
+	// 原有逻辑不变...
 	req := UserRequest{
 		Email:     generateUniqueID("missingname") + "@example.com",
 		Password:  "ValidPass123!",
@@ -302,14 +378,15 @@ func caseMissingRequiredField(t *testing.T) {
 		"缺少必填字段（metadata.name）",
 		"用户名缺失，应返回422",
 		req,
-		adminToken,
+		adminToken, // 自动获取的管理员Token
 		http.StatusUnprocessableEntity,
 		"名称部分不能为空",
 	)
 }
 
-// 4. 用例4：用户名不合法（含@）
+// 4. 用例4：用户名不合法（含@）（用管理员Token）
 func caseInvalidUsername(t *testing.T) {
+	// 原有逻辑不变...
 	req := UserRequest{
 		Email:     generateUniqueID("invalidname") + "@example.com",
 		Password:  "ValidPass123!",
@@ -326,14 +403,15 @@ func caseInvalidUsername(t *testing.T) {
 		"用户名不合法（含@）",
 		"用户名含特殊字符，应返回422",
 		req,
-		adminToken,
+		adminToken, // 自动获取的管理员Token
 		http.StatusUnprocessableEntity,
 		"名称部分必须由字母、数字、'-'、'_'或'.'组成",
 	)
 }
 
-// 5. 用例5：密码不符合规则（弱密码123）
+// 5. 用例5：密码不符合规则（弱密码123）（用管理员Token）
 func caseWeakPassword(t *testing.T) {
+	// 原有逻辑不变...
 	req := UserRequest{
 		Email:     generateUniqueID("weakpass") + "@example.com",
 		Password:  "123",
@@ -350,14 +428,15 @@ func caseWeakPassword(t *testing.T) {
 		"密码不符合规则（弱密码123）",
 		"密码不满足规则，应返回422",
 		req,
-		adminToken,
+		adminToken, // 自动获取的管理员Token
 		http.StatusUnprocessableEntity,
 		"密码设定不符合规则",
 	)
 }
 
-// 6. 用例6：未提供Authorization头
+// 6. 用例6：未提供Authorization头（无需Token）
 func caseNoAuthHeader(t *testing.T) {
+	// 原有逻辑不变...
 	req := UserRequest{
 		Email:     generateUniqueID("noauth") + "@example.com",
 		Password:  "ValidPass123!",
@@ -374,14 +453,15 @@ func caseNoAuthHeader(t *testing.T) {
 		"未提供Authorization头",
 		"无认证令牌，应返回401",
 		req,
-		"",
+		"", // 无需Token
 		http.StatusUnauthorized,
 		"缺少 Authorization 头",
 	)
 }
 
-// 7. 用例7：使用无效token
+// 7. 用例7：使用无效token（用假Token）
 func caseInvalidToken(t *testing.T) {
+	// 原有逻辑不变...
 	req := UserRequest{
 		Email:     generateUniqueID("invalidtoken") + "@example.com",
 		Password:  "ValidPass123!",
@@ -398,14 +478,15 @@ func caseInvalidToken(t *testing.T) {
 		"使用无效token",
 		"令牌格式错误，应返回401",
 		req,
-		"invalid-token",
+		"invalid-token-123", // 假Token
 		http.StatusUnauthorized,
 		"token contains an invalid number of segments",
 	)
 }
 
-// 8. 用例8：权限不足（普通用户创建用户）
+// 8. 用例8：权限不足（普通用户创建用户）（用普通用户Token）
 func caseForbidden(t *testing.T) {
+	// 原有逻辑不变...
 	req := UserRequest{
 		Email:     generateUniqueID("forbidden") + "@example.com",
 		Password:  "ValidPass123!",
@@ -422,28 +503,26 @@ func caseForbidden(t *testing.T) {
 		"权限不足（普通用户创建用户）",
 		"普通用户无创建权限，应返回403",
 		req,
-		userToken,
+		userToken, // 自动获取的普通用户Token
 		http.StatusForbidden,
 		"权限不足",
 	)
 }
 
-// 9. 用例9：请求格式错误（非JSON）
+// 9. 用例9：请求格式错误（非JSON）（用管理员Token）
 func caseNonJSONBody(t *testing.T) {
+	// 原有逻辑不变...
 	testName := "请求格式错误（非JSON）"
 	description := "非JSON请求体，应返回400"
 	expectedHTTPStatus := http.StatusBadRequest
 	expectedMsg := "参数绑定失败"
 
 	total++
-	// 黄色加粗：用例标题
 	fmt.Printf("\n%s用例 %d: %s%s\n", ansiYellow, total, testName, ansiReset)
 	fmt.Println("----------------------------------------")
-	// 蓝色：描述信息
 	fmt.Printf("%s描述: %s%s\n", ansiBlue, description, ansiReset)
 	fmt.Printf("%s请求体内容: invalid-json-format%s\n", ansiBlue, ansiReset)
 
-	// 发送非JSON请求
 	resp, respBody, err := sendPostRequest(baseURL, adminToken, []byte("invalid-json-format"))
 	if err != nil {
 		fmt.Printf("%s❌ 发送请求失败: %v%s\n", ansiRed, err, ansiReset)
@@ -451,15 +530,12 @@ func caseNonJSONBody(t *testing.T) {
 		t.Fatalf("用例「%s」执行失败: %v", testName, err)
 	}
 
-	// 解析响应
 	respCode, respMsg, fullResp := parseResponse(respBody)
 	actualHTTPStatus := resp.StatusCode
 
-	// 打印响应信息
 	fmt.Printf("实际返回: code=%d message=%s\n", respCode, respMsg)
 	fmt.Printf("完整响应结果: %s\n", fullResp)
 
-	// 验证结果
 	casePassed := true
 	if actualHTTPStatus == expectedHTTPStatus {
 		fmt.Printf("%s✅ 状态码正确: %d%s\n", ansiGreen, actualHTTPStatus, ansiReset)
@@ -475,7 +551,6 @@ func caseNonJSONBody(t *testing.T) {
 		casePassed = false
 	}
 
-	// 统计结果
 	if casePassed {
 		fmt.Printf("%s----------------------------------------%s\n", ansiGreen, ansiReset)
 		fmt.Printf("%s✅ 用例执行通过 %s\n", ansiGreen, ansiReset)
@@ -488,8 +563,9 @@ func caseNonJSONBody(t *testing.T) {
 	}
 }
 
-// 10. 用例10：邮箱格式不正确（无@）
+// 10. 用例10：邮箱格式不正确（无@）（用管理员Token）
 func caseInvalidEmail(t *testing.T) {
+	// 原有逻辑不变...
 	req := UserRequest{
 		Email:     "notanemail" + generateUniqueID(""),
 		Password:  "ValidPass123!",
@@ -506,21 +582,37 @@ func caseInvalidEmail(t *testing.T) {
 		"邮箱格式不正确（无@）",
 		"邮箱不合法，应返回422",
 		req,
-		adminToken,
+		adminToken, // 自动获取的管理员Token
 		http.StatusUnprocessableEntity,
 		"Email must be a valid email address",
 	)
 }
 
-// ==================== 唯一测试入口（原生ANSI彩色提示） ====================
+// ==================== 唯一测试入口（新增Token自动初始化） ====================
 func TestCreateUser_AllCases(t *testing.T) {
-	// 验证令牌是否已替换
-	if adminToken == "REPLACE_WITH_YOUR_VALID_ADMIN_TOKEN" || userToken == "REPLACE_WITH_YOUR_VALID_USER_TOKEN" {
-		fmt.Printf("%s❌ 请先替换代码中的 adminToken 和 userToken 为有效令牌！%s\n", ansiRed, ansiReset)
-		t.Fatal("令牌未替换，测试终止")
+	// 第一步：自动获取Token（所有用例执行前必须完成）
+	var err error
+	// 1. 获取管理员Token
+	adminToken, err = getToken(adminUser, adminPass)
+	if err != nil {
+		fmt.Printf("%s❌ 获取管理员Token失败: %v%s\n", ansiRed, err, ansiReset)
+		t.Fatal("管理员Token获取失败，测试终止")
+	}
+	// 2. 获取普通用户Token
+	userToken, err = getToken(normalUser, normalPass)
+	if err != nil {
+		fmt.Printf("%s❌ 获取普通用户Token失败: %v%s\n", ansiRed, err, ansiReset)
+		t.Fatal("普通用户Token获取失败，测试终止")
 	}
 
-	// 彩色开始提示
+	// 第二步：验证Token有效性（双重保障）
+	if adminToken == "" || userToken == "" {
+		fmt.Printf("%s❌ 自动获取的Token为空，测试终止%s\n", ansiRed, ansiReset)
+		t.Fatal("Token为空，测试终止")
+	}
+	fmt.Printf("%s[INFO] 所有Token初始化完成，开始执行测试用例...%s\n", ansiGreen, ansiReset)
+
+	// 第三步：执行原有测试逻辑
 	fmt.Println("================================================================================")
 	fmt.Printf("%s开始执行创建用户接口测试用例%s\n", ansiBlue, ansiReset)
 	fmt.Println("================================================================================")
@@ -540,7 +632,7 @@ func TestCreateUser_AllCases(t *testing.T) {
 	t.Run("用例9_非JSON格式", func(t *testing.T) { caseNonJSONBody(t) })
 	t.Run("用例10_无效邮箱", func(t *testing.T) { caseInvalidEmail(t) })
 
-	// 彩色总结
+	// 测试总结
 	fmt.Println("\n================================================================================")
 	fmt.Printf("测试总结: 总用例数: %d, 通过: %d, 失败: %d\n", total, passed, failed)
 	fmt.Println("================================================================================")

@@ -20,6 +20,7 @@ func init() {
 	register(ErrPageNotFound, 404, "页面不存在")                                        // 404 Not Found：资源不存在
 	register(ErrMethodNotAllowed, 405, "方法不允许")                                    // 405 Not Found：方法不允许
 	register(ErrUnsupportedMediaType, 415, "不支持的Content-Type，仅支持application/json") // 415 Not Found：格式不支持
+	register(ErrContextCanceled, 408, "请求超时导致的上下文取消")                              // 415 Not Found：格式不支持
 
 	// 2. 通用数据库错误（1001xx）
 	register(ErrDatabase, 500, "数据库操作错误")        // 500：服务端数据库层错误

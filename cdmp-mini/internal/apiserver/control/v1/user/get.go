@@ -11,7 +11,7 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
+
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
@@ -20,9 +20,16 @@ func (u *UserController) Get(c *gin.Context) {
 	username := c.Param("name")
 	var r metav1.GetOptions
 	if err := c.ShouldBindQuery(&r); err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrBind, "传入的参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
+		core.WriteResponse(c, errors.WithCode(code.ErrBind, "传入的GetOptions参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
 		return
 	}
+	if r.Kind == "" {
+		r.Kind = "GetUserOption"
+	}
+	if r.APIVersion == "" {
+		r.APIVersion = u.options.MetaOptions.GetOptions.APIVersion
+	}
+	
 	logger := log.L(c).WithValues(
 		"controller", "UserController", // 标识当前控制器
 		"action", "Get", // 标识当前操作
@@ -35,8 +42,7 @@ func (u *UserController) Get(c *gin.Context) {
 		"user_agent", c.Request.UserAgent(),
 	)
 	logger.Debugf("开始处理用户查询请求(单资源)")
-
-	errs := u.businessValidateListOptions(&r)
+	errs := u.validateGetOptions(&r)
 	if len(errs) > 0 {
 		errDetails := make(map[string]string, len(errs))
 		for _, fieldErr := range errs {
@@ -67,4 +73,3 @@ func (u *UserController) Get(c *gin.Context) {
 	log.Info("用户查询成功")
 	core.WriteSuccessResponse(c, "查询用户详情成功", publicUser)
 }
-

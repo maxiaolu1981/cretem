@@ -284,7 +284,6 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/marmotedu/component-base/pkg/util/stringutil"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/stringutil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
@@ -662,6 +661,58 @@ func ValidateListOptionsBase(opts *v1.ListOptions) field.ErrorList {
 		}
 	}
 
+	if opts.APIVersion != "" {
+		labelPath := basePath.Child("APIVersion")
+		if !stringutil.StringIn(opts.APIVersion, []string{"v1", "v2"}) {
+			allErrors = append(allErrors, field.Invalid(labelPath, opts.APIVersion, "取值范围在:v1,v2范围内"))
+		}
+	}
+
+	return allErrors
+}
+
+func ValidateGetOptionsBase(opts *v1.GetOptions) field.ErrorList {
+	if opts == nil {
+		return field.ErrorList{field.Required(field.NewPath("GetOptions"), "GetOptions 不能为空")}
+	}
+	var allErrors field.ErrorList
+	basePath := field.NewPath("GetOptions")
+	if opts.APIVersion != "" {
+		labelPath := basePath.Child("APIVersion")
+		if !stringutil.StringIn(opts.APIVersion, []string{"v1", "v2"}) {
+			allErrors = append(allErrors, field.Invalid(labelPath, opts.APIVersion, "取值范围在:v1,v2范围内"))
+		}
+	}
+	return allErrors
+}
+
+func ValidateCreateOptionsBase(opts *v1.CreateOptions) field.ErrorList {
+	if opts == nil {
+		return field.ErrorList{field.Required(field.NewPath("CreateOptions"), "CreateOptions 不能为空")}
+	}
+	var allErrors field.ErrorList
+	basePath := field.NewPath("CreateOptions")
+	if opts.APIVersion != "" {
+		labelPath := basePath.Child("APIVersion")
+		if !stringutil.StringIn(opts.APIVersion, []string{"v1", "v2"}) {
+			allErrors = append(allErrors, field.Invalid(labelPath, opts.APIVersion, "取值范围在:v1,v2范围内"))
+		}
+	}
+	return allErrors
+}
+
+func ValidateDeleteOptionsBase(opts *v1.DeleteOptions) field.ErrorList {
+	if opts == nil {
+		return field.ErrorList{field.Required(field.NewPath("DeleteOptions"), "DeleteOptions 不能为空")}
+	}
+	var allErrors field.ErrorList
+	basePath := field.NewPath("DeleteOptions")
+	if opts.APIVersion != "" {
+		labelPath := basePath.Child("APIVersion")
+		if !stringutil.StringIn(opts.APIVersion, []string{"v1", "v2"}) {
+			allErrors = append(allErrors, field.Invalid(labelPath, opts.APIVersion, "取值范围在:v1,v2范围内"))
+		}
+	}
 	return allErrors
 }
 
@@ -752,27 +803,4 @@ func parseLabelCondition(cond string) (key, value string) {
 	default:
 		return "", "" // 不应出现，已被正则校验拦截
 	}
-}
-
-func ValidateGetOptionsBase(opts *v1.GetOptions) field.ErrorList {
-	if opts == nil {
-		return field.ErrorList{field.Required(field.NewPath("ListOptions"), "ListOptions 不能为空")}
-	}
-
-	var allErrors field.ErrorList
-	basePath := field.NewPath("GetOptions")
-
-	// 1. 校验 LabelSelector
-	if opts.APIVersion != "" {
-		labelPath := basePath.Child("APIVersion")
-		if stringutil.StringIn()
-
-		}
-	}
-		
-		// for _, err := range errors {
-		// 	allErrors = append(allErrors, field.Invalid(labelPath, opts.LabelSelector, err))
-		// }
-	
-	return allErrors
 }

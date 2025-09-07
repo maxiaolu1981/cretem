@@ -13,7 +13,7 @@ import (
 )
 
 type UserController struct {
-	srv     service.Service
+	srv     service.ServiceManager
 	options *options.Options
 }
 
@@ -36,4 +36,8 @@ func (u *UserController) validateListOptions(opts *v1.ListOptions) field.ErrorLi
 
 func (u *UserController) validateGetOptions(opts *metav1.GetOptions) field.ErrorList {
 	return validation.ValidateGetOptionsBase(opts)
+}
+
+func (u *UserController) validateCreateOptions(opts *metav1.CreateOptions) field.ErrorList {
+	return validation.ValidateCreateOptionsBase(opts)
 }
