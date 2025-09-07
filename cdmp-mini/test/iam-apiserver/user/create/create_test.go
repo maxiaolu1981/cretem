@@ -21,7 +21,7 @@ var (
 	// 测试账号（根据实际测试环境配置，建议从配置文件读取，此处暂用固定值）
 	adminUser  = "admin"           // 管理员用户名
 	adminPass  = "Admin@2021"      // 管理员密码（需替换为实际密码）
-	normalUser = "gettest-user104" // 普通用户用户名
+	normalUser = "gettest-user105" // 普通用户用户名
 	normalPass = "TestPass123!"    // 普通用户密码（需替换为实际密码）
 
 	// 动态生成的Token（替代原硬编码，测试前自动赋值）

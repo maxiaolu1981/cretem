@@ -49,7 +49,7 @@ const (
 	API_VERSION = "v1"
 
 	// 测试数据
-	VALID_USER    = "gettest-user104"
+	VALID_USER    = "gettest-user110"
 	ADMIN_USER    = "admin"
 	INVALID_USER  = "non-existent-user-999"
 	INVALID_ROUTE = "invalid-route-123"
@@ -85,34 +85,32 @@ func generateToken(tokenType string) (string, error) {
 	now := time.Now()
 	var expireTime time.Time
 
-	// 1. 先处理过期Token的时间（无论角色，过期时间都设为过去）
 	if tokenType == "expired" {
-		expireTime = now.Add(-1 * time.Hour) // 过期1小时（确保已过期）
+		expireTime = now.Add(-1 * time.Hour)
 	} else {
-		expireTime = now.Add(TOKEN_EXPIRE) // 正常有效期
+		expireTime = now.Add(TOKEN_EXPIRE)
 	}
 
-	// 2. 设置不同角色的Claims（过期Token也需要正确的角色信息，只是时间过期）
 	var identity, sub string
 	switch tokenType {
-	case "admin", "expired": // 过期Token可以复用管理员的身份信息（只是时间过期）
+	case "admin", "expired":
 		identity = "admin"
 		sub = ADMIN_USER
 	case "normal":
-		identity = "gettest-user104"
-		sub = VALID_USER
+		// 修复：identity 改用 VALID_USER 常量，不再硬编码
+		identity = VALID_USER // 关键修改！同步为 gettest-user110
+		sub = VALID_USER      // 保持与 identity 一致
 	default:
 		return "", fmt.Errorf("无效的token类型：%s", tokenType)
 	}
 
-	// 3. 生成Claims并签名
 	claims := JwtClaims{
 		Identity: identity,
 		Sub:      sub,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(expireTime),
 			IssuedAt:  jwt.NewNumericDate(now),
-			Issuer:    "iam-apiserver", // 与服务器一致
+			Issuer:    "iam-apiserver", // 确保与服务器一致
 		},
 	}
 

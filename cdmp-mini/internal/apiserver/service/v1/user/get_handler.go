@@ -18,8 +18,8 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 	logger.Debugf("服务层:开始执行用户查询逻辑")
 
 	user, err := u.Store.Users().Get(ctx, username, opts)
+	log.Warnf("err:%+v", err)
 	if err != nil {
-
 		coder := errors.ParseCoderByErr(err)
 		log.Debugf("service:返回的业务码%v", coder.Code())
 

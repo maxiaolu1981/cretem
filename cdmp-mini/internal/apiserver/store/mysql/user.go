@@ -199,7 +199,7 @@ func (u *users) Get(ctx context.Context, username string, opts metav1.GetOptions
 	})
 
 	costMs := time.Since(startTime)
-
+	//log.Warnf("stroe:err:%+v", err)
 	if err != nil {
 		return nil, u.handleGetError(err, username, logger, costMs)
 	}
@@ -300,9 +300,6 @@ func (u *users) handleGetError(err error, username string, logger log.Logger, co
 			log.String("username", username),
 			log.String("error", err.Error()),
 		)
-
-		coder := errors.ParseCoderByErr(err)
-		log.Debugf("store:返回的业务码%v", coder.Code())
 
 		return errors.WithCode(code.ErrUserNotFound, "用户[%s]不存在", username)
 
