@@ -3,10 +3,10 @@
 
 # 配置
 IAM_API_URL="http://127.0.0.1:8080"
- #ADMIN_USER="admin"
- #ADMIN_PASSWORD="Admin@2021"
-ADMIN_USER="gettest-user104"
-ADMIN_PASSWORD="TestPass123!"
+ ADMIN_USER="admin"
+ ADMIN_PASSWORD="Admin@2021"
+#ADMIN_USER="gettest-user104"
+#ADMIN_PASSWORD="TestPass123!"
 
 
 # 颜色输出

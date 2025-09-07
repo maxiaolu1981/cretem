@@ -79,7 +79,7 @@ func (o *Options) Validate() []error {
 	errs = append(errs, o.Log.Validate()...)
 	errs = append(errs, o.RedisOptions.Validate()...)
 	errs = append(errs, o.DistributedLock.Validate()...)
-	errs = append(errs, o.MysqlOptions.Validate()...)
+	errs = append(errs, o.MetaOptions.Validate()...)
 	return errs
 }
 
@@ -91,6 +91,6 @@ func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.Log.AddFlags(fss.FlagSet("log"))
 	o.RedisOptions.AddFlags(fss.FlagSet("redis"))
 	o.DistributedLock.AddFlags(fss.FlagSet("distributedLock"))
-	o.MetaOptions.AddFlags(fss.FlagSet("metaoptions"))
+	o.MetaOptions.AddFlags(fss.FlagSet("meta"))
 	return fss
 }

@@ -258,10 +258,6 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 			// 	"data":    nil,
 			// })
 			err := errors.WithCode(bizCode, message) // 关键修改：移除 "%s" 格式化
-			// 新增日志：确认错误的 HTTP 状态码
-			if errors.IsWithCode(err) {
-				log.Errorf("错误对应的 HTTP 状态码: %d", errors.GetHTTPStatus(err))
-			}
 
 			core.WriteResponse(c, err, nil)
 			c.Abort()
@@ -478,7 +474,7 @@ func loginResponse() func(c *gin.Context, code int, token string, expire time.Ti
 
 func refreshResponse() func(c *gin.Context, code int, token string, expire time.Time) {
 	return func(c *gin.Context, code int, token string, expire time.Time) {
-		
+
 		core.WriteResponse(c, nil, map[string]string{
 			"access_token": token,
 			"expire_in":    expire.Format(time.RFC3339),

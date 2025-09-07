@@ -15,7 +15,7 @@ const (
 	// ErrUnknown - 500: 内部服务器错误
 	ErrUnknown // 100002
 
-	// ErrBind - 400: 请求体绑定结构体失败
+	// ErrBind - 400: 100003请求体绑定结构体失败
 	ErrBind // 100003
 
 	// ErrValidation - 422: 数据验证失败

@@ -284,7 +284,9 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/marmotedu/component-base/pkg/util/stringutil"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/stringutil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
 )
 
@@ -587,9 +589,15 @@ func IsValidPassword(password string) error {
 	return nil
 }
 
+var (
+	GlobalMaxTimeout     int64 = 60
+	GlobalMaxOffset      int64 = 100
+	GlobalMaxLimit       int64 = 10000
+	GlobalMaxSelectorLen int   = 1024
+)
 
 // ValidateListOptionsBase 验证 ListOptions 基础参数（函数选项模式）
-func ValidateListOptionsBase(opts *v1.ListOptions, options ...ValidationOption) field.ErrorList {
+func ValidateListOptionsBase(opts *v1.ListOptions) field.ErrorList {
 	if opts == nil {
 		return field.ErrorList{field.Required(field.NewPath("ListOptions"), "ListOptions 不能为空")}
 	}
@@ -597,23 +605,10 @@ func ValidateListOptionsBase(opts *v1.ListOptions, options ...ValidationOption) 
 	var allErrors field.ErrorList
 	basePath := field.NewPath("ListOptions")
 
-	// 默认配置
-	config := validationConfig{
-		maxTimeout:     60,    // 默认60秒
-		maxOffset:      10000, // 默认10000
-		maxLimit:       100,   // 默认100条
-		maxSelectorLen: 1024,  // 默认1024字符
-	}
-
-	// 应用选项函数
-	for _, option := range options {
-		option(&config)
-	}
-
 	// 1. 校验 LabelSelector
 	if opts.LabelSelector != "" {
 		labelPath := basePath.Child("LabelSelector")
-		errors := validateLabelSelector(opts.LabelSelector, config.maxSelectorLen)
+		errors := validateLabelSelector(opts.LabelSelector, GlobalMaxSelectorLen)
 		for _, err := range errors {
 			allErrors = append(allErrors, field.Invalid(labelPath, opts.LabelSelector, err))
 		}
@@ -622,7 +617,7 @@ func ValidateListOptionsBase(opts *v1.ListOptions, options ...ValidationOption) 
 	// 2. 校验 FieldSelector
 	if opts.FieldSelector != "" {
 		fieldPath := basePath.Child("FieldSelector")
-		errors := validateFieldSelector(opts.FieldSelector, config.maxSelectorLen)
+		errors := validateFieldSelector(opts.FieldSelector, GlobalMaxSelectorLen)
 		for _, err := range errors {
 			allErrors = append(allErrors, field.Invalid(fieldPath, opts.FieldSelector, err))
 		}
@@ -632,11 +627,11 @@ func ValidateListOptionsBase(opts *v1.ListOptions, options ...ValidationOption) 
 	if opts.TimeoutSeconds != nil {
 		timeoutPath := basePath.Child("TimeoutSeconds")
 		timeout := *opts.TimeoutSeconds
-		if timeout < 0 || timeout > config.maxTimeout {
+		if timeout < 0 || timeout > GlobalMaxTimeout {
 			allErrors = append(allErrors, field.Invalid(
 				timeoutPath,
 				timeout,
-				InclusiveRangeError(0, int(config.maxTimeout)),
+				InclusiveRangeError(0, int(GlobalMaxTimeout)),
 			))
 		}
 	}
@@ -645,11 +640,11 @@ func ValidateListOptionsBase(opts *v1.ListOptions, options ...ValidationOption) 
 	if opts.Offset != nil {
 		offsetPath := basePath.Child("Offset")
 		offset := *opts.Offset
-		if offset < 0 || offset > config.maxOffset {
+		if offset < 0 || offset > GlobalMaxOffset {
 			allErrors = append(allErrors, field.Invalid(
 				offsetPath,
 				offset,
-				InclusiveRangeError(0, int(config.maxOffset)),
+				InclusiveRangeError(0, int(GlobalMaxOffset)),
 			))
 		}
 	}
@@ -658,11 +653,11 @@ func ValidateListOptionsBase(opts *v1.ListOptions, options ...ValidationOption) 
 	if opts.Limit != nil {
 		limitPath := basePath.Child("Limit")
 		limit := *opts.Limit
-		if limit < 0 || limit > config.maxLimit {
+		if limit < 0 || limit > GlobalMaxLimit {
 			allErrors = append(allErrors, field.Invalid(
 				limitPath,
 				limit,
-				InclusiveRangeError(0, int(config.maxLimit)),
+				InclusiveRangeError(0, int(GlobalMaxLimit)),
 			))
 		}
 	}
@@ -759,45 +754,25 @@ func parseLabelCondition(cond string) (key, value string) {
 	}
 }
 
-// ValidationOption 验证选项函数类型
-type ValidationOption func(*validationConfig)
-
-type validationConfig struct {
-	maxTimeout     int64
-	maxOffset      int64
-	maxLimit       int64
-	maxSelectorLen int
-}
-
-// WithMaxTimeout 设置最大超时时间
-func WithMaxTimeout(timeout int64) ValidationOption {
-	return func(c *validationConfig) {
-		c.maxTimeout = timeout
+func ValidateGetOptionsBase(opts *v1.GetOptions) field.ErrorList {
+	if opts == nil {
+		return field.ErrorList{field.Required(field.NewPath("ListOptions"), "ListOptions 不能为空")}
 	}
-}
 
-// WithMaxOffset 设置最大偏移量
-func WithMaxOffset(offset int64) ValidationOption {
-	return func(c *validationConfig) {
-		c.maxOffset = offset
+	var allErrors field.ErrorList
+	basePath := field.NewPath("GetOptions")
+
+	// 1. 校验 LabelSelector
+	if opts.APIVersion != "" {
+		labelPath := basePath.Child("APIVersion")
+		if stringutil.StringIn()
+
+		}
 	}
-}
-
-// WithMaxLimit 设置最大每页条数
-func WithMaxLimit(limit int64) ValidationOption {
-	return func(c *validationConfig) {
-		c.maxLimit = limit
-	}
-}
-
-// WithMaxSelectorLen 设置筛选器最大长度
-func WithMaxSelectorLen(length int) ValidationOption {
-	return func(c *validationConfig) {
-		c.maxSelectorLen = length
-	}
-}
-
-// ValidateListOptionsBaseWithDefault 使用默认配置验证
-func ValidateListOptionsBaseWithDefault(opts *v1.ListOptions) field.ErrorList {
-	return ValidateListOptionsBase(opts) // 使用所有默认值
+		
+		// for _, err := range errors {
+		// 	allErrors = append(allErrors, field.Invalid(labelPath, opts.LabelSelector, err))
+		// }
+	
+	return allErrors
 }
