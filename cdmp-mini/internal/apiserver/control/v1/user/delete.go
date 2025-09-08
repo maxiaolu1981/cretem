@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -42,7 +42,7 @@ func (u *UserController) Delete(ctx *gin.Context) {
 	}
 	logger = logger.WithValues("delete_username", deleteUsername)
 	logger.Info("开始处理用户删除")
-	_, err := store.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{})
+	_, err := interfaces.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{})
 	if err != nil {
 		// 关键：匹配 Get 方法返回的 "用户不存在" 错误码 code.ErrUserNotFound
 		if errors.IsCode(err, code.ErrUserNotFound) {
@@ -134,7 +134,7 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	logger = logger.WithValues("delete_username", deleteUsername)
 
 	// 5. 业务校验：查询用户是否存在（资源不存在/服务端错误场景）
-	_, rawGetErr := store.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{})
+	_, rawGetErr := interfaces.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{})
 	if rawGetErr != nil {
 		// 子场景1：用户不存在（业务码→HTTP 404）
 		if errors.IsCode(rawGetErr, code.ErrUserNotFound) {

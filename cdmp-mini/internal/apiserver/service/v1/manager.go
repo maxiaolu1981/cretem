@@ -2,16 +2,17 @@ package v1
 
 import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 
 	policy "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/policy"
 	secret "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/secret"
 	user "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/user"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 )
 
 type ServiceSrv struct {
-	Store   store.Factory
+	Store   interfaces.Factory
 	Redis   *storage.RedisCluster
 	Options *options.Options
 }
@@ -57,7 +58,7 @@ func NewPolicies(s *ServiceSrv) *policy.PolicService {
 	}
 }
 
-func NewService(store store.Factory, redis *storage.RedisCluster, options *options.Options) ServiceManager {
+func NewService(store interfaces.Factory, redis *storage.RedisCluster, options *options.Options) ServiceManager {
 	return &ServiceSrv{
 		Store:   store,
 		Redis:   redis,

@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -12,13 +12,13 @@ import (
 )
 
 type UserService struct {
-	Store   store.Factory
+	Store   interfaces.Factory
 	Redis   *storage.RedisCluster
 	Options *options.Options
 }
 
 // NewUserService 创建用户服务实例
-func NewUserService(store store.Factory, redis *storage.RedisCluster, opts *options.Options) *UserService {
+func NewUserService(store interfaces.Factory, redis *storage.RedisCluster, opts *options.Options) *UserService {
 	return &UserService{
 		Store:   store,
 		Redis:   redis,

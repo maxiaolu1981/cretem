@@ -46,7 +46,7 @@ import (
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
 
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/core"
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
@@ -82,7 +82,7 @@ type loginInfo struct {
 func newBasicAuth() middleware.AuthStrategy {
 	return auth.NewBasicStrategy(func(username string, password string) bool {
 		// fetch user from database
-		user, err := store.Client().Users().Get(context.TODO(), username, metav1.GetOptions{})
+		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{})
 		if err != nil {
 			return false
 		}
@@ -93,7 +93,7 @@ func newBasicAuth() middleware.AuthStrategy {
 		}
 
 		user.LoginedAt = time.Now()
-		_ = store.Client().Users().Update(context.TODO(), user, metav1.UpdateOptions{})
+		_ = interfaces.Client().Users().Update(context.TODO(), user, metav1.UpdateOptions{})
 
 		return true
 	})
@@ -314,7 +314,7 @@ func authoricator() func(c *gin.Context) (interface{}, error) {
 		}
 
 		// 2. 查询用户信息：透传 store 层错误（store 已按场景返回对应码）
-		user, err := store.Client().Users().Get(c, login.Username, metav1.GetOptions{})
+		user, err := interfaces.Client().Users().Get(c, login.Username, metav1.GetOptions{})
 		if err != nil {
 			log.Errorf("get user information failed: username=%s, error=%v", login.Username, err)
 			// 关键：直接透传 store 错误（store 层已返回 ErrUserNotFound/ErrDatabaseTimeout/ErrDatabase）
@@ -334,7 +334,7 @@ func authoricator() func(c *gin.Context) (interface{}, error) {
 
 		// 4. 更新登录时间：忽略非关键错误（仅日志记录，不阻断认证）
 		user.LoginedAt = time.Now()
-		if updateErr := store.Client().Users().Update(c, user, metav1.UpdateOptions{}); updateErr != nil {
+		if updateErr := interfaces.Client().Users().Update(c, user, metav1.UpdateOptions{}); updateErr != nil {
 			log.Warnf("update user logined time failed: username=%s, error=%v", login.Username, updateErr)
 		}
 

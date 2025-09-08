@@ -8,7 +8,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -148,7 +149,7 @@ func isAdmin(c *gin.Context) error {
 	}
 
 	// 查询用户信息
-	user, err := store.Client().Users().Get(c, username, metav1.GetOptions{})
+	user, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -185,7 +186,7 @@ func isSuperAdmin(c *gin.Context) bool {
 		return true
 	}
 	// 实际场景可从数据库查询 is_super 字段
-	_, err := store.Client().Users().Get(c, username, metav1.GetOptions{})
+	_, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{})
 	if err != nil {
 		return false
 	}

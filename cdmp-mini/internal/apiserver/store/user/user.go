@@ -1,7 +1,7 @@
 package user
 
 import (
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"gorm.io/gorm"
 )
 
@@ -14,10 +14,10 @@ import (
 
 type Users struct {
 	db          *gorm.DB
-	policyStore store.PolicyStore
+	policyStore interfaces.PolicyStore
 }
 
-func NewUsers(db *gorm.DB, policyStore store.PolicyStore) *Users {
+func NewUsers(db *gorm.DB, policyStore interfaces.PolicyStore) *Users {
 	return &Users{
 		db:          db,
 		policyStore: policyStore,

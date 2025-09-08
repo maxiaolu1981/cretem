@@ -86,7 +86,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/control/v1/user"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/mysql"
+
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
@@ -195,7 +196,7 @@ func (g *GenericAPIServer) installApiRoutes() error {
 		)
 
 	})
-	storeIns, _ := mysql.GetMySQLFactoryOr(nil)
+	storeIns, _ := store.GetMySQLFactoryOr(nil)
 	v1 := g.Group("/v1")
 	{
 		userv1 := v1.Group("/users")

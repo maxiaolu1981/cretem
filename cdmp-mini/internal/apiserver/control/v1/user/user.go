@@ -3,7 +3,7 @@ package user
 import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	service "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -17,10 +17,8 @@ type UserController struct {
 	options *options.Options
 }
 
-
-
 // NewUserController creates a user handler.
-func NewUserController(store store.Factory, redis *storage.RedisCluster, options *options.Options) *UserController {
+func NewUserController(store interfaces.Factory, redis *storage.RedisCluster, options *options.Options) *UserController {
 
 	return &UserController{
 		srv:     service.NewService(store, redis, options),
