@@ -6,8 +6,6 @@
 
 package code
 
-import "github.com/maxiaolu1981/cretem/nexuscore/errors"
-
 // init register error codes defines in this source code to `github.com/marmotedu/errors`
 // 错误码注册：绑定错误码、HTTP状态码、汉化消息
 // init 函数：按 HTTP 通用规则注册所有错误码
@@ -74,5 +72,4 @@ func init() {
 
 	// 列出所有错误码（验证注册结果）
 
-	errors.ListAllCodes()
 }

@@ -67,7 +67,7 @@ func register(code int, httpStatus int, message string, refs ...string) {
 	switch httpStatus {
 	case 404:
 		if !strings.Contains(message, "不存在") && !strings.Contains(message, "未找到") {
-			fmt.Printf("[WARN] HTTP 404 建议用于「资源不存在」场景，当前描述：%s\n", message)
+	//		fmt.Printf("[WARN] HTTP 404 建议用于「资源不存在」场景，当前描述：%s\n", message)
 		}
 	case 409:
 		if !strings.Contains(message, "冲突") && !strings.Contains(message, "已存在") {

@@ -120,12 +120,12 @@ export APP_LOG_LEVEL=debug
 package app
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	// 用于生成格式化表格
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/homedir"
 
 	// 获取用户主目录
@@ -164,7 +164,7 @@ func addConfigFlag(basename string, fs *pflag.FlagSet) {
 			viper.SetConfigName(basename)
 		}
 		if err := viper.ReadInConfig(); err != nil {
-			fmt.Printf("读取配置文件错误(%s):%v", cfgFile, err)
+			log.Errorf("读取配置文件错误(%s):%v", cfgFile, err)
 			os.Exit(1)
 		}
 	})

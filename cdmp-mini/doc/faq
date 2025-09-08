@@ -5,3 +5,14 @@
 2. get 通过
 3. login通过
 4.logout 通过
+
+internal/
+└── apiserver/
+    └── store/
+        ├── store.go                  # 接口定义
+        └── mysql/
+            ├── datastore.go          # 外层包：工厂实现
+            └── user/
+                └── user.go           # 内层包：user 实现（包含 NewUsers 函数）
+            └── policy/
+                └── policy.go         # 内层包：policy 实现

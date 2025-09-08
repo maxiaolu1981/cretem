@@ -22,7 +22,16 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
 
+	policysrv "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/mysql/policy"
+
+	usersrv "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/mysql/user"
+
+	secretsrv "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/mysql/secret"
+
+	policyauditsrv "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/mysql/policy_audit"
+
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
 )
@@ -32,24 +41,41 @@ var (
 	once         sync.Once
 )
 
-type datastore struct {
+type Datastore struct {
 	DB *gorm.DB
 }
 
-func (ds *datastore) Users() store.UserStore {
+// 新增：创建函数
+func newUsers(ds *Datastore) store.UserStore {
+	policyStore := newPolices(ds)
+	return usersrv.NewUsers(ds.DB, policyStore)
+}
+
+func newPolices(ds *Datastore) store.PolicyStore {
+	return &policysrv.Policy{Db: ds.DB}
+}
+
+func newSecrets(ds *Datastore) store.SecretStore {
+	return &secretsrv.Secret{Db: ds.DB}
+}
+func newPolicyAudit(ds *Datastore) store.PolicyAuditStore {
+	return &policyauditsrv.Policy_audit{Db: ds.DB}
+}
+
+func (ds *Datastore) Users() store.UserStore {
 	return newUsers(ds)
 }
 
-func (ds *datastore) Secrets() store.SecretStore {
+func (ds *Datastore) Secrets() store.SecretStore {
 	return newSecrets(ds)
 }
 
-func (ds *datastore) Polices() store.PolicyStore {
+func (ds *Datastore) Polices() store.PolicyStore {
 	return newPolices(ds)
 }
 
-func (ds *datastore) PolicyAudits() store.PolicyAuditStore {
-	return newPolicyAudits(ds)
+func (ds *Datastore) PolicyAudits() store.PolicyAuditStore {
+	return newPolicyAudit(ds)
 }
 
 func GetMySQLFactoryOr(opts *options.MySQLOptions) (store.Factory, error) {
@@ -73,7 +99,7 @@ func GetMySQLFactoryOr(opts *options.MySQLOptions) (store.Factory, error) {
 		}
 		dbIns, err = db.New(options)
 
-		mysqlFactory = &datastore{dbIns}
+		mysqlFactory = &Datastore{dbIns}
 	})
 	if mysqlFactory == nil || err != nil {
 		return nil, fmt.Errorf("failed to get mysql store fatory, mysqlFactory: %+v, error: %w", mysqlFactory, err)
@@ -81,7 +107,7 @@ func GetMySQLFactoryOr(opts *options.MySQLOptions) (store.Factory, error) {
 	return mysqlFactory, nil
 }
 
-func (ds *datastore) Close() error {
+func (ds *Datastore) Close() error {
 	db, err := ds.DB.DB()
 	if err != nil {
 		return errors.Wrap(err, "get gorm db instance failed")

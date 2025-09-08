@@ -49,7 +49,7 @@ const (
 	API_VERSION = "v1"
 
 	// 测试数据
-	VALID_USER    = "gettest-user110"
+	VALID_USER    = "gettest-user1100"
 	ADMIN_USER    = "admin"
 	INVALID_USER  = "non-existent-user-999"
 	INVALID_ROUTE = "invalid-route-123"

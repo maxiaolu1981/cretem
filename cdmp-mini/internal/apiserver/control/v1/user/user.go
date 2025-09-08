@@ -17,6 +17,8 @@ type UserController struct {
 	options *options.Options
 }
 
+
+
 // NewUserController creates a user handler.
 func NewUserController(store store.Factory, redis *storage.RedisCluster, options *options.Options) *UserController {
 

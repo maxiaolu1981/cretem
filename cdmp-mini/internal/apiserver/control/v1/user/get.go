@@ -29,7 +29,7 @@ func (u *UserController) Get(c *gin.Context) {
 	if r.APIVersion == "" {
 		r.APIVersion = u.options.MetaOptions.GetOptions.APIVersion
 	}
-	
+
 	logger := log.L(c).WithValues(
 		"controller", "UserController", // 标识当前控制器
 		"action", "Get", // 标识当前操作
@@ -62,7 +62,7 @@ func (u *UserController) Get(c *gin.Context) {
 	}
 	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{})
 	if err != nil {
-		log.Errorw("查询用户失败", "username:", username, "error:", err.Error())
+		log.Debugw("查询用户失败", "username:", username, "error:", err.Error())
 
 		coder := errors.ParseCoderByErr(err)
 		log.Debugf("cotrol:返回的业务码%v", coder.Code())

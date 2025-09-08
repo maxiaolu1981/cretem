@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"errors"
+
 	"fmt"
 	"net"
 	"net/http"
@@ -16,6 +16,7 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -150,6 +151,16 @@ func (g *GenericAPIServer) Run() error {
 
 	// 添加最终的成功日志
 	log.Infof("✨ GenericAPIServer 服务已在 %s 成功启动并运行", address)
+	fmt.Printf("--------------%v------------", time.Now())
+	fmt.Printf("--------------%v------------", time.Now())
+	fmt.Printf("--------------%v------------", time.Now())
+	fmt.Printf("--------------%v------------", time.Now())
+	fmt.Printf("--------------%v------------", time.Now())
+	fmt.Printf("--------------%v------------", time.Now())
+	fmt.Printf("--------------%v------------", time.Now())
+	fmt.Printf("--------------%v------------", time.Now())
+	fmt.Printf("--------------%v------------", time.Now())
+	errors.ListAllCodes()
 
 	if err := eg.Wait(); err != nil {
 		return fmt.Errorf("服务器运行错误: %w", err)

@@ -34,7 +34,6 @@ NewJwtOptions()（从默认配置初始化）→ 接收用户修改（如命令�
 package options
 
 import (
-	"fmt"
 	"os"
 	"time"
 
@@ -98,8 +97,8 @@ func (j *JwtOptions) Validate() []error {
 	if j.MaxRefresh < 0 {
 		errs = append(errs, field.Invalid(path.Child("max-refresh"), j.MaxRefresh, "max-refresh必须大于0"))
 	}
-	fmt.Println("timeout", j.Timeout)
-	fmt.Println("maxrefresh", j.MaxRefresh)
+	//fmt.Println("timeout", j.Timeout)
+	//fmt.Println("maxrefresh", j.MaxRefresh)
 	if j.Timeout > 0 && j.MaxRefresh > 0 && j.Timeout >= j.MaxRefresh {
 		errs = append(errs, field.Invalid(path.Child("timeout"), j.Timeout, "timeout必须小于maxrefresh"))
 	}
