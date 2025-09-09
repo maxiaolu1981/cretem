@@ -352,7 +352,7 @@ func (r *RedisCluster) cleanKey(keyName string) string {
 	return strings.Replace(keyName, r.KeyPrefix, "", 1)
 }
 
-func (r *RedisCluster) up() error {
+func (r *RedisCluster) Up() error {
 	if !Connected() {
 		return ErrRedisIsDown
 	}
@@ -361,7 +361,7 @@ func (r *RedisCluster) up() error {
 
 // GetKey retrieves a key from the database
 func (r *RedisCluster) GetKey(ctx context.Context, keyName string) (string, error) {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return "", err
 	}
 
@@ -376,7 +376,7 @@ func (r *RedisCluster) GetKey(ctx context.Context, keyName string) (string, erro
 
 // GetMultiKey gets multiple keys from the database
 func (r *RedisCluster) GetMultiKey(ctx context.Context, keys []string) ([]string, error) {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return nil, err
 	}
 	cluster := r.singleton()
@@ -433,7 +433,7 @@ func (r *RedisCluster) GetMultiKey(ctx context.Context, keys []string) ([]string
 
 // GetKeyTTL returns TTL of the given key
 func (r *RedisCluster) GetKeyTTL(ctx context.Context, keyName string) (ttl int64, err error) {
-	if err = r.up(); err != nil {
+	if err = r.Up(); err != nil {
 		return 0, err
 	}
 	duration, err := r.singleton().TTL(ctx, r.fixKey(keyName)).Result()
@@ -442,7 +442,7 @@ func (r *RedisCluster) GetKeyTTL(ctx context.Context, keyName string) (ttl int64
 
 // GetRawKey returns the value of the given key (without prefix)
 func (r *RedisCluster) GetRawKey(ctx context.Context, keyName string) (string, error) {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return "", err
 	}
 	value, err := r.singleton().Get(ctx, keyName).Result()
@@ -456,7 +456,7 @@ func (r *RedisCluster) GetRawKey(ctx context.Context, keyName string) (string, e
 // GetExp returns the expiry of the given key
 func (r *RedisCluster) GetExp(ctx context.Context, keyName string) (int64, error) {
 	log.Debugf("Getting exp for key: %s", r.fixKey(keyName))
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return 0, err
 	}
 
@@ -470,7 +470,7 @@ func (r *RedisCluster) GetExp(ctx context.Context, keyName string) (int64, error
 
 // SetExp sets expiry of the given key
 func (r *RedisCluster) SetExp(ctx context.Context, keyName string, timeout time.Duration) error {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return err
 	}
 	err := r.singleton().Expire(ctx, r.fixKey(keyName), timeout).Err()
@@ -485,7 +485,7 @@ func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, time
 	log.Debugf("[STORE] SET Raw key is: %s", keyName)
 	log.Debugf("[STORE] Setting key: %s", r.fixKey(keyName))
 
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return err
 	}
 	err := r.singleton().Set(ctx, r.fixKey(keyName), session, timeout).Err()
@@ -498,7 +498,7 @@ func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, time
 
 // SetRawKey sets the value of the given key (without prefix)
 func (r *RedisCluster) SetRawKey(ctx context.Context, keyName, session string, timeout time.Duration) error {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return err
 	}
 	err := r.singleton().Set(ctx, keyName, session, timeout).Err()
@@ -513,7 +513,7 @@ func (r *RedisCluster) SetRawKey(ctx context.Context, keyName, session string, t
 func (r *RedisCluster) Decrement(ctx context.Context, keyName string) {
 	keyName = r.fixKey(keyName)
 	log.Debugf("Decrementing key: %s", keyName)
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return
 	}
 	err := r.singleton().Decr(ctx, keyName).Err()
@@ -525,7 +525,7 @@ func (r *RedisCluster) Decrement(ctx context.Context, keyName string) {
 // IncrememntWithExpire increments a key with expiration
 func (r *RedisCluster) IncrememntWithExpire(ctx context.Context, keyName string, expire int64) int64 {
 	log.Debugf("Incrementing raw key: %s", keyName)
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return 0
 	}
 	fixedKey := keyName
@@ -547,7 +547,7 @@ func (r *RedisCluster) IncrememntWithExpire(ctx context.Context, keyName string,
 
 // GetKeys returns all keys matching the filter
 func (r *RedisCluster) GetKeys(ctx context.Context, filter string) []string {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return nil
 	}
 	client := r.singleton()
@@ -650,7 +650,7 @@ func (r *RedisCluster) GetKeys(ctx context.Context, filter string) []string {
 
 // GetKeysAndValuesWithFilter returns all keys and values matching the filter
 func (r *RedisCluster) GetKeysAndValuesWithFilter(ctx context.Context, filter string) map[string]string {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return nil
 	}
 	keys := r.GetKeys(ctx, filter)
@@ -721,7 +721,7 @@ func (r *RedisCluster) GetKeysAndValues(ctx context.Context) map[string]string {
 
 // DeleteKey removes a key from the database
 func (r *RedisCluster) DeleteKey(ctx context.Context, keyName string) bool {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return false
 	}
 	log.Debugf("DEL Key was: %s", keyName)
@@ -735,7 +735,7 @@ func (r *RedisCluster) DeleteKey(ctx context.Context, keyName string) bool {
 
 // DeleteAllKeys removes all keys from the database
 func (r *RedisCluster) DeleteAllKeys(ctx context.Context) bool {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return false
 	}
 	n, err := r.singleton().FlushAll(ctx).Result()
@@ -747,7 +747,7 @@ func (r *RedisCluster) DeleteAllKeys(ctx context.Context) bool {
 
 // DeleteRawKey removes a key without prefix
 func (r *RedisCluster) DeleteRawKey(ctx context.Context, keyName string) bool {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return false
 	}
 	n, err := r.singleton().Del(ctx, keyName).Result()
@@ -759,7 +759,7 @@ func (r *RedisCluster) DeleteRawKey(ctx context.Context, keyName string) bool {
 
 // DeleteScanMatch removes keys matching pattern in bulk
 func (r *RedisCluster) DeleteScanMatch(ctx context.Context, pattern string) bool {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return false
 	}
 	client := r.singleton()
@@ -829,7 +829,7 @@ func (r *RedisCluster) DeleteScanMatch(ctx context.Context, pattern string) bool
 
 // DeleteKeys removes a group of keys in bulk
 func (r *RedisCluster) DeleteKeys(ctx context.Context, keys []string) bool {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return false
 	}
 	if len(keys) > 0 {
@@ -868,7 +868,7 @@ func (r *RedisCluster) DeleteKeys(ctx context.Context, keys []string) bool {
 
 // StartPubSubHandler listens for pubsub messages
 func (r *RedisCluster) StartPubSubHandler(ctx context.Context, channel string, callback func(interface{})) error {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return err
 	}
 	client := r.singleton()
@@ -896,7 +896,7 @@ func (r *RedisCluster) StartPubSubHandler(ctx context.Context, channel string, c
 
 // Publish sends a message to a channel
 func (r *RedisCluster) Publish(ctx context.Context, channel, message string) error {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return err
 	}
 	err := r.singleton().Publish(ctx, channel, message).Err()
@@ -910,7 +910,7 @@ func (r *RedisCluster) Publish(ctx context.Context, channel, message string) err
 // GetAndDeleteSet gets and deletes a set
 func (r *RedisCluster) GetAndDeleteSet(ctx context.Context, keyName string) []interface{} {
 	log.Debugf("Getting raw key set: %s", keyName)
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return nil
 	}
 	log.Debugf("keyName is: %s", keyName)
@@ -950,7 +950,7 @@ func (r *RedisCluster) AppendToSet(ctx context.Context, keyName, value string) {
 	fixedKey := r.fixKey(keyName)
 	log.Debug("Pushing to raw key list", log.String("keyName", keyName))
 	log.Debug("Appending to fixed key list", log.String("fixedKey", fixedKey))
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return
 	}
 	if err := r.singleton().RPush(ctx, fixedKey, value).Err(); err != nil {
@@ -1021,7 +1021,7 @@ func (r *RedisCluster) AppendToSetPipelined(ctx context.Context, key string, val
 	}
 
 	fixedKey := r.fixKey(key)
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		log.Debug(err.Error())
 		return
 	}
@@ -1048,7 +1048,7 @@ func (r *RedisCluster) AppendToSetPipelined(ctx context.Context, key string, val
 func (r *RedisCluster) GetSet(ctx context.Context, keyName string) (map[string]string, error) {
 	log.Debugf("Getting from key set: %s", keyName)
 	log.Debugf("Getting from fixed key set: %s", r.fixKey(keyName))
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return nil, err
 	}
 	val, err := r.singleton().SMembers(ctx, r.fixKey(keyName)).Result()
@@ -1065,35 +1065,39 @@ func (r *RedisCluster) GetSet(ctx context.Context, keyName string) (map[string]s
 }
 
 // AddToSet adds a value to a set
-func (r *RedisCluster) AddToSet(ctx context.Context, keyName, value string) {
+func (r *RedisCluster) AddToSet(ctx context.Context, keyName, value string) error {
 	log.Debugf("Pushing to raw key set: %s", keyName)
 	log.Debugf("Pushing to fixed key set: %s", r.fixKey(keyName))
-	if err := r.up(); err != nil {
-		return
+	if err := r.Up(); err != nil {
+		return err
 	}
 	err := r.singleton().SAdd(ctx, r.fixKey(keyName), value).Err()
 	if err != nil {
 		log.Errorf("Error trying to append keys: %s", err.Error())
+		return err
 	}
+	return nil
 }
 
 // RemoveFromSet removes a value from a set
-func (r *RedisCluster) RemoveFromSet(ctx context.Context, keyName, value string) {
+func (r *RedisCluster) RemoveFromSet(ctx context.Context, keyName, value string) error {
 	log.Debugf("Removing from raw key set: %s", keyName)
 	log.Debugf("Removing from fixed key set: %s", r.fixKey(keyName))
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		log.Debug(err.Error())
-		return
+		return err
 	}
 	err := r.singleton().SRem(ctx, r.fixKey(keyName), value).Err()
 	if err != nil {
 		log.Errorf("Error trying to remove keys: %s", err.Error())
+		return err
 	}
+	return nil
 }
 
 // IsMemberOfSet checks if a value is in a set
 func (r *RedisCluster) IsMemberOfSet(ctx context.Context, keyName, value string) bool {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		log.Debug(err.Error())
 		return false
 	}
@@ -1115,7 +1119,7 @@ func (r *RedisCluster) SetRollingWindow(
 	pipeline bool,
 ) (int, []interface{}) {
 	log.Debugf("Incrementing raw key: %s", keyName)
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		log.Debug(err.Error())
 		return 0, nil
 	}
@@ -1176,7 +1180,7 @@ func (r *RedisCluster) SetRollingWindow(
 
 // GetRollingWindow returns rolling window data
 func (r RedisCluster) GetRollingWindow(ctx context.Context, keyName string, per int64, pipeline bool) (int, []interface{}) {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		log.Debug(err.Error())
 		return 0, nil
 	}
@@ -1229,7 +1233,7 @@ func (r *RedisCluster) AddToSortedSet(ctx context.Context, keyName, value string
 
 	log.Debug("Pushing raw key to sorted set", log.String("keyName", keyName), log.String("fixedKey", fixedKey))
 
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		log.Debug(err.Error())
 		return
 	}
@@ -1312,7 +1316,7 @@ func (r *RedisCluster) RemoveSortedSetRange(ctx context.Context, keyName, scoreF
 
 // Eval executes a Lua script
 func (r *RedisCluster) Eval(ctx context.Context, script string, keys []string, args []interface{}) (interface{}, error) {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return nil, err
 	}
 
@@ -1329,7 +1333,7 @@ func (r *RedisCluster) Eval(ctx context.Context, script string, keys []string, a
 
 // EvalSha executes a pre-loaded Lua script by SHA1
 func (r *RedisCluster) EvalSha(ctx context.Context, sha1 string, keys []string, args []interface{}) (interface{}, error) {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return nil, err
 	}
 
@@ -1346,7 +1350,7 @@ func (r *RedisCluster) EvalSha(ctx context.Context, sha1 string, keys []string, 
 
 // ScriptLoad loads a Lua script to Redis server
 func (r *RedisCluster) ScriptLoad(ctx context.Context, script string) (string, error) {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return "", err
 	}
 
@@ -1363,7 +1367,7 @@ func (r *RedisCluster) ScriptLoad(ctx context.Context, script string) (string, e
 
 // SetNX sets a key only if it doesn't exist (atomic operation)
 func (r *RedisCluster) SetNX(ctx context.Context, keyName string, value interface{}, expiration time.Duration) (bool, error) {
-	if err := r.up(); err != nil {
+	if err := r.Up(); err != nil {
 		return false, err
 	}
 

@@ -17,3 +17,56 @@ internal/
                 └── user.go           # 内层包：user 实现（包含 NewUsers 函数）
             └── policy/
                 └── policy.go         # 内层包：policy 实现
+
+ blacklist-key-prefix: "jwt:blacklist:" # 黑名单在Redis中的键前缀 (可配置)
+
+ 案二：短期令牌 + Refresh Token 方案的具体配置
+
+ 存储选择：
+
+对于黑名单/会话存储：Redis 是绝对的首选，因为它性能极高且原生支持TTL（自动过期），完美符合此类场景。
+
+黑名单前缀：允许在多个微服务共用一个Redis集群时避免键名冲突。
+
+用户输入用户名和密码登录。
+
+认证服务器验证凭据是否正确。
+
+验证通过后，认证服务器：
+
+生成一个长期的Refresh Token，将其唯一标识（及其关联的用户ID、过期时间）保存到数据库或Redis中。
+
+生成一个短期的Access Token（通常是JWT），其中包含用户身份信息（如User ID）。
+
+将这两个令牌返回给客户端。
+
+客户端将Access Token保存在内存中（如JS变量），将Refresh Token极其安全地保存起来（最佳实践是使用 HttpOnly Cookie，防止XSS攻击读取）。
+
+客户端用旧的Access Token调用API。
+
+资源服务器验证后发现Token已过期，返回 401 Unauthorized 错误。
+
+客户端捕获到这个错误后，自动向认证服务器的专门端点（如 /auth/refresh）发起请求，请求中只携带Refresh Token（注意：不是Access Token）。
+
+认证服务器：
+
+收到Refresh Token。
+
+在数据库/Redis中查找该Token记录，检查其是否存在、是否过期、是否已被吊销。
+
+如果有效，认证服务器会：
+
+签发一个新的、短期有效的Access Token 返回给客户端。
+
+（可选，为了更安全）吊销旧的Refresh Token并颁发一个新的Refresh Token 返回给客户端（称为Refresh Token Rotation）。
+
+客户端收到新的Access Token后，自动重试刚才失败的API请求，成功获取数据。用户对此过程毫无察觉。
+用户点击“登出”按钮。
+
+客户端向认证服务器发送登出请求，该请求需要携带Refresh Token以供识别。
+
+认证服务器在数据库/Redis中删除或标记该Refresh Token记录为已吊销。
+
+认证服务器返回成功，客户端清除本地存储的Access Token和Refresh Token。
+
+效果：由于Refresh Token已被吊销，攻击者即使窃取了之前的Refresh Token也无法再获取新的Access Token。而旧的Access Token由于生命周期很短，也会在几分钟后自动失效。从而实现了“立即登出”的安全效果。

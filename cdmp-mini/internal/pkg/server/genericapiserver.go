@@ -426,7 +426,7 @@ func pingRedis(ctx context.Context, client redis.UniversalClient) error {
 
 		// 验证响应内容
 		if pingCmd.Val() != "PONG" {
-			resultChan <- fmt.Errorf("Redis PING响应异常: %s", pingCmd.Val())
+			resultChan <- fmt.Errorf("redis ping响应异常: %s", pingCmd.Val())
 			return
 		}
 

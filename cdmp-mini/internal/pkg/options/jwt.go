@@ -48,6 +48,7 @@ type JwtOptions struct {
 	Timeout    time.Duration `json:"timeout"     mapstructure:"timeout"`
 	MaxRefresh time.Duration `json:"max-refresh" mapstructure:"max-refresh"`
 	KeyHash    string        `json:"-" mapstructure:"-"` // 不序列化到配置文件
+	Blacklist_key_prefix string   `json:"blacklist_key_prefix" mapstructure:"blacklist_key_prefix"` 
 }
 
 /*

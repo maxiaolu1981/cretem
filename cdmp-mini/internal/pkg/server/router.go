@@ -155,7 +155,7 @@ func (g *GenericAPIServer) installSystemRoutes() error {
 }
 
 func (g *GenericAPIServer) installAuthRoutes() error {
-	jwtStrategy, err := newJWTAuth()
+	jwtStrategy, err := newJWTAuth(g)
 	if err != nil {
 		return err
 	}
@@ -173,7 +173,7 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 }
 
 func (g *GenericAPIServer) installApiRoutes() error {
-	auto, err := newAutoAuth()
+	auto, err := newAutoAuth(g)
 	if err != nil {
 		return err
 	}
