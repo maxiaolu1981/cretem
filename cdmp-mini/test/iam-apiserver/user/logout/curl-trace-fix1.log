@@ -1,0 +1,72 @@
+== Info:   Trying 127.0.0.1:8080...
+== Info: Connected to localhost (127.0.0.1) port 8080 (#0)
+=> Send header, 143 bytes (0x8f)
+0000: 44 45 4c 45 54 45 20 2f 6c 6f 67 6f 75 74 20 48 DELETE /logout H
+0010: 54 54 50 2f 31 2e 31 0d 0a 48 6f 73 74 3a 20 6c TTP/1.1..Host: l
+0020: 6f 63 61 6c 68 6f 73 74 3a 38 30 38 30 0d 0a 55 ocalhost:8080..U
+0030: 73 65 72 2d 41 67 65 6e 74 3a 20 63 75 72 6c 2f ser-Agent: curl/
+0040: 37 2e 38 31 2e 30 0d 0a 41 63 63 65 70 74 3a 20 7.81.0..Accept: 
+0050: 2a 2f 2a 0d 0a 43 6f 6e 74 65 6e 74 2d 54 79 70 */*..Content-Typ
+0060: 65 3a 20 61 70 70 6c 69 63 61 74 69 6f 6e 2f 6a e: application/j
+0070: 73 6f 6e 0d 0a 41 75 74 68 6f 72 69 7a 61 74 69 son..Authorizati
+0080: 6f 6e 3a 20 42 65 61 72 65 72 20 0d 0a 0d 0a    on: Bearer ....
+== Info: Mark bundle as not supporting multiuse
+<= Recv header, 27 bytes (0x1b)
+0000: 48 54 54 50 2f 31 2e 31 20 34 30 31 20 55 6e 61 HTTP/1.1 401 Una
+0010: 75 74 68 6f 72 69 7a 65 64 0d 0a                uthorized..
+<= Recv header, 32 bytes (0x20)
+0000: 41 63 63 65 73 73 2d 43 6f 6e 74 72 6f 6c 2d 41 Access-Control-A
+0010: 6c 6c 6f 77 2d 4f 72 69 67 69 6e 3a 20 2a 0d 0a llow-Origin: *..
+<= Recv header, 52 bytes (0x34)
+0000: 43 61 63 68 65 2d 43 6f 6e 74 72 6f 6c 3a 20 6e Cache-Control: n
+0010: 6f 2d 73 74 6f 72 65 2c 20 6e 6f 2d 63 61 63 68 o-store, no-cach
+0020: 65 2c 20 6d 75 73 74 2d 72 65 76 61 6c 69 64 61 e, must-revalida
+0030: 74 65 0d 0a                                     te..
+<= Recv header, 44 bytes (0x2c)
+0000: 43 6f 6e 74 65 6e 74 2d 53 65 63 75 72 69 74 79 Content-Security
+0010: 2d 50 6f 6c 69 63 79 3a 20 73 63 72 69 70 74 2d -Policy: script-
+0020: 73 72 63 20 27 73 65 6c 66 27 0d 0a             src 'self'..
+<= Recv header, 47 bytes (0x2f)
+0000: 43 6f 6e 74 65 6e 74 2d 54 79 70 65 3a 20 61 70 Content-Type: ap
+0010: 70 6c 69 63 61 74 69 6f 6e 2f 6a 73 6f 6e 3b 20 plication/json; 
+0020: 63 68 61 72 73 65 74 3d 75 74 66 2d 38 0d 0a    charset=utf-8..
+<= Recv header, 12 bytes (0xc)
+0000: 45 78 70 69 72 65 73 3a 20 30 0d 0a             Expires: 0..
+<= Recv header, 18 bytes (0x12)
+0000: 50 72 61 67 6d 61 3a 20 6e 6f 2d 63 61 63 68 65 Pragma: no-cache
+0010: 0d 0a                                           ..
+<= Recv header, 37 bytes (0x25)
+0000: 53 65 74 2d 43 6f 6f 6b 69 65 3a 20 6a 77 74 3d Set-Cookie: jwt=
+0010: 3b 20 50 61 74 68 3d 2f 3b 20 4d 61 78 2d 41 67 ; Path=/; Max-Ag
+0020: 65 3d 30 0d 0a                                  e=0..
+<= Recv header, 33 bytes (0x21)
+0000: 58 2d 43 6f 6e 74 65 6e 74 2d 54 79 70 65 2d 4f X-Content-Type-O
+0010: 70 74 69 6f 6e 73 3a 20 6e 6f 73 6e 69 66 66 0d ptions: nosniff.
+0020: 0a                                              .
+<= Recv header, 23 bytes (0x17)
+0000: 58 2d 46 72 61 6d 65 2d 4f 70 74 69 6f 6e 73 3a X-Frame-Options:
+0010: 20 44 45 4e 59 0d 0a                             DENY..
+<= Recv header, 52 bytes (0x34)
+0000: 58 2d 52 65 71 75 65 73 74 2d 49 64 3a 20 36 34 X-Request-Id: 64
+0010: 39 31 61 34 65 39 2d 63 64 65 37 2d 34 61 37 39 91a4e9-cde7-4a79
+0020: 2d 62 65 32 39 2d 64 63 61 31 37 65 31 36 66 30 -be29-dca17e16f0
+0030: 37 35 0d 0a                                     75..
+<= Recv header, 33 bytes (0x21)
+0000: 58 2d 58 73 73 2d 50 72 6f 74 65 63 74 69 6f 6e X-Xss-Protection
+0010: 3a 20 31 3b 20 6d 6f 64 65 3d 62 6c 6f 63 6b 0d : 1; mode=block.
+0020: 0a                                              .
+<= Recv header, 37 bytes (0x25)
+0000: 44 61 74 65 3a 20 4d 6f 6e 2c 20 30 38 20 53 65 Date: Mon, 08 Se
+0010: 70 20 32 30 32 35 20 31 36 3a 31 30 3a 34 30 20 p 2025 16:10:40 
+0020: 47 4d 54 0d 0a                                  GMT..
+<= Recv header, 20 bytes (0x14)
+0000: 43 6f 6e 74 65 6e 74 2d 4c 65 6e 67 74 68 3a 20 Content-Length: 
+0010: 35 38 0d 0a                                     58..
+<= Recv header, 2 bytes (0x2)
+0000: 0d 0a                                           ..
+<= Recv data, 58 bytes (0x3a)
+0000: 7b 22 63 6f 64 65 22 3a 31 30 30 32 30 38 2c 22 {"code":100208,"
+0010: 64 61 74 61 22 3a 6e 75 6c 6c 2c 22 6d 65 73 73 data":null,"mess
+0020: 61 67 65 22 3a 22 e4 bb a4 e7 89 8c e6 a0 bc e5 age":"..........
+0030: bc 8f e9 94 99 e8 af af 22 7d                   ........"}
+== Info: Connection #0 to host localhost left intact

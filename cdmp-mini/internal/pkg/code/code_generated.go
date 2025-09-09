@@ -26,13 +26,13 @@ func init() {
 
 	// 3. 通用授权认证错误（1002xx）
 	register(ErrEncrypt, 500, "用户密码加密失败")                 // 500：服务端加密逻辑错误
-	register(ErrSignatureInvalid, 401, "签名无效")            // 401 Unauthorized：未授权（签名验证失败）
+	register(ErrSignatureInvalid, 400, "签名无效")            // 401 Unauthorized：未授权（签名验证失败）
 	register(ErrExpired, 401, "令牌已过期")                    // 401：令牌过期导致未授权
 	register(ErrInvalidAuthHeader, 400, "授权头格式无效")        // 400：授权头格式错误（如缺少 Bearer 前缀）
 	register(ErrMissingHeader, 401, "缺少 Authorization 头") // 401：请求缺少必要的头信息
 	register(ErrPasswordIncorrect, 401, "密码不正确")          // 401：密码错误导致未授权
 	register(ErrPermissionDenied, 403, "权限不足，无操作权限")      // 403 Forbidden：已授权但无权限
-	register(ErrTokenInvalid, 401, "令牌无效（格式/签名错误）")       // 401：令牌本身无效
+	register(ErrTokenInvalid, 400, "令牌无效（格式/签名错误）")       // 401：令牌本身无效
 	register(
 		ErrBase64DecodeFail,
 		400,

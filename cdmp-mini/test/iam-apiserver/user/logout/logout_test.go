@@ -1,32 +1,77 @@
 package logout
 
 import (
+	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/spf13/viper"
 	"github.com/stretchr/testify/assert"
 )
 
-// -------------------------- 1. 基础定义（不变）--------------------------
+// -------------------------- 终端颜色控制常量 --------------------------
 const (
-	ErrMissingHeader     = 100205 // 无令牌
-	ErrInvalidAuthHeader = 100204 // 授权头格式错误
-	ErrTokenInvalid      = 100208 // 令牌格式错误
-	ErrExpired           = 100203 // 令牌过期
-	ErrSignatureInvalid  = 100202 // 签名无效
-	ErrUnauthorized      = 110003 // 未授权
-	ErrInternal          = 50001  // 服务器内部错误
-	SuccessCode          = 0      // 成功业务码
+	// 基础颜色
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorBlue   = "\033[34m"
+	colorPurple = "\033[35m"
+	colorCyan   = "\033[36m"
+
+	// 高亮颜色
+	colorBrightRed    = "\033[91m"
+	colorBrightGreen  = "\033[92m"
+	colorBrightYellow = "\033[93m"
+	colorBrightBlue   = "\033[94m"
+	colorBrightPurple = "\033[95m"
+	colorBrightCyan   = "\033[96m"
+
+	// 样式控制
+	colorBold  = "\033[1m"
+	colorReset = "\033[0m" // 重置所有样式
+)
+
+// 检查终端是否支持颜色输出
+var supportsColor = func() bool {
+	if os.Getenv("TERM") == "dumb" {
+		return false
+	}
+	return true
+}()
+
+// 颜色包装函数 - 仅接受两个参数：文本和颜色代码
+func withColor(text, color string) string {
+	if supportsColor {
+		return color + text + colorReset
+	}
+	return text
+}
+
+// 打印分隔线
+func printSeparator() {
+	fmt.Println(withColor(strings.Repeat("-", 80), colorCyan))
+}
+
+// -------------------------- 基础定义 --------------------------
+const (
+	ErrMissingHeader     = 100205                         // 无令牌
+	ErrInvalidAuthHeader = 100204                         // 授权头格式错误
+	ErrTokenInvalid      = 100208                         // 令牌格式错误
+	ErrExpired           = 100203                         // 令牌过期
+	ErrSignatureInvalid  = 100202                         // 签名无效
+	ErrUnauthorized      = 110003                         // 未授权
+	ErrInternal          = 50001                          // 服务器内部错误
+	SuccessCode          = 100001                         // 成功业务码
+	RealServerURL        = "http://localhost:8080/logout" // 真实服务器地址
+	LoginURL             = "http://localhost:8080/login"  // 登录接口地址
 )
 
 type withCodeError struct {
@@ -51,26 +96,28 @@ func getErrMsg(err error) string {
 	return "unknown error"
 }
 
+// 修复：添加Role字段，与真实Token结构一致
 type CustomClaims struct {
-	UserID string `json:"user_id"`
+	UserID   string `json:"user_id"`
+	Role     string `json:"role"`     // 新增：角色字段
+	Username string `json:"username"` // 新增：用户名字段
 	jwt.RegisteredClaims
 }
 
 var (
-	tokenBlacklist = make(map[string]bool)
-	mu             sync.Mutex
+	localTokenBlacklist = make(map[string]bool)
+	mu                  sync.Mutex
 )
 
-func destroyToken(tokenString string) error {
+func markTokenAsLoggedOut(tokenString string) {
 	mu.Lock()
 	defer mu.Unlock()
-	tokenBlacklist[tokenString] = true
-	return nil
+	localTokenBlacklist[trimBearerPrefix(tokenString)] = true
 }
-func isTokenBlacklisted(tokenString string) bool {
+func isLocalTokenLoggedOut(tokenString string) bool {
 	mu.Lock()
 	defer mu.Unlock()
-	return tokenBlacklist[tokenString]
+	return localTokenBlacklist[trimBearerPrefix(tokenString)]
 }
 func trimBearerPrefix(token string) string {
 	if strings.HasPrefix(strings.ToLower(token), "bearer ") {
@@ -79,116 +126,68 @@ func trimBearerPrefix(token string) string {
 	return token
 }
 
-// -------------------------- 2. 核心逻辑（不变）--------------------------
-func ValidateToken(tokenString string) (*CustomClaims, error) {
-	rawToken := trimBearerPrefix(tokenString)
-	if isTokenBlacklisted(rawToken) {
-		return nil, withCode(ErrUnauthorized, "令牌已登出，请重新登录")
-	}
+// -------------------------- 测试工具函数 --------------------------
 
-	var jwtSecret = []byte(viper.GetString("jwt.key"))
-	if tokenString == "" {
-		return nil, withCode(ErrMissingHeader, "请先登录")
+// 从登录接口获取真实Token（推荐方式）
+func getTokenFromLogin(httpClient *http.Client, username, password string) (string, error) {
+	// 构造登录请求
+	loginData := map[string]string{
+		"username": username,
+		"password": password,
 	}
-	tokenString = rawToken
-	if tokenString == "" {
-		return nil, withCode(ErrInvalidAuthHeader, "invalid authorization header format")
-	}
-
-	var claims CustomClaims
-	token, err := jwt.ParseWithClaims(
-		tokenString,
-		&claims,
-		func(t *jwt.Token) (interface{}, error) {
-			if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, withCode(ErrTokenInvalid, "unsupported signing method")
-			}
-			return jwtSecret, nil
-		},
-	)
-
+	data, err := json.Marshal(loginData)
 	if err != nil {
-		_ = claims.UserID
-		switch {
-		case errors.Is(err, jwt.ErrTokenExpired):
-			return nil, withCode(ErrExpired, "令牌已过期")
-		case errors.Is(err, jwt.ErrSignatureInvalid):
-			return nil, withCode(ErrSignatureInvalid, "signature is invalid")
-		default:
-			if ve, ok := err.(*jwt.ValidationError); ok {
-				if ve.Errors&jwt.ValidationErrorExpired != 0 {
-					return nil, withCode(ErrExpired, "令牌已过期")
-				}
-				if ve.Errors&jwt.ValidationErrorSignatureInvalid != 0 {
-					return nil, withCode(ErrSignatureInvalid, "signature is invalid")
-				}
-				if ve.Errors&jwt.ValidationErrorMalformed != 0 {
-					return nil, withCode(ErrTokenInvalid, "令牌格式错误")
-				}
-			}
-			if strings.Contains(err.Error(), "invalid number of segments") {
-				return nil, withCode(ErrTokenInvalid, "令牌格式错误")
-			}
-			return nil, withCode(ErrUnauthorized, "authentication failed")
-		}
+		return "", fmt.Errorf("构造登录请求失败: %v", err)
 	}
 
-	if customClaims, ok := token.Claims.(*CustomClaims); ok && token.Valid {
-		return customClaims, nil
+	req, err := http.NewRequest("POST", LoginURL, bytes.NewBuffer(data))
+	if err != nil {
+		return "", fmt.Errorf("创建登录请求失败: %v", err)
 	}
-	_ = claims.UserID
-	return nil, withCode(ErrTokenInvalid, "token is invalid")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("发送登录请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("登录失败，状态码: %d", resp.StatusCode)
+	}
+
+	// 解析登录响应
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("解析登录响应失败: %v", err)
+	}
+
+	token, ok := result["token"].(string)
+	if !ok || token == "" {
+		return "", fmt.Errorf("登录响应中未找到有效token")
+	}
+
+	return token, nil
 }
 
-func LogoutHandler(c *gin.Context) {
-	token := c.GetHeader("Authorization")
-	claims, err := ValidateToken(token)
-	if err != nil {
-		code := getErrCode(err)
-		statusCode := http.StatusBadRequest
-		if code == ErrMissingHeader || code == ErrExpired || code == ErrUnauthorized {
-			statusCode = http.StatusUnauthorized
-		}
-		c.JSON(statusCode, gin.H{
-			"code":    code,
-			"message": getErrMsg(err),
-			"data":    nil,
-		})
-		return
-	}
-
-	if err := destroyToken(trimBearerPrefix(token)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"code":    ErrInternal,
-			"message": "登出失败，请重试",
-			"data":    nil,
-		})
-		return
-	}
-
-	_ = claims.UserID
-	c.JSON(http.StatusOK, gin.H{
-		"code":    SuccessCode,
-		"message": "登出成功",
-		"data":    nil,
-	})
-}
-
-// -------------------------- 3. 测试工具函数（不变）--------------------------
+// 生成测试用Token（包含role字段）
 func generateTestToken(isExpired, isInvalidSign bool) (string, error) {
 	jwtSecret := []byte(viper.GetString("jwt.key"))
 	invalidSecret := []byte("wrong-secret-654321")
 
+	// 修复：添加role字段，值为"admin"，与真实登录生成的Token一致
 	claims := &CustomClaims{
-		UserID: "test-user-123",
+		UserID:   "test-user-123",
+		Username: "admin",
+		Role:     "admin", // 关键修复：添加角色信息
 		RegisteredClaims: jwt.RegisteredClaims{
-			Issuer:    "test",
+			Issuer:    viper.GetString("jwt.issuer"),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(1 * time.Hour)),
 		},
 	}
 	if isExpired {
-		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-1 * time.Second))
+		claims.ExpiresAt = jwt.NewNumericDate(time.Now().Add(-1 * time.Minute))
 	}
 
 	secret := jwtSecret
@@ -197,7 +196,11 @@ func generateTestToken(isExpired, isInvalidSign bool) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(secret)
+	signedToken, err := token.SignedString(secret)
+	if err != nil {
+		return "", fmt.Errorf("生成 Token 失败: %v", err)
+	}
+	return signedToken, nil
 }
 
 func maskToken(token string) string {
@@ -207,33 +210,64 @@ func maskToken(token string) string {
 	return token[:20] + "..."
 }
 
-// -------------------------- 4. 测试用例定义（新增 ExpectedMsg 字段）--------------------------
-// 修复：新增 ExpectedMsg 字段，与 login 脚本一致，同时解决 actualMsg 未使用问题
+// -------------------------- 测试用例定义 --------------------------
 type LogoutTestSuite struct {
 	CaseID         string // 用例编号（LOGOUT-001）
 	Desc           string // 用例描述
-	AuthHeader     string // Authorization请求头
+	AuthHeader     string // Authorization请求头（带Bearer前缀）
 	ExpectedStatus int    // 预期HTTP状态码
 	ExpectedCode   int    // 预期业务码
 	ExpectedMsg    string // 预期消息（包含匹配）
 	Passed         bool   // 执行结果
 }
 
-// -------------------------- 5. 核心测试函数（使用 actualMsg 进行消息验证）--------------------------
-func TestLogoutAPI_All(t *testing.T) {
-	viper.Set("jwt.key", "test-jwt-secret-123")
-	gin.SetMode(gin.ReleaseMode)
+// -------------------------- 核心测试函数 --------------------------
+func TestLogoutAPI_RealServer(t *testing.T) {
+	// 打印测试开始信息
+	fmt.Println(withColor("\n==============================================", colorBrightBlue+colorBold))
+	fmt.Println(withColor("          登出接口真实服务器测试套件          ", colorBrightBlue+colorBold))
+	fmt.Println(withColor("==============================================\n", colorBrightBlue+colorBold))
+
+	// 1. 初始化配置
+	viper.SetConfigFile("../../configs/config.yaml")
+	if err := viper.ReadInConfig(); err != nil {
+		// 若没有配置文件，直接硬编码关键配置
+		viper.Set("jwt.key", "dfVpOK8LZeJLZHYmHdb1VdyRrACKpqoo")
+		viper.Set("jwt.issuer", "iam-apiserver")
+		viper.Set("http.timeout", 5)
+	}
+
+	// 2. 清理本地测试数据
 	mu.Lock()
-	tokenBlacklist = make(map[string]bool)
+	localTokenBlacklist = make(map[string]bool)
 	mu.Unlock()
 
-	// 预生成令牌
-	normalToken, _ := generateTestToken(false, false)
+	// 3. 初始化HTTP客户端
+	httpClient := &http.Client{
+		Timeout: time.Duration(viper.GetInt("http.timeout")) * time.Second,
+	}
+
+	// 4. 获取测试用Token（优先从登录接口获取真实Token）
+	var normalToken string
+	var err error
+
+	// 尝试从登录接口获取真实Token
+	normalToken, err = getTokenFromLogin(httpClient, "test-admin", "test-password")
+	if err != nil {
+		fmt.Println(withColor(fmt.Sprintf("从登录接口获取Token失败，使用备用方式生成: %v", err), colorYellow))
+		// 备用方案：生成包含role的测试Token
+		normalToken, err = generateTestToken(false, false)
+		if err != nil {
+			t.Fatalf("%s", withColor(fmt.Sprintf("[初始化失败] 生成正常 Token 失败: %v", err), colorBrightRed))
+		}
+	}
+
+	// 生成其他测试用Token
 	expiredToken, _ := generateTestToken(true, false)
 	invalidSignToken, _ := generateTestToken(false, true)
-	invalidFormatToken := "Bearer invalid-token-no-dot"
+	invalidFormatToken := "Bearer invalid-token-no-dot-123"
 
-	// 定义测试用例（新增 ExpectedMsg，与 login 脚本对齐）
+	// 5. 定义测试用例
 	testSuites := []*LogoutTestSuite{
 		{
 			CaseID:         "LOGOUT-001",
@@ -241,15 +275,15 @@ func TestLogoutAPI_All(t *testing.T) {
 			AuthHeader:     "",
 			ExpectedStatus: http.StatusUnauthorized,
 			ExpectedCode:   ErrMissingHeader,
-			ExpectedMsg:    "请先登录", // 预期消息
+			ExpectedMsg:    "请先登录",
 		},
 		{
 			CaseID:         "LOGOUT-002",
-			Desc:           "Authorization格式无效（无有效令牌内容）",
+			Desc:           "Authorization格式无效（仅Bearer前缀，无Token）",
 			AuthHeader:     "Bearer ",
 			ExpectedStatus: http.StatusBadRequest,
 			ExpectedCode:   ErrInvalidAuthHeader,
-			ExpectedMsg:    "invalid authorization header format", // 预期消息
+			ExpectedMsg:    "invalid authorization header format",
 		},
 		{
 			CaseID:         "LOGOUT-003",
@@ -257,7 +291,7 @@ func TestLogoutAPI_All(t *testing.T) {
 			AuthHeader:     invalidFormatToken,
 			ExpectedStatus: http.StatusBadRequest,
 			ExpectedCode:   ErrTokenInvalid,
-			ExpectedMsg:    "令牌格式错误", // 预期消息
+			ExpectedMsg:    "令牌格式错误",
 		},
 		{
 			CaseID:         "LOGOUT-004",
@@ -265,7 +299,7 @@ func TestLogoutAPI_All(t *testing.T) {
 			AuthHeader:     "Bearer " + expiredToken,
 			ExpectedStatus: http.StatusUnauthorized,
 			ExpectedCode:   ErrExpired,
-			ExpectedMsg:    "令牌已过期", // 预期消息（与用例4需求一致）
+			ExpectedMsg:    "令牌已过期",
 		},
 		{
 			CaseID:         "LOGOUT-005",
@@ -273,7 +307,7 @@ func TestLogoutAPI_All(t *testing.T) {
 			AuthHeader:     "Bearer " + invalidSignToken,
 			ExpectedStatus: http.StatusBadRequest,
 			ExpectedCode:   ErrSignatureInvalid,
-			ExpectedMsg:    "signature is invalid", // 预期消息
+			ExpectedMsg:    "signature is invalid",
 		},
 		{
 			CaseID:         "LOGOUT-006",
@@ -281,107 +315,183 @@ func TestLogoutAPI_All(t *testing.T) {
 			AuthHeader:     "Bearer " + normalToken,
 			ExpectedStatus: http.StatusOK,
 			ExpectedCode:   SuccessCode,
-			ExpectedMsg:    "登出成功", // 预期消息
+			ExpectedMsg:    "登出成功",
+			Passed:         false,
 		},
 		{
 			CaseID:         "LOGOUT-007",
-			Desc:           "已登出令牌再次登出",
+			Desc:           "已登出令牌再次登出（依赖 LOGOUT-006 执行成功）",
 			AuthHeader:     "Bearer " + normalToken,
 			ExpectedStatus: http.StatusUnauthorized,
 			ExpectedCode:   ErrUnauthorized,
-			ExpectedMsg:    "令牌已登出", // 预期消息
+			ExpectedMsg:    "令牌已登出",
 		},
 	}
 
-	// 启动GIN服务
-	r := gin.Default()
-	r.DELETE("/logout", LogoutHandler)
+	// 6. 执行测试用例
 	var total, passed int
 	testResults := make([]*LogoutTestSuite, 0, len(testSuites))
 
-	// 执行每个测试用例（核心修复：使用 actualMsg 进行消息验证）
 	for _, suite := range testSuites {
 		t.Run(suite.CaseID, func(t *testing.T) {
-			// 1. 打印用例开始信息（新增预期消息打印）
-			fmt.Printf("[%s] 开始执行：%s\n", suite.CaseID, suite.Desc)
-			requestURL := "http://localhost:8080/logout"
-			fmt.Printf("请求URL：%s\n", requestURL)
-			fmt.Printf("预期：HTTP %d | 业务码 %d | 消息包含「%s」\n",
-				suite.ExpectedStatus, suite.ExpectedCode, suite.ExpectedMsg)
-			if suite.AuthHeader == "" {
-				fmt.Println("Token：无")
-			} else {
-				fmt.Printf("Token：%s\n", maskToken(suite.AuthHeader))
+			// 跳过 LOGOUT-007（如果 LOGOUT-006 未通过）
+			if suite.CaseID == "LOGOUT-007" {
+				if len(testResults) < 6 || !testResults[5].Passed {
+					skipMsg := fmt.Sprintf("[%s] %s → 因依赖用例未通过而跳过", suite.CaseID, suite.Desc)
+					fmt.Println(withColor(skipMsg, colorBrightYellow))
+					printSeparator()
+					t.Skip(skipMsg)
+					return
+				}
 			}
 
-			// 2. 发送请求
-			req := httptest.NewRequest("DELETE", requestURL, nil)
+			// 用例开始信息
+			fmt.Println(withColor(fmt.Sprintf("\n测试用例: %s - %s", suite.CaseID, suite.Desc), colorBrightBlue+colorBold))
+			printSeparator()
+
+			// 请求信息
+			fmt.Println(withColor("请求信息:", colorCyan+colorBold))
+			fmt.Printf("  %-20s %s\n", "请求地址:", withColor(RealServerURL, colorCyan))
+
+			authHeader := maskToken(suite.AuthHeader)
+			if authHeader == "" {
+				fmt.Printf("  %-20s %s\n", "Authorization头:", withColor("无", colorCyan))
+			} else {
+				fmt.Printf("  %-20s %s\n", "Authorization头:", withColor(authHeader, colorCyan))
+			}
+
+			// 预期结果
+			fmt.Println(withColor("\n预期结果:", colorBrightPurple+colorBold))
+			fmt.Printf("  %-20s %d\n", "HTTP状态码:", suite.ExpectedStatus)
+			fmt.Printf("  %-20s %d\n", "业务码:", suite.ExpectedCode)
+			fmt.Printf("  %-20s %s\n", "消息包含:", withColor(suite.ExpectedMsg, colorBrightPurple))
+
+			// 创建并发送请求
+			req, err := http.NewRequest("DELETE", RealServerURL, nil)
+			if err != nil {
+				suite.Passed = false
+				errMsg := fmt.Sprintf("创建请求失败: %v", err)
+				fmt.Println(withColor("\n请求错误:", colorBrightRed+colorBold))
+				fmt.Println(withColor("  "+errMsg, colorBrightRed))
+				t.Errorf("%s", errMsg)
+				printSeparator()
+				return
+			}
+			fmt.Printf("即将设置authorization头:[%q],长度是%d\n", suite.AuthHeader, len(suite.AuthHeader))
+
+			// 设置请求头
 			if suite.AuthHeader != "" {
 				req.Header.Set("Authorization", suite.AuthHeader)
 			}
-			w := httptest.NewRecorder()
-			r.ServeHTTP(w, req)
+			req.Header.Set("Content-Type", "application/json")
 
-			// 3. 解析响应（actualMsg 在此处声明并使用）
+			// 发送请求
+			resp, err := httpClient.Do(req)
+			if err != nil {
+				suite.Passed = false
+				errMsg := fmt.Sprintf("发送请求失败（可能服务器未启动）: %v", err)
+				fmt.Println(withColor("\n请求错误:", colorBrightRed+colorBold))
+				fmt.Println(withColor("  "+errMsg, colorBrightRed))
+				t.Errorf("%s", errMsg)
+				printSeparator()
+				return
+			}
+			defer resp.Body.Close()
+
+			// 解析响应
 			var respBody map[string]interface{}
-			_ = json.Unmarshal(w.Body.Bytes(), &respBody)
-			actualStatus := w.Code
-			actualCode := int(respBody["code"].(float64))
-			actualMsg := respBody["message"].(string) // 声明 actualMsg
+			if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+				suite.Passed = false
+				errMsg := fmt.Sprintf("解析响应体失败（非JSON格式）: %v", err)
+				fmt.Println(withColor("\n响应解析错误:", colorBrightRed+colorBold))
+				fmt.Println(withColor("  "+errMsg, colorBrightRed))
+				t.Errorf("%s", errMsg)
+				printSeparator()
+				return
+			}
 
-			// 4. 打印实际响应（新增实际消息打印）
-			fmt.Printf("[%s] 实际响应：HTTP %d | 业务码 %d | 消息「%s」\n",
-				suite.CaseID, actualStatus, actualCode, actualMsg)
+			// 提取响应字段
+			actualStatus := resp.StatusCode
+			actualCode, _ := respBody["code"].(float64)
+			actualMsg, _ := respBody["message"].(string)
 			rawResp, _ := json.MarshalIndent(respBody, "", "  ")
-			fmt.Printf("[%s] 原始响应体：%s\n", suite.CaseID, string(rawResp))
-			fmt.Println("=================================================================================")
 
-			// 5. 断言（核心：使用 actualMsg 验证消息，解决未使用问题）
+			// 显示实际响应
+			fmt.Println(withColor("\n实际响应:", colorBlue+colorBold))
+			fmt.Printf("  %-20s %d\n", "HTTP状态码:", actualStatus)
+			fmt.Printf("  %-20s %d\n", "业务码:", int(actualCode))
+			fmt.Printf("  %-20s %s\n", "消息:", actualMsg)
+			fmt.Printf("  %-20s %s\n", "原始响应体:", withColor(string(rawResp), colorBlue))
+
+			// 验证结果
 			statusPass := assert.Equal(t, suite.ExpectedStatus, actualStatus, "[%s] HTTP状态码不符", suite.CaseID)
-			codePass := assert.Equal(t, suite.ExpectedCode, actualCode, "[%s] 业务码不符", suite.CaseID)
-			// 新增：验证消息是否包含预期内容（与 login 脚本一致）
-			msgPass := assert.Contains(t, actualMsg, suite.ExpectedMsg, "[%s] 消息不符：预期包含「%s」，实际「%s」",
-				suite.CaseID, suite.ExpectedMsg, actualMsg)
+			codePass := assert.Equal(t, suite.ExpectedCode, int(actualCode), "[%s] 业务码不符", suite.CaseID)
+			msgPass := assert.Contains(t, actualMsg, suite.ExpectedMsg,
+				"[%s] 消息不符：预期包含「%s」，实际「%s」", suite.CaseID, suite.ExpectedMsg, actualMsg)
 
-			// 6. 判断用例是否通过
+			// 标记结果并显示
 			suite.Passed = statusPass && codePass && msgPass
+			fmt.Println("\n" + withColor("测试结果:", colorBold))
+
 			if suite.Passed {
-				fmt.Printf("[%s] %s → 执行通过 ✅\n", suite.CaseID, suite.Desc)
+				successMsg := fmt.Sprintf("✅ 测试通过 - %s", suite.CaseID)
+				fmt.Println(withColor("  "+successMsg, colorBrightGreen))
+
+				// LOGOUT-006 成功后标记Token为已登出
+				if suite.CaseID == "LOGOUT-006" {
+					markTokenAsLoggedOut(suite.AuthHeader)
+				}
 				passed++
 			} else {
-				fmt.Printf("[%s] %s → 执行失败 ❌\n", suite.CaseID, suite.Desc)
-				fmt.Printf("  预期：HTTP %d | 业务码 %d | 消息包含「%s」\n",
-					suite.ExpectedStatus, suite.ExpectedCode, suite.ExpectedMsg)
-				fmt.Printf("  实际：HTTP %d | 业务码 %d | 消息「%s」\n",
-					actualStatus, actualCode, actualMsg) // 使用 actualMsg
+				failMsg := fmt.Sprintf("❌ 测试失败 - %s", suite.CaseID)
+				fmt.Println(withColor("  "+failMsg, colorBrightRed))
+
+				// 显示失败详情
+				fmt.Println(withColor("  失败详情:", colorRed+colorBold))
+				if !statusPass {
+					msg := fmt.Sprintf("  - HTTP状态码不匹配: 预期 %d, 实际 %d", suite.ExpectedStatus, actualStatus)
+					fmt.Println(withColor(msg, colorRed))
+				}
+				if !codePass {
+					msg := fmt.Sprintf("  - 业务码不匹配: 预期 %d, 实际 %d", suite.ExpectedCode, int(actualCode))
+					fmt.Println(withColor(msg, colorRed))
+				}
+				if !msgPass {
+					msg := fmt.Sprintf("  - 消息不匹配: 预期包含「%s」, 实际「%s」", suite.ExpectedMsg, actualMsg)
+					fmt.Println(withColor(msg, colorRed))
+				}
 			}
+
 			testResults = append(testResults, suite)
 			total++
-			fmt.Println("---")
+			printSeparator()
 		})
 	}
 
-	// 7. 汇总报告（不变）
-	fmt.Println("\n=================================================================================")
-	fmt.Println("登出接口测试汇总报告")
-	fmt.Println("=================================================================================")
-	fmt.Printf("总用例数：%d\n", total)
-	fmt.Printf("通过用例：%d\n", passed)
-	fmt.Printf("失败用例：%d\n", total-passed)
-	fmt.Println("---------------------------------------------------------------------------------")
-	fmt.Println("用例执行详情：")
-	for _, suite := range testResults {
-		status := "✅ 执行通过"
-		if !suite.Passed {
-			status = "❌ 执行失败"
-		}
-		fmt.Printf("%s：%s → %s\n", suite.CaseID, suite.Desc, status)
-	}
-	fmt.Println("=================================================================================")
+	// 7. 生成测试汇总报告
+	fmt.Println(withColor("\n==============================================", colorBrightYellow+colorBold))
+	fmt.Println(withColor("               测试汇总报告                  ", colorBrightYellow+colorBold))
+	fmt.Println(withColor("==============================================", colorBrightYellow+colorBold))
+	fmt.Printf("  %-20s %d\n", "总用例数:", total)
+	fmt.Printf("  %-20s %s\n", "通过用例数:", withColor(fmt.Sprintf("%d", passed), colorBrightGreen))
+	fmt.Printf("  %-20s %s\n", "失败用例数:", withColor(fmt.Sprintf("%d", total-passed), colorBrightRed))
+	fmt.Println("\n" + withColor("用例详情:", colorBold))
 
-	if total == passed {
-		fmt.Println("\n🎉 所有测试用例全部通过！")
+	for _, suite := range testResults {
+		status := withColor("✅ 成功", colorGreen)
+		if !suite.Passed {
+			status = withColor("❌ 失败", colorRed)
+		}
+		fmt.Printf("  %-10s %-45s %s\n", suite.CaseID, suite.Desc, status)
+	}
+
+	fmt.Println(withColor("\n==============================================", colorBrightYellow+colorBold))
+
+	// 整体结果判定
+	if total != passed {
+		fatalMsg := fmt.Sprintf("测试未全部通过，失败用例数: %d", total-passed)
+		t.Fatalf("%s", withColor(fatalMsg, colorBrightRed+colorBold))
 	} else {
-		t.Errorf("测试未全部通过，失败用例数：%d", total-passed)
+		fmt.Println(withColor("\n🎉 所有测试用例全部通过！", colorBrightGreen+colorBold))
 	}
 }

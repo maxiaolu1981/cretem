@@ -39,12 +39,12 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
@@ -59,7 +59,6 @@ import (
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
-	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 
 	"github.com/spf13/viper"
 )
@@ -75,8 +74,8 @@ const (
 )
 
 type loginInfo struct {
-	Username string `form:"username" json:"username" binding:"required"` // 仅校验非空
-	Password string `form:"password" json:"password" binding:"required"` // 仅校验非空
+	Username string `form:"username" json:"username" ` // 仅校验非空
+	Password string `form:"password" json:"password" ` // 仅校验非空
 }
 
 func newBasicAuth() middleware.AuthStrategy {
@@ -125,6 +124,7 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 		TimeFunc:         time.Now,
 		Authenticator:    authoricator(),
 		PayloadFunc:      payload(),
+
 		IdentityHandler: func(c *gin.Context) interface{} {
 			claims := jwt.ExtractClaims(c)
 			// 1. 优先从 jwt.IdentityKey 提取（与 payload 对应）
@@ -153,120 +153,16 @@ func newJWTAuth() (middleware.AuthStrategy, error) {
 
 			return username
 		},
-		Authorizator:    authorizator(),
-		LoginResponse:   loginResponse(),
-		RefreshResponse: refreshResponse(),
-		LogoutResponse: func(c *gin.Context, codeId int) {
-			// 1. 获取请求头中的令牌（带Bearer前缀）
-			token := c.GetHeader("Authorization")
-			log.Infof("处理登出请求，令牌信息：%s", maskToken(token)) // 脱敏日志
-			// 2. 调用validation包的ValidateToken进行校验（已适配withCode错误）
-			claims, err := jwtvalidator.ValidateToken(token)
-			if err != nil {
-				if !errors.IsWithCode(err) {
-					// 非预期错误类型，返回默认未授权
-					c.JSON(http.StatusBadRequest, gin.H{
-						"code":    code.ErrUnauthorized,
-						"message": "令牌校验失败",
-					})
-					return
-				}
-				bid := errors.GetCode(err)
-				// 2.2 无令牌或令牌过期，友好返回已登出
-				if bid == code.ErrMissingHeader {
-					c.JSON(http.StatusUnauthorized, gin.H{
-						"code":    code.ErrMissingHeader,
-						"message": "请先登录",
-					})
-					return
-				}
-				if bid == code.ErrExpired {
-					c.JSON(http.StatusUnauthorized, gin.H{
-						"code":    code.ErrExpired,
-						"message": "令牌已经过期,请重新登录",
-					})
-					return
-				}
-				message := errors.GetMessage(err)
-				// 2.3 其他错误（如签名无效）返回具体业务码
-				c.JSON(http.StatusBadRequest, gin.H{
-					"code":    bid,
-					"message": message,
-				})
-				return
-			}
-
-			// 3. 令牌有效，执行登出核心逻辑（如加入黑名单）
-			if err := destroyToken(claims.UserID); err != nil {
-				log.Errorf("登出失败，user_id=%s，err=%v", claims.UserID, err)
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"code":    code.ErrInternal,
-					"message": "登出失败，请重试",
-				})
-				return
-			}
-			// 4. 登出成功响应
-			log.Infof("登出成功，user_id=%s", claims.UserID)
-			core.WriteResponse(c, nil, "登出成功")
-		},
-
-		Unauthorized: func(c *gin.Context, httpCode int, message string) {
-			var bizCode int
-			if len(c.Errors) > 0 {
-				// 获取最后一个错误（通常是 Authenticator 返回的自定义错误）
-				rawErr := c.Errors.Last().Err
-				// 断言为你的自定义错误类型（仅需实现 Code() 方法）
-				if customErr, ok := rawErr.(interface{ Code() int }); ok {
-					// 直接使用原始错误的业务码（无需依赖 message）
-					bizCode = customErr.Code()
-					// 新增日志：确认是否提取到正确的 bizCode（如 code.ErrValidation=100004）
-					log.Errorf("提取到自定义错误，bizCode=%d", bizCode)
-
-				}
-			}
-			if bizCode == 0 {
-				switch {
-				// 匹配Token过期（兼容gin-jwt可能返回的多种过期消息格式）
-				case strings.Contains(strings.ToLower(message), "token is expired"):
-					bizCode = code.ErrExpired // 100203（Token过期）
-
-				// 匹配签名无效（包括篡改、密钥不匹配等场景）
-				case strings.Contains(message, "signature is invalid"):
-					bizCode = code.ErrTokenInvalid // 100208（Token无效）
-
-				// 匹配Base64解码失败（如非法字符）
-				case strings.HasPrefix(message, "illegal base64 data"):
-					bizCode = code.ErrTokenInvalid // 100208（Token无效）
-
-				// 匹配缺少Authorization头
-				case message == "Authorization header is not present":
-					bizCode = code.ErrMissingHeader // 100205（缺少授权头）
-
-				// 匹配授权头格式错误（如无Bearer前缀）
-				case message == "invalid authorization header format":
-					bizCode = code.ErrInvalidAuthHeader // 100204（授权头格式无效）
-
-				// 其他未明确匹配的认证错误
-				default:
-					bizCode = code.ErrUnauthorized // 110003（未授权）
-					//log.Errorf("进入默认分支，bizCode=%d", bizCode)
-				}
-			}
-			// c.JSON(httpCode, gin.H{
-			// 	"code":    bizCode,
-			// 	"message": message,
-			// 	"data":    nil,
-			// })
-			err := errors.WithCode(bizCode, message) // 关键修改：移除 "%s" 格式化
-
-			core.WriteResponse(c, err, nil)
-			c.Abort()
-		},
+		Authorizator:          authorizator(),
+		HTTPStatusMessageFunc: errors.HTTPStatusMessageFunc,
+		LoginResponse:         loginResponse(),
+		RefreshResponse:       refreshResponse(),
+		LogoutResponse:        logoutRespons,
+		Unauthorized:          handleUnauthorized,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("建立 JWT middleware 失败: %w", err)
 	}
-
 	return auth.NewJWTStrategy(*ginjwt), nil
 }
 
@@ -284,40 +180,30 @@ func authoricator() func(c *gin.Context) (interface{}, error) {
 		}
 		if err != nil {
 			log.Errorf("parse authentication info failed: %v", err)
-			// 关键：直接透传解析错误（无需包装，parse 函数已返回带正确码和提示的 err）
+			recordErrorToContext(c, err)
 			return nil, err
 		}
 
 		if errs := validation.IsQualifiedName(login.Username); len(errs) > 0 {
 			errsMsg := strings.Join(errs, ":")
 			log.Warnw("用户名不合法:", errsMsg)
+			err := errors.WithCode(code.ErrValidation, "%s", errsMsg)
+			recordErrorToContext(c, err)
+			return nil, err
 
-			// 直接向上下文写入422响应，不返回错误给框架
-			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"code":    code.ErrValidation,
-				"message": errsMsg,
-				"data":    nil,
-			})
-			c.AbortWithStatus(http.StatusUnprocessableEntity) // 强制终止，不进入框架错误处理
-			return nil, nil                                   // 返回nil表示“无错误”，避免框架二次处理
 		}
 		if err := validation.IsValidPassword(login.Password); err != nil {
 			errMsg := "密码不合法：" + err.Error()
-			log.Warnw("密码格式不符合要求", err.Error())
-			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"code":    code.ErrValidation,
-				"message": errMsg,
-				"data":    nil,
-			})
-			c.AbortWithStatus(http.StatusUnprocessableEntity)
-			return nil, nil
+			err := errors.WithCode(code.ErrValidation, "%s", errMsg)
+			recordErrorToContext(c, err)
+			return nil, err
 		}
 
 		// 2. 查询用户信息：透传 store 层错误（store 已按场景返回对应码）
 		user, err := interfaces.Client().Users().Get(c, login.Username, metav1.GetOptions{})
 		if err != nil {
 			log.Errorf("get user information failed: username=%s, error=%v", login.Username, err)
-			// 关键：直接透传 store 错误（store 层已返回 ErrUserNotFound/ErrDatabaseTimeout/ErrDatabase）
+			recordErrorToContext(c, err)
 			return nil, err
 		}
 
@@ -325,11 +211,10 @@ func authoricator() func(c *gin.Context) (interface{}, error) {
 		if err := user.Compare(login.Password); err != nil {
 			log.Errorf("password compare failed: username=%s", login.Username)
 			// 场景：密码不正确 → 用通用授权错误码 ErrPasswordIncorrect（100206，401）
-			return nil, errors.WithCode(
-				code.ErrPasswordIncorrect,
-				"密码校验失败：用户名【%s】的密码不正确",
-				login.Username,
-			)
+			err := errors.WithCode(code.ErrPasswordIncorrect, "密码校验失败：用户名【%s】的密码不正确", login.Username)
+			recordErrorToContext(c, err)
+			return nil, err
+
 		}
 
 		// 4. 更新登录时间：忽略非关键错误（仅日志记录，不阻断认证）
@@ -340,6 +225,43 @@ func authoricator() func(c *gin.Context) (interface{}, error) {
 
 		return user, nil
 	}
+}
+
+func logoutRespons(c *gin.Context, codep int) {
+
+	// 1. 获取请求头中的令牌（带Bearer前缀）
+	rawAuthHeader, exists := c.Get("raw_auth_header")
+	if !exists {
+		// 降级：若上下文没有，再用 GetHeader（避免极端情况）
+		rawAuthHeader = c.GetHeader("Authorization")
+		log.Warnf("[logoutRespons] 上下文未找到原始头，降级使用 GetHeader")
+	}
+	// 转换为字符串（上下文存储的是 interface{} 类型）
+	token := rawAuthHeader.(string)
+	// 打印日志验证：此时 token 应为 "Bearer "（长度7）
+	log.Infof("[logoutRespons] 最终使用的原始令牌：[%q]，长度：%d", token, len(token))
+	// 2. 调用validation包的ValidateToken进行校验（已适配withCode错误）
+	claims, err := jwtvalidator.ValidateToken(token)
+	if err != nil {
+
+		// 🔧 优化2：统一通过core.WriteResponse返回，确保格式一致
+		core.WriteResponse(c, err, nil)
+		return
+	}
+
+	// 3. 令牌有效，执行登出核心逻辑（如加入黑名单）
+	if err := destroyToken(claims.UserID); err != nil {
+		log.Errorf("登出失败，user_id=%s，err=%v", claims.UserID, err)
+		// 🔧 优化3：用WithCode包装错误，再通过统一响应函数返回
+		wrappedErr := errors.WithCode(code.ErrInternal, "登出失败，请重试: %v", err)
+		core.WriteResponse(c, wrappedErr, nil)
+		return
+	}
+
+	// 4. 登出成功响应
+	log.Infof("登出成功，user_id=%s", claims.UserID)
+	// 🔧 优化4：成功场景也通过core.WriteResponse，确保格式统一（code=成功码，message=成功消息）
+	core.WriteResponse(c, nil, "登出成功")
 }
 
 //go:noinline  // 告诉编译器不要内联此函数
@@ -414,7 +336,7 @@ func parseWithBody(c *gin.Context) (loginInfo, error) {
 	// 检查用户名/密码是否为空（基础校验）
 	if login.Username == "" || login.Password == "" {
 		return loginInfo{}, errors.WithCode(
-			code.ErrInvalidParameter,
+			code.ErrValidation,
 			"Body参数错误：username和password不能为空",
 		)
 	}
@@ -539,4 +461,164 @@ func destroyToken(userID string) error {
 	// ctx := context.Background()
 	// return redisClient.Set(ctx, "logout:"+userID, time.Now().Unix(), 24*time.Hour).Err()
 	return nil
+}
+
+func recordErrorToContext(c *gin.Context, err error) {
+	if err != nil {
+		c.Errors = append(c.Errors, &gin.Error{
+			Err:  err,
+			Type: gin.ErrorTypePrivate, // 标记为私有错误，避免框架暴露敏感信息
+		})
+	}
+}
+
+// handleUnauthorized 统一处理未授权场景（封装Unauthorized回调核心逻辑）
+// 参数：
+//   - c: gin上下文（用于获取请求信息、返回响应）
+//   - httpCode: HTTPStatusMessageFunc映射后的HTTP状态码
+//   - message: HTTPStatusMessageFunc映射后的基础错误消息
+func handleUnauthorized(c *gin.Context, httpCode int, message string) {
+	// 1. 从上下文提取业务码（优先使用HTTPStatusMessageFunc映射后的withCode错误）
+	bizCode := extractBizCode(c, message)
+
+	// 2. 日志分级：基于业务码重要性输出差异化日志（含request-id便于追踪）
+	logWithRequestID(c, bizCode, message)
+
+	// 3. 补充上下文信息：不同业务码返回专属指引（帮助客户端快速定位问题）
+	extraInfo := buildExtraInfo(c, bizCode)
+
+	// 4. 生成标准withCode错误（避免格式化安全问题）
+	err := errors.WithCode(bizCode, "%s", message)
+
+	// 5. 统一返回响应（依赖core.WriteResponse确保格式一致）
+	core.WriteResponse(c, err, extraInfo)
+
+	// 6. 终止流程：防止后续中间件覆盖当前响应
+	c.Abort()
+}
+
+// extractBizCode 提取业务码（优先从c.Errors获取，降级用消息匹配）
+func extractBizCode(c *gin.Context, message string) int {
+	// 优先：从c.Errors提取带Code()方法的错误（HTTPStatusMessageFunc映射后的结果）
+	if len(c.Errors) > 0 {
+		rawErr := c.Errors.Last().Err
+		log.Debugf("[handleUnauthorized] 从c.Errors获取原始错误: %+v", rawErr)
+
+		// 适配自定义withCode错误（必须实现Code() int方法）
+		if customErr, ok := rawErr.(interface{ Code() int }); ok {
+			bizCode := customErr.Code()
+			log.Infof("[handleUnauthorized] 从错误中提取业务码: %d（request-id: %s）",
+				bizCode, getRequestID(c))
+			return bizCode
+		}
+	}
+
+	// 降级：若无法直接提取，基于消息文本匹配业务码（覆盖所有授权认证相关业务码）
+	msgLower := strings.ToLower(message)
+	switch {
+	case strings.Contains(msgLower, "expired"):
+		return code.ErrExpired // 100203：令牌已过期
+	case strings.Contains(msgLower, "signature") && strings.Contains(msgLower, "invalid"):
+		return code.ErrSignatureInvalid // 100202：签名无效
+	case strings.Contains(msgLower, "authorization") && strings.Contains(msgLower, "not present"):
+		return code.ErrMissingHeader // 100205：缺少Authorization头
+	case strings.Contains(msgLower, "authorization") && strings.Contains(msgLower, "invalid format"):
+		return code.ErrInvalidAuthHeader // 100204：授权头格式无效
+	case strings.Contains(msgLower, "base64") && strings.Contains(msgLower, "decode"):
+		return code.ErrBase64DecodeFail // 100209：Basic认证Base64解码失败
+	case strings.Contains(msgLower, "basic") && strings.Contains(msgLower, "payload"):
+		return code.ErrInvalidBasicPayload // 100210：Basic认证payload格式无效
+	case strings.Contains(msgLower, "invalid") && (strings.Contains(msgLower, "token") || strings.Contains(msgLower, "jwt")):
+		return code.ErrTokenInvalid // 100208：令牌无效
+	case strings.Contains(msgLower, "password") && strings.Contains(msgLower, "incorrect"):
+		return code.ErrPasswordIncorrect // 100206：密码不正确
+	case strings.Contains(msgLower, "permission") && strings.Contains(msgLower, "denied"):
+		return code.ErrPermissionDenied // 100207：权限不足
+	default:
+		log.Warnf("[handleUnauthorized] 未匹配到业务码，使用默认未授权码（request-id: %s），原始消息: %s",
+			getRequestID(c), message)
+		return code.ErrUnauthorized // 110003：默认未授权
+	}
+}
+
+// logWithRequestID 带request-id的分级日志（按业务码重要性划分级别）
+func logWithRequestID(c *gin.Context, bizCode int, message string) {
+	requestID := getRequestID(c)
+	switch bizCode {
+	// 安全风险：Warn级别（需重点关注，可能是恶意请求）
+	case code.ErrSignatureInvalid, code.ErrTokenInvalid, code.ErrPasswordIncorrect:
+		log.Warnf("[安全风险] 未授权（bizCode: %d），request-id: %s，消息: %s",
+			bizCode, requestID, message)
+	// 客户端错误：Debug级别（便于客户端调试，非恶意）
+	case code.ErrInvalidAuthHeader, code.ErrBase64DecodeFail, code.ErrInvalidBasicPayload:
+		log.Debugf("[客户端错误] 未授权（bizCode: %d），request-id: %s，消息: %s",
+			bizCode, requestID, message)
+	// 常规场景：Info级别（正常用户操作，如令牌过期、缺少头）
+	case code.ErrExpired, code.ErrMissingHeader, code.ErrPermissionDenied:
+		log.Infof("[常规场景] 未授权（bizCode: %d），request-id: %s，消息: %s",
+			bizCode, requestID, message)
+	// 未分类：Warn级别（需后续补充匹配规则）
+	default:
+		log.Warnf("[未分类] 未授权（bizCode: %d），request-id: %s，消息: %s",
+			bizCode, requestID, message)
+	}
+}
+
+// buildExtraInfo 基于业务码构建额外上下文信息（帮助客户端快速修复问题）
+// 关键：给函数增加 c *gin.Context 参数，用于获取请求头/上下文信息
+func buildExtraInfo(c *gin.Context, bizCode int) gin.H {
+	switch bizCode {
+	case code.ErrExpired: // 100203：令牌已过期
+		return gin.H{
+			"suggestion": "令牌已过期，请重新调用/login接口获取新令牌",
+			"next_step":  "POST /login（携带用户名密码）",
+		}
+	case code.ErrInvalidAuthHeader: // 100204：授权头格式无效
+		return gin.H{
+			"example": "正确格式：Authorization: Bearer <your-jwt-token>（Bearer后需带1个空格）",
+			"note":    "仅支持Bearer认证方案，不支持Basic/其他方案",
+		}
+	case code.ErrTokenInvalid: // 100208：令牌无效
+		return gin.H{
+			"possible_reason": []string{
+				"令牌格式错误（需包含2个.分隔，如xx.xx.xx）",
+				"令牌被篡改（签名验证失败）",
+				"令牌未经过正确编码（需Base64Url编码）",
+			},
+		}
+	case code.ErrBase64DecodeFail: // 100209：Basic认证Base64解码失败
+		return gin.H{
+			"example":    "正确格式：Authorization: Basic dXNlcjE6cGFzc3dvcmQ=（dXNlcjE6cGFzc3dvcmQ=是base64(\"user1:password\")）",
+			"check_tool": "可通过echo -n 'user:pass' | base64 验证编码是否正确",
+		}
+	case code.ErrInvalidBasicPayload: // 100210：Basic认证payload格式无效
+		return gin.H{
+			"requirement": "Base64解码后必须包含冒号（:），格式为\"用户名:密码\"",
+			"example":     "解码后应为\"admin:123456\"，而非\"admin123456\"",
+		}
+	case code.ErrPermissionDenied: // 100207：权限不足
+		// 现在 c 是函数参数，可正常调用 GetHeader 获取 X-User 头
+		currentUser := c.GetHeader("X-User")
+		// 优化：若 X-User 头为空，返回“未知用户”避免空值
+		if currentUser == "" {
+			currentUser = "未知用户（未携带X-User头）"
+		}
+		return gin.H{
+			"suggestion":   "联系管理员授予操作权限（需包含xxx角色）",
+			"current_user": currentUser, // 正常返回当前用户信息
+		}
+	default: // 其他场景：返回空（避免冗余）
+		return gin.H{}
+	}
+}
+
+// getRequestID 从上下文获取request-id（便于链路追踪）
+func getRequestID(c *gin.Context) string {
+	if requestID, exists := c.Get("requestID"); exists {
+		if idStr, ok := requestID.(string); ok {
+			return idStr
+		}
+	}
+	// 降级：从请求头获取
+	return c.GetHeader("X-Request-ID")
 }

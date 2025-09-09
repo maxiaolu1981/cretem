@@ -113,14 +113,14 @@ func checkNormalUserPermission(c *gin.Context) bool {
 
 	case RouteUsersCreate:
 		// 非管理员仅允许创建用户（POST方法）
-		if c.Request.Method != http.MethodPost {
-			core.WriteResponse(c,
-				errors.WithCode(code.ErrPermissionDenied, "非管理员仅允许创建用户，不允许执行其他操作"),
-				nil,
-			)
-			c.Abort()
-			return false
-		}
+		//if c.Request.Method != http.MethodPost {
+		core.WriteResponse(c,
+			errors.WithCode(code.ErrPermissionDenied, "普通用户无权限创建用户，请联系管理员操作"),
+			nil,
+		)
+		c.Abort()
+		return false
+	//	}
 
 	default:
 		// 其他未定义路径：非管理员禁止访问

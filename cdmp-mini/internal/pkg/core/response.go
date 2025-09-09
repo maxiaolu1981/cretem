@@ -38,15 +38,16 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
+	//successMsg := "操作成功"
+	// 2. 统一成功业务码（建议与错误码格式一致，如100001）
+	successCode := code.ErrSuccess
 
-	msg, _ := data.(string)
 	// 处理成功场景
 	c.JSON(http.StatusOK, gin.H{
-		"code":    0,
-		"message": msg,
+		"code":    successCode,
+		"message": data,
 		"data":    data,
 	})
-	c.AbortWithStatus(http.StatusOK)
 }
 
 // -------------------------- 新增：WriteDeleteSuccess --------------------------

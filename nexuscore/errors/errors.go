@@ -62,6 +62,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+
+	"github.com/gin-gonic/gin"
 )
 
 // fundamental 基础错误类型，包含错误消息和堆栈跟踪，无调用者信息
@@ -302,6 +304,10 @@ type withCode struct {
 	*stack       //添加新的堆栈记录
 }
 
+func (e *withCode) Code() int {
+	return e.code
+}
+
 func (w *withCode) Format(st fmt.State, verb rune) {
 	switch verb {
 	case 'v':
@@ -481,4 +487,29 @@ func GetHTTPStatus(err error) int {
 		return ParseCoderByCode(e.code).HTTPStatus()
 	}
 	return http.StatusInternalServerError
+}
+
+// HTTPStatusMessageFunc 符合框架要求的签名：仅返回错误消息字符串
+// 功能：从错误中提取用户可见的消息，依赖你的errors库处理
+func HTTPStatusMessageFunc(e error, c *gin.Context) string {
+	// 1. 处理空错误（返回默认成功消息）
+	if e == nil {
+		return "操作成功"
+	}
+
+	// 2. 调用你库的GetMessage直接获取错误消息
+	// - 若e是withCode类型：返回withCode.err的消息（如"用户名格式错误"）
+	// - 若不是：返回e.Error()（普通错误消息）
+	errMsg := GetMessage(e)
+
+	// 3. 优化：对未注册的错误码（返回_unknownCode）添加提示（可选）
+	if IsWithCode(e) { // 判断是否为带码错误
+		code := GetCode(e)
+		// 检查该错误码是否注册（_unknownCode的code是1）
+		if ParseCoderByCode(code).Code() == 1 {
+			errMsg = fmt.Sprintf("[错误码未注册:%d] %s", code, errMsg)
+		}
+	}
+
+	return errMsg
 }

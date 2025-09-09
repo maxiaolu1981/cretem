@@ -1,10 +1,11 @@
 1.了解审计的意义和如何实现?
 
 测试记录
-1. deleteforce通过
-2. get 通过
-3. login通过
-4.logout 通过
+1. deleteforce
+2. get 
+3. login
+4.logout 
+5.create
 
 internal/
 └── apiserver/

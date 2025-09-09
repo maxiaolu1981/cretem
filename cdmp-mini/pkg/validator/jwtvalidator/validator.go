@@ -30,7 +30,7 @@ func ValidateToken(tokenString string) (*CustomClaims, error) {
 		log.Errorf("令牌校验失败：缺少Authorization头")
 		return nil, errors.WithCode(
 			code.ErrMissingHeader, // 100205
-			"Authorization header is not present",
+			"请先登录",
 		)
 	}
 

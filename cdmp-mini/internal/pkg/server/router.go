@@ -86,6 +86,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/control/v1/user"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
@@ -223,6 +224,10 @@ func createAutHandler(jwtHandler gin.HandlerFunc) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		rawAuthHeader := c.GetHeader("Authorization")
+		log.Infof("[createAutHandler] 原始Authorization头：[%q]，长度：%d", rawAuthHeader, len(rawAuthHeader))
+		// 将原始头存入上下文，键名自定义（如 "raw_auth_header"）
+		c.Set("raw_auth_header", rawAuthHeader)
 		jwtHandler(c) // 格式正确才进入实际登录逻辑
 	}
 }

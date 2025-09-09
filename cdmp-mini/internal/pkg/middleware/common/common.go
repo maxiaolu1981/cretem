@@ -8,8 +8,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
-
-	gindump "github.com/tpkeeper/gin-dump"
 )
 
 const (
@@ -59,7 +57,7 @@ var baseMiddlewares = map[string]gin.HandlerFunc{
 var devMiddlewares = map[string]gin.HandlerFunc{
 	"logger": devLogger(),
 	"cors":   DevCors(),
-	"dump":   gindump.Dump(), // 开发环境使用真实的dump
+	//"dump":   gindump.Dump(), // 开发环境使用真实的dump
 }
 
 // 测试环境特定中间件

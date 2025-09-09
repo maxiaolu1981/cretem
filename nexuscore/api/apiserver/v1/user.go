@@ -46,6 +46,7 @@ type User struct {
 	IsAdmin int `json:"isAdmin,omitempty" gorm:"column:isAdmin" validate:"omitempty"` // 是否为管理员（0：否，1：是）
 
 	TotalPolicy int64 `json:"totalPolicy" gorm:"-" validate:"omitempty"` // 关联的策略总数（不映射到数据库字段）
+	Role        int64 `json:"role" gorm:"-"`                             // 关联的策略总数（不映射到数据库字段）
 
 	LoginedAt time.Time `json:"loginedAt,omitempty" gorm:"column:loginedAt"` // 最后登录时间
 }
@@ -111,4 +112,5 @@ type PublicUser struct {
 	IsAdmin   int
 	CreatedAt time.Time
 	UpdatedAt time.Time
+	Role      string
 }
