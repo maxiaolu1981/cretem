@@ -8,7 +8,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
-	"github.com/spf13/viper"
 )
 
 // CustomClaims 自定义JWT声明结构（与你的业务令牌字段匹配）
@@ -23,8 +22,8 @@ type CustomClaims struct {
 // 返回值：
 // - 校验通过：返回*CustomClaims和nil
 // - 校验失败：返回nil和*errors.withCode类型错误（含业务码和堆栈）
-func ValidateToken(tokenString string) (*CustomClaims, error) {
-	var jwtSecret = []byte(viper.GetString("jwt.key"))
+func ValidateToken(tokenString string, jwtKey string) (*CustomClaims, error) {
+	var jwtSecret = []byte(jwtKey)
 	// 1. 校验令牌为空场景（基础校验，优先处理）
 	if tokenString == "" {
 		log.Errorf("令牌校验失败：缺少Authorization头")

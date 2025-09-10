@@ -43,12 +43,12 @@ import (
 )
 
 type JwtOptions struct {
-	Realm      string        `json:"realm"       mapstructure:"realm"`
-	Key        string        `json:"key"         mapstructure:"key"`
-	Timeout    time.Duration `json:"timeout"     mapstructure:"timeout"`
-	MaxRefresh time.Duration `json:"max-refresh" mapstructure:"max-refresh"`
-	KeyHash    string        `json:"-" mapstructure:"-"` // 不序列化到配置文件
-	Blacklist_key_prefix string   `json:"blacklist_key_prefix" mapstructure:"blacklist_key_prefix"` 
+	Realm                string        `json:"realm"       mapstructure:"realm"`
+	Key                  string        `json:"key"         mapstructure:"key"`
+	Timeout              time.Duration `json:"timeout"     mapstructure:"timeout"`
+	MaxRefresh           time.Duration `json:"max-refresh" mapstructure:"max-refresh"`
+	KeyHash              string        `json:"-" mapstructure:"-"` // 不序列化到配置文件
+	Blacklist_key_prefix string        `json:"blacklist_key_prefix" mapstructure:"blacklist_key_prefix"`
 }
 
 /*
@@ -59,10 +59,11 @@ ApplyTo()：将经过外部修改后的最终配置同步回主配置，确保�
 
 func NewJwtOptions() *JwtOptions {
 	return &JwtOptions{
-		Realm:      "github.com/maxiaolu1981/cretem",
-		Key:        "",
-		Timeout:    24 * time.Hour,
-		MaxRefresh: 7 * 27 * time.Hour,
+		Realm:                "github.com/maxiaolu1981/cretem",
+		Key:                  "",
+		Timeout:              24 * time.Hour,
+		MaxRefresh:           7 * 27 * time.Hour,
+		Blacklist_key_prefix: "jwt",
 	}
 }
 

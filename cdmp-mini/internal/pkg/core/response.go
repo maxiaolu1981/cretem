@@ -45,7 +45,7 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 	// 处理成功场景
 	c.JSON(http.StatusOK, gin.H{
 		"code":    successCode,
-		"message": data,
+		"message": "成功",
 		"data":    data,
 	})
 }
