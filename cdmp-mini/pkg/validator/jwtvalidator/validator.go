@@ -16,6 +16,7 @@ type CustomClaims struct {
 	Username             string `json:"username"` // 可选：用户名
 	Role                 string `json:"role"`     // 可选：用户角色
 	jwt.RegisteredClaims        // JWT标准声明（包含过期时间等）
+	Type                 string `json:"type"`
 }
 
 // ValidateToken 校验JWT令牌有效性（完全适配你的withCode错误体系）

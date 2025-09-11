@@ -163,11 +163,12 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 	if !ok {
 		return fmt.Errorf("转换jwtStrategy错误")
 	}
-	g.Handle(http.MethodPost, "/login", createAutHandler(jwt.LoginHandler))
-
-	g.Handle(http.MethodDelete, "/logout", createAutHandler(jwt.LogoutHandler))
-
-	g.Handle(http.MethodPost, "/refresh", createAutHandler(jwt.RefreshHandler))
+	// 登录：使用 gin-jwt 的 LoginHandler（需要认证中间件）
+	g.Handle(http.MethodPost, "/login", createAutHandler(), jwt.LoginHandler)
+	// 登出：使用你的自定义实现（不需要 gin-jwt 认证）
+	g.Handle(http.MethodPost, "logout", createAutHandler(), g.logoutRespons)
+	// 刷新：使用 gin-jwt 的 RefreshHandler（需要认证中间件
+	g.POST("/refresh", jwt.MiddlewareFunc(), jwt.RefreshHandler)
 
 	return nil
 }
@@ -215,7 +216,7 @@ func (g *GenericAPIServer) installApiRoutes() error {
 	return nil
 }
 
-func createAutHandler(jwtHandler gin.HandlerFunc) gin.HandlerFunc {
+func createAutHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		contentType := c.ContentType()
 		if !strings.HasPrefix(strings.ToLower(contentType), "application/json") {
@@ -228,6 +229,7 @@ func createAutHandler(jwtHandler gin.HandlerFunc) gin.HandlerFunc {
 		log.Infof("[createAutHandler] 原始Authorization头：[%q]，长度：%d", rawAuthHeader, len(rawAuthHeader))
 		// 将原始头存入上下文，键名自定义（如 "raw_auth_header"）
 		c.Set("raw_auth_header", rawAuthHeader)
-		jwtHandler(c) // 格式正确才进入实际登录逻辑
+		//jwtHandler(c) // 格式正确才进入实际登录逻辑
+		c.Next()
 	}
 }
