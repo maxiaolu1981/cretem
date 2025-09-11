@@ -270,6 +270,10 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		log.Errorf("重置登录次数失败:username=%s,error=%v", login.Username, err)
 	}
 
+	// 存入Redis，key是sessionID，value是一个结构体，包含refreshToken、userId等信
+
+	//设置user
+	c.Set("current_user", user)
 	//更新登录时间：忽略非关键错误（仅日志记录，不阻断认证）
 	user.LoginedAt = time.Now()
 	if updateErr := interfaces.Client().Users().Update(c, user, metav1.UpdateOptions{}); updateErr != nil {
@@ -279,7 +283,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	// 5. 关键：打印返回前的用户数据，确认有效
 	log.Debugf("authenticate: 成功返回用户数据，username=%s，InstanceID=%s，user=%+v",
 		user.Name, user.InstanceID, user)
-	c.Set("current_user", user)
+
 	return user, nil
 }
 
@@ -288,6 +292,8 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 	token := c.GetHeader("Authorization")
 	claims, err := jwtvalidator.ValidateToken(token, g.options.JwtOptions.Key)
 	if err != nil {
+		// 降级处理：只清理客户端Cookie
+		g.clearAuthCookies(c)
 		if !errors.IsWithCode(err) {
 			// 非预期错误类型，返回默认未授权
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -321,44 +327,49 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 		return
 	}
 
-	//处理黑名单
-	expTimestamp := claims.ExpiresAt.Time
-	jti := claims.ID
-	if err := g.addTokenToBlacklist(jti, expTimestamp); err != nil {
-		log.Errorf("将令牌加入黑名单失败: jti=%s, error=%v", jti, err)
-		c.JSON(http.StatusBadRequest, gin.H{
-			"code":    code.ErrInternal,
-			"message": "将令牌加入黑名单失败",
-		})
-		return
-	}
+	//异步或后台执行可能失败的操作（黑名单、会话清理）
+	go g.executeBackgroundCleanup(claims)
 
-	//删除刷新令牌（从框架上下文的"refresh_token"键获取，框架内置键名）
-	refreshToken, rtExists := c.Get("refresh_token")
-	if !rtExists {
-		log.Warnf("上下文未找到refresh_token，跳过删除刷新令牌步骤")
-	} else {
-		rtStr, rtOk := refreshToken.(string)
-		if !rtOk {
-			log.Warnf("refresh_token类型错误，跳过删除刷新令牌步骤")
-		} else if err := g.deleteRefreshToken(rtStr); err != nil {
-			log.Warnf("删除刷新令牌失败:error=%v", err)
-		}
-	}
-	//  从用户会话集合中移除刷新令牌
-	if refreshToken, rtExists := c.Get("refresh_token"); rtExists {
-		rtStr, rtOk := refreshToken.(string)
-		if !rtOk {
-			log.Warnf("refresh_token类型错误，跳过从用户会话移除步骤")
-		} else if err := g.removeRefreshTokenFromUserSessions(claims.UserID, rtStr); err != nil {
-			log.Warnf("从用户会话移除刷新令牌失败: user_id=%s, error=%v", claims.UserID, err)
-		}
-	}
+	//【关键】同步执行必须成功的操作（清理客户端Cookie）
+	g.clearAuthCookies(c)
 
 	// 4. 登出成功响应
 	log.Infof("登出成功，user_id=%s", claims.UserID)
 	// 🔧 优化4：成功场景也通过core.WriteResponse，确保格式统一（code=成功码，message=成功消息）
 	core.WriteResponse(c, nil, "登出成功")
+}
+
+func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomClaims) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	userID := claims.UserID
+	userSessionsKey := redisUserSessionsPrefix + userID
+	jti := claims.ID
+	expTimestamp := claims.ExpiresAt.Time
+
+	//将当前令牌加入黑名单（即使获取集合失败也要执行）
+	if err := g.addTokenToBlacklist(ctx, jti, expTimestamp); err != nil {
+		log.Errorf("将令牌加入黑名单失败: jti=%s, error=%v", jti, err)
+	}
+	// 2. 删除整个用户会话集合（使所有Refresh Token自然失效）
+	if g.redis.DeleteRawKey(ctx, userSessionsKey) {
+		log.Error("删除用户会话集合失败")
+	} else {
+		log.Infof("用户会话集合不存在，无需删除: user_id=%s", userID)
+	}
+}
+
+// clearAuthCookies 清理客户端Cookie
+func (g *GenericAPIServer) clearAuthCookies(c *gin.Context) {
+	domain := g.options.ServerRunOptions.CookieDomain
+	secure := g.options.ServerRunOptions.CookieSecure
+
+	// 清理访问令牌和刷新令牌Cookie
+	c.SetCookie("access_token", "", -1, "/", domain, secure, true)
+	c.SetCookie("refresh_token", "", -1, "/", domain, secure, true)
+
+	log.Debugf("客户端Cookie已清理")
 }
 
 //go:noinline  // 告诉编译器不要内联此函数
@@ -494,7 +505,7 @@ func authorizator() func(data interface{}, c *gin.Context) bool {
 	}
 }
 
-func (g *GenericAPIServer) generateNewAccessToken(c *gin.Context) (string, string, error) {
+func (g *GenericAPIServer) generateRefreshTokenAndGetID(c *gin.Context) (string, string, error) {
 	userVal, exists := c.Get("current_user")
 	if !exists {
 		log.Errorf("loginResponse: 上下文未找到用户数据（键：%s）", jwt.IdentityKey)
@@ -518,7 +529,7 @@ func (g *GenericAPIServer) generateNewAccessToken(c *gin.Context) (string, strin
 
 func (g *GenericAPIServer) loginResponse(c *gin.Context, statusCode int, token string, expire time.Time) {
 	// 从上下文中获取用户信息
-	refreshToken, instanceID, err := g.generateNewAccessToken(c)
+	refreshToken, instanceID, err := g.generateRefreshTokenAndGetID(c)
 	if err != nil {
 		core.WriteResponse(c, err, nil)
 		return
@@ -527,6 +538,11 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, statusCode int, token s
 	if err := g.storeRefreshToken(instanceID, refreshToken, g.options.JwtOptions.MaxRefresh); err != nil {
 		log.Warnf("存储刷新令牌失败:error=%v", err)
 	}
+
+	if err := g.setAuthCookies(c, token, refreshToken, expire); err != nil {
+		log.Warnf("设置认证Cookie失败: %v", err)
+	}
+
 	//加日志：记录当前响应函数被调用
 	core.WriteResponse(c, nil, map[string]string{
 		"access_token":  token,
@@ -590,7 +606,7 @@ func (g *GenericAPIServer) refreshResponse(c *gin.Context, codef int, token stri
 	// 4. 设置上下文（为了后续函数）
 	c.Set("current_user", user)
 
-	token, _, err = g.generateNewAccessToken(c)
+	token, _, err = g.generateRefreshTokenAndGetID(c)
 	if err != nil {
 		core.WriteResponse(c, err, nil)
 		return
@@ -866,7 +882,7 @@ func (g *GenericAPIServer) restLoginFailCount(username string) error {
 
 func (g *GenericAPIServer) storeRefreshToken(userID, refreshToken string, expire time.Duration) error {
 	if !g.checkRedisAlive() {
-		log.Warn("Redis不可用，无法删除刷新令牌")
+		log.Warn("Redis不可用，无法存储刷新令牌")
 	}
 	rtKey := redisRefreshTokenPrefix + refreshToken
 	if err := g.redis.SetRawKey(
@@ -875,7 +891,7 @@ func (g *GenericAPIServer) storeRefreshToken(userID, refreshToken string, expire
 		userID,
 		expire,
 	); err != nil {
-		log.Warnf("添加刷新令牌到用户会话集合失败: user_id=%s, error=%v", userID, err)
+		log.Warnf("添加刷新令牌失败: user_id=%s, error=%v", userID, err)
 	}
 
 	userSessionsKey := redisUserSessionsPrefix + userID
@@ -895,24 +911,42 @@ func (g *GenericAPIServer) storeRefreshToken(userID, refreshToken string, expire
 		log.Warnf("设置令牌失效时间: %v", err)
 		return err
 	}
-
+	log.Debugf("刷新令牌存储成功: 单会话key=%s,用户会话key=%s", rtKey, userSessionsKey)
 	return nil
 }
 
-func (g *GenericAPIServer) deleteRefreshToken(refreshToken string) error {
+func (g *GenericAPIServer) setAuthCookies(c *gin.Context, accessToken, refreshToken string, accessTokenExpire time.Time) error {
+	domain := g.options.ServerRunOptions.CookieDomain // 从配置获取域名
+	secure := g.options.ServerRunOptions.CookieSecure // 是否仅HTTPS
+
+	// 计算Cookie过期时间（秒数）
+	accessTokenMaxAge := int(time.Until(accessTokenExpire).Seconds())
+	refreshTokenMaxAge := int(g.options.JwtOptions.MaxRefresh.Seconds())
+
+	// 设置Access Token Cookie
+	c.SetCookie("access_token", accessToken, accessTokenMaxAge, "/", domain, secure, true)
+
+	// 设置Refresh Token Cookie
+	c.SetCookie("refresh_token", refreshToken, refreshTokenMaxAge, "/", domain, secure, true)
+
+	log.Debugf("认证Cookie设置成功: domain=%s, secure=%t", domain, secure)
+	return nil
+}
+
+func (g *GenericAPIServer) deleteRefreshToken(ctx context.Context, refreshToken string) error {
 	if !g.checkRedisAlive() {
 		log.Warn("Redis不可用，无法删除刷新令牌")
 		return errors.New("无法删除刷新令牌")
 	}
 
 	rtKey := redisRefreshTokenPrefix + refreshToken
-	if !g.redis.DeleteRawKey(context.TODO(), rtKey) {
+	if !g.redis.DeleteRawKey(ctx, rtKey) {
 		return errors.New("删除刷新令牌错误")
 	}
 	return nil
 }
 
-func (g *GenericAPIServer) removeRefreshTokenFromUserSessions(userID, refreshToken string) error {
+func (g *GenericAPIServer) removeRefreshTokenFromUserSessions(ctx context.Context, userID, refreshToken string) error {
 	if !g.checkRedisAlive() {
 		log.Warnf("Redis不可用，无法从用户会话移除刷新令牌: user_id=%s", userID)
 		return nil
@@ -920,7 +954,7 @@ func (g *GenericAPIServer) removeRefreshTokenFromUserSessions(userID, refreshTok
 
 	userSessionsKey := redisUserSessionsPrefix + userID
 	if err := g.redis.RemoveFromSet(
-		context.TODO(),
+		ctx,
 		userSessionsKey,
 		refreshToken,
 	); err != nil {
@@ -929,7 +963,7 @@ func (g *GenericAPIServer) removeRefreshTokenFromUserSessions(userID, refreshTok
 	return nil
 }
 
-func (g *GenericAPIServer) addTokenToBlacklist(jti string, expireAt time.Time) error {
+func (g *GenericAPIServer) addTokenToBlacklist(ctx context.Context, jti string, expireAt time.Time) error {
 	if !g.checkRedisAlive() {
 		return errors.WithCode(code.ErrInternal, "系统缓存不可用，无法注销令牌")
 	}
@@ -941,7 +975,7 @@ func (g *GenericAPIServer) addTokenToBlacklist(jti string, expireAt time.Time) e
 	}
 	// 使用SetRawKey存储黑名单键值对
 	if err := g.redis.SetRawKey(
-		context.TODO(),
+		ctx,
 		key,
 		"1",
 		expire,

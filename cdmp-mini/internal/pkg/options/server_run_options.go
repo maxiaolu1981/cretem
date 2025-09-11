@@ -68,8 +68,11 @@ Mode - 服务器运行模式（debug/test/release）
 package options
 
 import (
+	"strings"
+
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/sets"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
 	"github.com/spf13/pflag"
 )
@@ -80,6 +83,9 @@ type ServerRunOptions struct {
 	Middlewares     []string `json:"middlewares" mapstructure:"middlewares"`
 	EnableProfiling bool
 	EnableMetrics   bool
+	// 新增：Cookie相关配置
+	CookieDomain string `json:"cookieDomain"    mapstructure:"cookieDomain"`
+	CookieSecure bool   `json:"cookieSecure"    mapstructure:"cookieSecure"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -90,6 +96,8 @@ func NewServerRunOptions() *ServerRunOptions {
 		Middlewares:     []string{},
 		EnableProfiling: true,
 		EnableMetrics:   true,
+		CookieDomain:    "",
+		CookieSecure:    false,
 	}
 }
 
@@ -99,6 +107,8 @@ func (s *ServerRunOptions) Complete() {
 	s.Healthz = true
 	s.Middlewares = s.completeSlice(s.Middlewares, s.Middlewares)
 	s.EnableMetrics = true
+	s.CookieDomain = ""
+	s.CookieSecure = false
 }
 
 func (s *ServerRunOptions) Validate() []error {
@@ -110,6 +120,40 @@ func (s *ServerRunOptions) Validate() []error {
 		if !set.Has(s.Mode) {
 			errs = append(errs, field.Invalid(path.Child("mode"), s.Mode, "无效的mode模式"))
 		}
+	}
+	// 2. 验证CookieDomain
+	if s.CookieDomain != "" {
+		domainToValidate := s.CookieDomain
+		// 处理通配符域名（如 ".example.com"）
+		if strings.HasPrefix(domainToValidate, ".") {
+			domainToValidate = strings.TrimPrefix(domainToValidate, ".")
+			if domainToValidate == "" {
+				errs = append(errs, field.Invalid(
+					path.Child("cookieDomain"),
+					s.CookieDomain,
+					"Cookie域名不能仅为点号",
+				))
+			}
+		}
+
+		// 使用标准的DNS验证
+		if validationErrs := validation.IsDNS1123Subdomain(domainToValidate); len(validationErrs) > 0 {
+			for _, err := range validationErrs {
+				errs = append(errs, field.Invalid(
+					path.Child("cookieDomain"),
+					s.CookieDomain,
+					"Cookie域名格式无效: "+err,
+				))
+			}
+		}
+	}
+	// 3. 验证CookieSecure的合理性
+	if s.CookieSecure && s.Mode == gin.DebugMode {
+		errs = append(errs, field.Invalid(
+			path.Child("cookieSecure"),
+			s.CookieSecure,
+			"调试模式下不应启用Secure Cookie（建议设置为false）",
+		))
 	}
 	agg := errs.ToAggregate()
 	if agg == nil {
@@ -125,8 +169,14 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVarP(&s.Healthz, "server.healthz", "z", s.Healthz, ""+
 		"启用健康检查并安装 /healthz 路由。")
 
+	fs.BoolVarP(&s.CookieSecure, "server.cookieSecure", "c", s.CookieSecure, ""+
+		"启用cookie安全设置(建议在生成环境下开启。")
+		
+	fs.StringVarP(&s.CookieDomain, "server.cookieDomain", "C", s.CookieDomain, ""+
+		"指定cookie对域的限制.空字符串表示任何域都可以绑定cookie")
 	fs.StringSliceVarP(&s.Middlewares, "server.middlewares", "w", s.Middlewares, ""+
 		"服务器允许的中间件列表，逗号分隔。如果列表为空，将使用默认中间件。")
+
 }
 
 func (s *ServerRunOptions) completeString(value, defaultValue string, validValues []string) string {

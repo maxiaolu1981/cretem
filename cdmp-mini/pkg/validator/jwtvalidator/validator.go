@@ -52,7 +52,7 @@ func ValidateToken(tokenString string, jwtKey string) (*CustomClaims, error) {
 		func(token *jwt.Token) (interface{}, error) {
 			// 校验签名算法是否为预期的HMAC类型（防止算法篡改）
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				errMsg := "unsupported signing method: %v"
+				errMsg := "签名方法不支持: %v"
 				log.Errorf(errMsg, token.Header["alg"])
 				return nil, errors.WithCode(
 					code.ErrTokenInvalid, // 100208（算法不支持属于令牌无效）
