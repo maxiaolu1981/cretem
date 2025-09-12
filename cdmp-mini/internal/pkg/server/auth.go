@@ -13,6 +13,8 @@ import (
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
+
 	gojwt "github.com/golang-jwt/jwt/v4"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 
@@ -121,11 +123,11 @@ func newJWTAuth(g *GenericAPIServer) (middleware.AuthStrategy, error) {
 		Authorizator:          authorizator(),
 		HTTPStatusMessageFunc: errors.HTTPStatusMessageFunc,
 		LoginResponse: func(c *gin.Context, statusCode int, token string, expire time.Time) {
-			g.loginResponse(c, statusCode, token, expire)
+			g.loginResponse(c, token, expire)
 		},
-		RefreshResponse: func(c *gin.Context, codef int, token string, expire time.Time) {
-			g.refreshResponse(c, codef, token, expire)
-		},
+		// RefreshResponse: func(c *gin.Context, codef int, token string, expire time.Time) {
+		// 	g.refreshResponse(c)
+		// },
 		Unauthorized: handleUnauthorized,
 	})
 	if err != nil {
@@ -213,6 +215,7 @@ func (g *GenericAPIServer) identityHandler(c *gin.Context) interface{} {
 func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	var login loginInfo
 	var err error
+	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
 	// 1. 解析认证信息（Header/Body）：透传解析错误（已携带正确错误码）
 	if authHeader := c.Request.Header.Get("Authorization"); authHeader != "" {
 		login, err = parseWithHeader(c) // 之前已修复：返回 Basic 认证相关错误码（如 ErrInvalidAuthHeader）
@@ -227,7 +230,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	//检查登录异常
 	failCount, err := g.getLoginFailCount(c, login.Username)
 	if err != nil {
-		log.Debugf("%v", err)
+		log.Warnf("%v查询登录异常失败", err)
 	}
 	if failCount > maxLoginFails {
 		err := errors.WithCode(code.ErrPasswordIncorrect, "登录失败次数太多,15分钟后重试")
@@ -253,7 +256,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	//查询用户信息：透传 store 层错误（store 已按场景返回对应码）
 	user, err := interfaces.Client().Users().Get(c, login.Username, metav1.GetOptions{})
 	if err != nil {
-		log.Errorf("get user information failed: username=%s, error=%v", login.Username, err)
+		log.Errorf("获取用户信息失败: username=%s, error=%v", login.Username, err)
 		recordErrorToContext(c, err)
 		return nil, err
 	}
@@ -269,9 +272,6 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	if err := g.restLoginFailCount(login.Username); err != nil {
 		log.Errorf("重置登录次数失败:username=%s,error=%v", login.Username, err)
 	}
-
-	// 存入Redis，key是sessionID，value是一个结构体，包含refreshToken、userId等信
-
 	//设置user
 	c.Set("current_user", user)
 	//更新登录时间：忽略非关键错误（仅日志记录，不阻断认证）
@@ -283,7 +283,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	// 5. 关键：打印返回前的用户数据，确认有效
 	log.Debugf("authenticate: 成功返回用户数据，username=%s，InstanceID=%s，user=%+v",
 		user.Name, user.InstanceID, user)
-
+	log.Debugf("正确退出调用方法:%s", c.HandlerName())
 	return user, nil
 }
 
@@ -291,9 +291,12 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 	// 获取请求头中的令牌（带Bearer前缀）
 	token := c.GetHeader("Authorization")
 	claims, err := jwtvalidator.ValidateToken(token, g.options.JwtOptions.Key)
+
+	g.clearAuthCookies(c)
+
 	if err != nil {
 		// 降级处理：只清理客户端Cookie
-		g.clearAuthCookies(c)
+
 		if !errors.IsWithCode(err) {
 			// 非预期错误类型，返回默认未授权
 			c.JSON(http.StatusBadRequest, gin.H{
@@ -330,9 +333,6 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 	//异步或后台执行可能失败的操作（黑名单、会话清理）
 	go g.executeBackgroundCleanup(claims)
 
-	//【关键】同步执行必须成功的操作（清理客户端Cookie）
-	g.clearAuthCookies(c)
-
 	// 4. 登出成功响应
 	log.Infof("登出成功，user_id=%s", claims.UserID)
 	// 🔧 优化4：成功场景也通过core.WriteResponse，确保格式统一（code=成功码，message=成功消息）
@@ -345,19 +345,45 @@ func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomC
 
 	userID := claims.UserID
 	userSessionsKey := redisUserSessionsPrefix + userID
-	jti := claims.ID
-	expTimestamp := claims.ExpiresAt.Time
 
-	//将当前令牌加入黑名单（即使获取集合失败也要执行）
-	if err := g.addTokenToBlacklist(ctx, jti, expTimestamp); err != nil {
-		log.Errorf("将令牌加入黑名单失败: jti=%s, error=%v", jti, err)
+	// 1. 获取用户的所有Refresh Token
+	tokens, err := g.redis.GetSet(ctx, userSessionsKey)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		log.Errorf("获取用户会话失败: %v", err)
+		return
 	}
-	// 2. 删除整个用户会话集合（使所有Refresh Token自然失效）
-	if g.redis.DeleteRawKey(ctx, userSessionsKey) {
-		log.Error("删除用户会话集合失败")
+
+	// 2. 使所有Refresh Token失效
+	for _, refreshToken := range tokens {
+		rtKey := redisRefreshTokenPrefix + refreshToken // ✅ 正确的拼接顺序
+		if deleted, err := g.redis.DeleteKey(ctx, rtKey); err != nil {
+			log.Warnf("删除Refresh Token失败: %s, error=%v", refreshToken, err)
+		} else if deleted {
+			log.Infof("Refresh Token已失效: %s", refreshToken)
+		} else {
+			log.Warnf("Refresh Token不存在: %s", refreshToken)
+		}
+	}
+
+	// 3. 删除用户会话集合
+	if deleted, err := g.redis.DeleteKey(ctx, userSessionsKey); err != nil {
+		log.Errorf("删除用户会话集合失败: user_id=%s, error=%v", userID, err)
+	} else if deleted {
+		log.Infof("用户会话集合已删除: user_id=%s", userID)
 	} else {
 		log.Infof("用户会话集合不存在，无需删除: user_id=%s", userID)
 	}
+
+	// 4. 将当前Access Token加入黑名单
+	jti := claims.ID
+	expTimestamp := claims.ExpiresAt.Time
+	if err := g.addTokenToBlacklist(ctx, jti, expTimestamp); err != nil {
+		log.Errorf("将Access Token加入黑名单失败: jti=%s, error=%v", jti, err)
+	} else {
+		log.Infof("Access Token已加入黑名单: jti=%s, user_id=%s", jti, userID)
+	}
+
+	log.Debugf("登出-用户会话Key: %s", userSessionsKey)
 }
 
 // clearAuthCookies 清理客户端Cookie
@@ -467,7 +493,7 @@ func (g *GenericAPIServer) payload(data interface{}) jwt.MapClaims {
 		claims["sub"] = u.Name
 		//先写死，后面再调整
 		claims["role"] = "admin"
-		claims["user_id"] = u.ID
+		claims["user_id"] = strconv.FormatUint(u.ID, 10)
 		claims["type"] = "refresh"
 
 	}
@@ -505,38 +531,41 @@ func authorizator() func(data interface{}, c *gin.Context) bool {
 	}
 }
 
-func (g *GenericAPIServer) generateRefreshTokenAndGetID(c *gin.Context) (string, string, error) {
+func (g *GenericAPIServer) generateRefreshTokenAndGetID(c *gin.Context) (string, uint64, int64, error) {
 	userVal, exists := c.Get("current_user")
 	if !exists {
 		log.Errorf("loginResponse: 上下文未找到用户数据（键：%s）", jwt.IdentityKey)
-		return "", "", errors.WithCode(code.ErrUserNotFound, "未找到用户信息")
+		return "", 0, 0, errors.WithCode(code.ErrUserNotFound, "未找到用户信息")
 	}
 	// 类型断言为 *v1.User（与 Authenticator 返回的类型一致）
 	user, ok := userVal.(*v1.User)
 	if !ok {
 		log.Errorf("loginResponse: 用户数据类型错误，预期 *v1.User，实际 %T", userVal)
-		return "", "", errors.WithCode(code.ErrBind, " 错误绑定")
+		return "", 0, 0, errors.WithCode(code.ErrBind, " 错误绑定")
 	}
 
 	// 1. 手动生成刷新令牌
-	refreshToken, err := g.generateRefreshToken(user)
+	refreshToken, exp, err := g.generateRefreshToken(user)
 	if err != nil {
 		log.Errorf("生成刷新令牌失败: %v", err)
-		return "", "", errors.WithCode(code.ErrTokenInvalid, "生成刷新令牌失败")
+		return "", 0, 0, errors.WithCode(code.ErrTokenInvalid, "生成刷新令牌失败")
 	}
-	return refreshToken, user.InstanceID, nil
+	return refreshToken, user.ID, exp, nil
 }
 
-func (g *GenericAPIServer) loginResponse(c *gin.Context, statusCode int, token string, expire time.Time) {
+func (g *GenericAPIServer) loginResponse(c *gin.Context, token string, expire time.Time) {
+	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
 	// 从上下文中获取用户信息
-	refreshToken, instanceID, err := g.generateRefreshTokenAndGetID(c)
+	refreshToken, userid, _, err := g.generateRefreshTokenAndGetID(c)
 	if err != nil {
 		core.WriteResponse(c, err, nil)
 		return
 	}
 	//存储到redis中
-	if err := g.storeRefreshToken(instanceID, refreshToken, g.options.JwtOptions.MaxRefresh); err != nil {
+	if err := g.storeRefreshToken(strconv.FormatUint(userid, 10), refreshToken, g.options.JwtOptions.MaxRefresh); err != nil {
 		log.Warnf("存储刷新令牌失败:error=%v", err)
+		core.WriteResponse(c, errors.WithCode(code.ErrInternalServer, "存储刷新令牌失败:error=%v", err), nil)
+		return
 	}
 
 	if err := g.setAuthCookies(c, token, refreshToken, expire); err != nil {
@@ -550,11 +579,12 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, statusCode int, token s
 		"expire":        expire.Format(time.RFC3339),
 		"token_type":    "Bearer",
 	})
+	log.Debugf("正确退出调用方法:%s", c.HandlerName())
 }
 
-func (g *GenericAPIServer) refreshResponse(c *gin.Context, codef int, token string, expire time.Time) {
+func (g *GenericAPIServer) refreshResponse(c *gin.Context) {
 
-	debugRequestInfo(c)
+	//debugRequestInfo(c)
 	if c.Request.Method != http.MethodPost {
 		core.WriteResponse(c, errors.WithCode(code.ErrMethodNotAllowed, "必须使用post方法传输"), nil)
 		return
@@ -574,18 +604,17 @@ func (g *GenericAPIServer) refreshResponse(c *gin.Context, codef int, token stri
 		core.WriteResponse(c, errors.WithCode(code.ErrInvalidParameter, "refresh_token为空"), nil)
 		return
 	}
+	// 2. 验证Refresh Token有效性
 	rtKey := redisRefreshTokenPrefix + r.RefreshToken
-	log.Debugf("查询刷新令牌的Redis键: %s", rtKey) // 新增日志，确认键格式
-	userid, err := g.redis.GetRawKey(c, rtKey)
+	userid, err := g.redis.GetKey(c, rtKey)
 	if err != nil {
-		log.Warn("系统服务出现问题,请稍后再试")
-		core.WriteResponse(c, errors.WithCode(code.ErrUnknown, "系统服务出现问题,请稍后再试"), nil)
+		log.Warn("系查询刷新令牌的userid键")
+		core.WriteResponse(c, errors.WithCode(code.ErrUnknown, "系查询刷新令牌的Redis键"), nil)
 		return
 	}
-
 	if userid == "" {
 		log.Warn("刷新令牌授权已经过期,请重新登录")
-		core.WriteResponse(c, errors.WithCode(code.ErrExpired, "令牌已经过期,请重新登录"), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrRespCodeRTRevoked, "刷新令牌已经过期,请重新登录"), nil)
 		return
 	}
 
@@ -595,6 +624,24 @@ func (g *GenericAPIServer) refreshResponse(c *gin.Context, codef int, token stri
 		core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "无法识别用户身份"), nil)
 		return
 	}
+	// 4. 验证用户一致性（可选但推荐）
+	if claims["user_id"] != userid {
+		core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "用户身份不匹配"), nil)
+		return
+	}
+
+	// 3. 验证Refresh Token是否在户会话集合中
+	userSessionsKey := redisUserSessionsPrefix + userid
+	isMember, err := g.redis.IsMemberOfSet(c, userSessionsKey, r.RefreshToken)
+	if err != nil {
+		log.Errorf("验证Refresh Token会话失败: %v", err)
+		core.WriteResponse(c, errors.WithCode(code.ErrInternal, "系统服务异常"), nil)
+		return
+	}
+	if !isMember {
+		core.WriteResponse(c, errors.WithCode(code.ErrExpired, "刷新令牌已失效，请重新登录"), nil)
+		return
+	}
 
 	user, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{})
 	if err != nil {
@@ -602,27 +649,51 @@ func (g *GenericAPIServer) refreshResponse(c *gin.Context, codef int, token stri
 		core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "用户不存在"), nil)
 		return
 	}
-
 	// 4. 设置上下文（为了后续函数）
 	c.Set("current_user", user)
 
-	token, _, err = g.generateRefreshTokenAndGetID(c)
+	newAccessToken, exp, err := g.generateAccessTokenAndGetID(c)
 	if err != nil {
-		core.WriteResponse(c, err, nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrInternal, "访问令牌生成错误%v", err), nil)
 		return
 	}
 
-	expireIn := int64(expire.Sub(time.Now()).Seconds())
+	expireIn := int64(time.Until(exp).Seconds())
 	// 避免负数（若已过期，强制设为0）
 	if expireIn < 0 {
 		expireIn = 0
 	}
 
 	core.WriteResponse(c, nil, map[string]string{
-		"access_token": token,
+		"access_token": newAccessToken,
 		"expire_in":    strconv.Itoa(int(expireIn)),
 		"token_type":   "Bearer",
 	})
+}
+
+func (g *GenericAPIServer) generateAccessTokenAndGetID(c *gin.Context) (string, time.Time, error) {
+	user := c.MustGet("current_user").(*v1.User)
+
+	// 使用短的过期时间（AT的过期时间）
+	expireTime := time.Now().Add(g.options.JwtOptions.Timeout) // 如15分钟
+	exp := expireTime.Unix()
+	claims := gojwt.MapClaims{
+		"iss":     APIServerIssuer,
+		"aud":     APIServerAudience,
+		"iat":     time.Now().Unix(),
+		"exp":     exp,
+		"jti":     idutil.GetUUID36("access_"),
+		"sub":     user.Name,
+		"user_id": user.ID,
+		"type":    "access", // 明确标记为Access Token
+	}
+
+	token := gojwt.NewWithClaims(gojwt.SigningMethodHS256, claims)
+	accessToken, err := token.SignedString([]byte(g.options.JwtOptions.Key))
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return accessToken, expireTime, nil
 }
 
 // newAutoAuth 创建Auto认证策略（处理所有错误场景，避免panic）
@@ -682,11 +753,12 @@ func recordErrorToContext(c *gin.Context, err error) {
 //   - httpCode: HTTPStatusMessageFunc映射后的HTTP状态码
 //   - message: HTTPStatusMessageFunc映射后的基础错误消息
 func handleUnauthorized(c *gin.Context, httpCode int, message string) {
+	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
 	// 1. 从上下文提取业务码（优先使用HTTPStatusMessageFunc映射后的withCode错误）
 	bizCode := extractBizCode(c, message)
 
 	// 2. 日志分级：基于业务码重要性输出差异化日志（含request-id便于追踪）
-	logWithRequestID(c, bizCode, message)
+	LogWithLevelByBizCode(c, bizCode, message)
 
 	// 3. 补充上下文信息：不同业务码返回专属指引（帮助客户端快速定位问题）
 	extraInfo := buildExtraInfo(c, bizCode)
@@ -696,57 +768,57 @@ func handleUnauthorized(c *gin.Context, httpCode int, message string) {
 
 	// 5. 统一返回响应（依赖core.WriteResponse确保格式一致）
 	core.WriteResponse(c, err, extraInfo)
-
+	log.Debugf("正确退出调用方法:%s", c.HandlerName())
 	// 6. 终止流程：防止后续中间件覆盖当前响应
 	c.Abort()
 }
 
 // extractBizCode 提取业务码（优先从c.Errors获取，降级用消息匹配）
-func extractBizCode(c *gin.Context, message string) int {
-	// 优先：从c.Errors提取带Code()方法的错误（HTTPStatusMessageFunc映射后的结果）
-	if len(c.Errors) > 0 {
-		rawErr := c.Errors.Last().Err
-		log.Debugf("[handleUnauthorized] 从c.Errors获取原始错误: %+v", rawErr)
+// func extractBizCode(c *gin.Context, message string) int {
+// 	// 优先：从c.Errors提取带Code()方法的错误（HTTPStatusMessageFunc映射后的结果）
+// 	if len(c.Errors) > 0 {
+// 		rawErr := c.Errors.Last().Err
+// 		log.Debugf("[handleUnauthorized] 从c.Errors获取原始错误: %+v", rawErr)
 
-		// 适配自定义withCode错误（必须实现Code() int方法）
-		if customErr, ok := rawErr.(interface{ Code() int }); ok {
-			bizCode := customErr.Code()
-			log.Infof("[handleUnauthorized] 从错误中提取业务码: %d（request-id: %s）",
-				bizCode, getRequestID(c))
-			return bizCode
-		}
-	}
+// 		// 适配自定义withCode错误（必须实现Code() int方法）
+// 		if customErr, ok := rawErr.(interface{ Code() int }); ok {
+// 			bizCode := customErr.Code()
+// 			log.Infof("[handleUnauthorized] 从错误中提取业务码: %d（request-id: %s）",
+// 				bizCode, getRequestID(c))
+// 			return bizCode
+// 		}
+// 	}
 
-	// 降级：若无法直接提取，基于消息文本匹配业务码（覆盖所有授权认证相关业务码）
-	msgLower := strings.ToLower(message)
-	switch {
-	case strings.Contains(msgLower, "expired"):
-		return code.ErrExpired // 100203：令牌已过期
-	case strings.Contains(msgLower, "signature") && strings.Contains(msgLower, "invalid"):
-		return code.ErrSignatureInvalid // 100202：签名无效
-	case strings.Contains(msgLower, "authorization") && strings.Contains(msgLower, "not present"):
-		return code.ErrMissingHeader // 100205：缺少Authorization头
-	case strings.Contains(msgLower, "authorization") && strings.Contains(msgLower, "invalid format"):
-		return code.ErrInvalidAuthHeader // 100204：授权头格式无效
-	case strings.Contains(msgLower, "base64") && strings.Contains(msgLower, "decode"):
-		return code.ErrBase64DecodeFail // 100209：Basic认证Base64解码失败
-	case strings.Contains(msgLower, "basic") && strings.Contains(msgLower, "payload"):
-		return code.ErrInvalidBasicPayload // 100210：Basic认证payload格式无效
-	case strings.Contains(msgLower, "invalid") && (strings.Contains(msgLower, "token") || strings.Contains(msgLower, "jwt")):
-		return code.ErrTokenInvalid // 100208：令牌无效
-	case strings.Contains(msgLower, "password") && strings.Contains(msgLower, "incorrect"):
-		return code.ErrPasswordIncorrect // 100206：密码不正确
-	case strings.Contains(msgLower, "permission") && strings.Contains(msgLower, "denied"):
-		return code.ErrPermissionDenied // 100207：权限不足
-	default:
-		log.Warnf("[handleUnauthorized] 未匹配到业务码，使用默认未授权码（request-id: %s），原始消息: %s",
-			getRequestID(c), message)
-		return code.ErrUnauthorized // 110003：默认未授权
-	}
-}
+// 	// 降级：若无法直接提取，基于消息文本匹配业务码（覆盖所有授权认证相关业务码）
+// 	msgLower := strings.ToLower(message)
+// 	switch {
+// 	case strings.Contains(msgLower, "expired"):
+// 		return code.ErrExpired // 100203：令牌已过期
+// 	case strings.Contains(msgLower, "signature") && strings.Contains(msgLower, "invalid"):
+// 		return code.ErrSignatureInvalid // 100202：签名无效
+// 	case strings.Contains(msgLower, "authorization") && strings.Contains(msgLower, "not present"):
+// 		return code.ErrMissingHeader // 100205：缺少Authorization头
+// 	case strings.Contains(msgLower, "authorization") && strings.Contains(msgLower, "invalid format"):
+// 		return code.ErrInvalidAuthHeader // 100204：授权头格式无效
+// 	case strings.Contains(msgLower, "base64") && strings.Contains(msgLower, "decode"):
+// 		return code.ErrBase64DecodeFail // 100209：Basic认证Base64解码失败
+// 	case strings.Contains(msgLower, "basic") && strings.Contains(msgLower, "payload"):
+// 		return code.ErrInvalidBasicPayload // 100210：Basic认证payload格式无效
+// 	case strings.Contains(msgLower, "invalid") && (strings.Contains(msgLower, "token") || strings.Contains(msgLower, "jwt")):
+// 		return code.ErrTokenInvalid // 100208：令牌无效
+// 	case strings.Contains(msgLower, "password") && strings.Contains(msgLower, "incorrect"):
+// 		return code.ErrPasswordIncorrect // 100206：密码不正确
+// 	case strings.Contains(msgLower, "permission") && strings.Contains(msgLower, "denied"):
+// 		return code.ErrPermissionDenied // 100207：权限不足
+// 	default:
+// 		log.Warnf("[handleUnauthorized] 未匹配到业务码，使用默认未授权码（request-id: %s），原始消息: %s",
+// 			getRequestID(c), message)
+// 		return code.ErrUnauthorized // 110003：默认未授权
+// 	}
+// }
 
-// logWithRequestID 带request-id的分级日志（按业务码重要性划分级别）
-func logWithRequestID(c *gin.Context, bizCode int, message string) {
+// 带request-id的分级日志（按业务码重要性划分级别）
+func LogWithLevelByBizCode(c *gin.Context, bizCode int, message string) {
 	requestID := getRequestID(c)
 	switch bizCode {
 	// 安全风险：Warn级别（需重点关注，可能是恶意请求）
@@ -811,6 +883,16 @@ func buildExtraInfo(c *gin.Context, bizCode int) gin.H {
 			"suggestion":   "联系管理员授予操作权限（需包含xxx角色）",
 			"current_user": currentUser, // 正常返回当前用户信息
 		}
+	case code.ErrRespCodeRTRevoked:
+		currentUser := c.GetHeader("X-User")
+		// 优化：若 X-User 头为空，返回“未知用户”避免空值
+		if currentUser == "" {
+			currentUser = "未知用户（未携带X-User头）"
+		}
+		return gin.H{
+			"current_user": currentUser, // 正常返回当前用户信息
+			"message":      "令牌已经过期",
+		}
 	default: // 其他场景：返回空（避免冗余）
 		return gin.H{}
 	}
@@ -838,18 +920,15 @@ func isTokenInBlacklist(g *GenericAPIServer, c *gin.Context, jti string) (bool, 
 }
 
 func (g *GenericAPIServer) getLoginFailCount(ctx *gin.Context, username string) (int, error) {
-	if !g.checkRedisAlive() {
-		log.Warnf("Redis不可用,暂时跳过登录失败次数限制")
-		return 0, nil
-	}
+
 	key := redisLoginFailPrefix + username
-	log.Debugf("key:%s", key)
+	//	log.Debugf("key:%s", key)
 	val, err := g.redis.GetKey(ctx, key)
 	if err != nil {
-		if err.Error() == "redis: nil" {
-			return 0, nil
-		}
-		log.Warnf("获取登录失败次数失败:username=%s,error=%v", username, err)
+		log.Errorf("获取登录失败次数失败:username=%s,error=%v", username, err)
+		return 0, err
+	}
+	if val == "" {
 		return 0, nil
 	}
 	count, err := strconv.Atoi(val)
@@ -874,7 +953,7 @@ func (g *GenericAPIServer) restLoginFailCount(username string) error {
 		return nil
 	}
 	key := redisLoginFailPrefix + username
-	if !g.redis.DeleteKey(context.TODO(), key) {
+	if _, err := g.redis.DeleteKey(context.TODO(), key); err != nil {
 		return errors.New("重置登录次数失败")
 	}
 	return nil
@@ -883,36 +962,52 @@ func (g *GenericAPIServer) restLoginFailCount(username string) error {
 func (g *GenericAPIServer) storeRefreshToken(userID, refreshToken string, expire time.Duration) error {
 	if !g.checkRedisAlive() {
 		log.Warn("Redis不可用，无法存储刷新令牌")
+		return fmt.Errorf("redis不可用")
 	}
+
+	ctx := context.TODO()
 	rtKey := redisRefreshTokenPrefix + refreshToken
-	if err := g.redis.SetRawKey(
-		context.TODO(),
-		rtKey,
-		userID,
-		expire,
-	); err != nil {
-		log.Warnf("添加刷新令牌失败: user_id=%s, error=%v", userID, err)
-	}
-
 	userSessionsKey := redisUserSessionsPrefix + userID
-	if err := g.redis.AddToSet(
-		context.TODO(),
-		userSessionsKey,
-		refreshToken); err != nil {
-		log.Warnf("添加刷新令牌到用户会话集合失败: user_id=%s, error=%v", userID, err)
 
-	}
-
-	if err := g.redis.SetExp(
-		context.TODO(),
-		userSessionsKey,
-		expire,
-	); err != nil {
-		log.Warnf("设置令牌失效时间: %v", err)
+	// 1. 存储Refresh Token本身
+	if err := g.redis.SetKey(ctx, rtKey, userID, expire); err != nil {
+		log.Warnf("添加刷新令牌失败: user_id=%s, error=%v", userID, err)
 		return err
 	}
-	log.Debugf("刷新令牌存储成功: 单会话key=%s,用户会话key=%s", rtKey, userSessionsKey)
+
+	// 2. 添加到用户会话集合
+	if err := g.redis.AddToSet(ctx, userSessionsKey, refreshToken); err != nil {
+		log.Errorf("保存Refresh Token到用户会话失败: user_id=%s, error=%v", userID, err)
+		// 回滚：删除刚才存储的Refresh Token
+		g.redis.DeleteKey(ctx, rtKey)
+		return err
+	}
+
+	// 3. 设置集合过期时间
+	if err := g.redis.SetExp(ctx, userSessionsKey, expire); err != nil {
+		log.Warnf("设置用户会话集合过期时间失败: %v", err)
+	}
+
+	// 4. 验证保存结果（可选）
+	count, err := g.GetSetSize(ctx, userSessionsKey)
+	if err != nil {
+		log.Warnf("验证会话集合大小失败: user_id=%s, error=%v", userID, err)
+		// 不return，因为主要操作已经成功
+	} else {
+		log.Infof("用户会话集合创建成功，当前有%d个Refresh Token: user_id=%s", count, userID)
+	}
+
 	return nil
+}
+
+// 获取Set的大小（元素数量）
+func (g *GenericAPIServer) GetSetSize(ctx context.Context, keyName string) (int64, error) {
+	// 使用现有的 GetSet 方法
+	setData, err := g.redis.GetSet(ctx, keyName)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(setData)), nil
 }
 
 func (g *GenericAPIServer) setAuthCookies(c *gin.Context, accessToken, refreshToken string, accessTokenExpire time.Time) error {
@@ -930,19 +1025,6 @@ func (g *GenericAPIServer) setAuthCookies(c *gin.Context, accessToken, refreshTo
 	c.SetCookie("refresh_token", refreshToken, refreshTokenMaxAge, "/", domain, secure, true)
 
 	log.Debugf("认证Cookie设置成功: domain=%s, secure=%t", domain, secure)
-	return nil
-}
-
-func (g *GenericAPIServer) deleteRefreshToken(ctx context.Context, refreshToken string) error {
-	if !g.checkRedisAlive() {
-		log.Warn("Redis不可用，无法删除刷新令牌")
-		return errors.New("无法删除刷新令牌")
-	}
-
-	rtKey := redisRefreshTokenPrefix + refreshToken
-	if !g.redis.DeleteRawKey(ctx, rtKey) {
-		return errors.New("删除刷新令牌错误")
-	}
 	return nil
 }
 
@@ -974,7 +1056,7 @@ func (g *GenericAPIServer) addTokenToBlacklist(ctx context.Context, jti string, 
 		expire = time.Hour
 	}
 	// 使用SetRawKey存储黑名单键值对
-	if err := g.redis.SetRawKey(
+	if err := g.redis.SetKey(
 		ctx,
 		key,
 		"1",
@@ -987,14 +1069,15 @@ func (g *GenericAPIServer) addTokenToBlacklist(ctx context.Context, jti string, 
 }
 
 // generateRefreshToken 生成刷新令牌
-func (g *GenericAPIServer) generateRefreshToken(user *v1.User) (string, error) {
+func (g *GenericAPIServer) generateRefreshToken(user *v1.User) (string, int64, error) {
 
 	// 创建刷新令牌的 claims
+	exp := time.Now().Add(g.options.JwtOptions.MaxRefresh).Unix()
 	refreshClaims := gojwt.MapClaims{
 		"iss":     APIServerIssuer,
 		"aud":     APIServerAudience,
 		"iat":     time.Now().Unix(),
-		"exp":     time.Now().Add(g.options.JwtOptions.MaxRefresh).Unix(),
+		"exp":     exp,
 		"jti":     idutil.GetUUID36("refresh_"),
 		"sub":     user.Name,
 		"user_id": user.ID,
@@ -1006,10 +1089,10 @@ func (g *GenericAPIServer) generateRefreshToken(user *v1.User) (string, error) {
 
 	refreshToken, err := token.SignedString([]byte(g.options.JwtOptions.Key))
 	if err != nil {
-		return "", fmt.Errorf("签名刷新令牌失败: %w", err)
+		return "", 0, fmt.Errorf("签名刷新令牌失败: %w", err)
 	}
 
-	return refreshToken, nil
+	return refreshToken, exp, nil
 }
 
 func debugRequestInfo(c *gin.Context) {
@@ -1051,4 +1134,117 @@ func debugRequestInfo(c *gin.Context) {
 	}
 
 	log.Info("====================")
+}
+
+func extractBizCode(c *gin.Context, message string) int {
+	// 优先：从c.Errors提取带Code()方法的错误
+	if len(c.Errors) > 0 {
+		rawErr := c.Errors.Last().Err
+		log.Debugf("[handleUnauthorized] 从c.Errors获取原始错误: %+v", rawErr)
+
+		// 适配自定义withCode错误（必须实现Code() int方法）
+		if customErr, ok := rawErr.(interface{ Code() int }); ok {
+			bizCode := customErr.Code()
+			log.Infof("[handleUnauthorized] 从错误中提取业务码: %d（request-id: %s）",
+				bizCode, getRequestID(c))
+			return bizCode
+		}
+
+		// 新增：检查JWT标准错误类型
+		if bizCode := classifyJWTError(rawErr); bizCode != 0 {
+			return bizCode
+		}
+	}
+
+	// 降级：基于消息文本匹配业务码
+	msgLower := strings.ToLower(message)
+	return classifyByMessage(msgLower, c)
+}
+
+// 辅助函数：分类JWT标准错误
+func classifyJWTError(err error) int {
+	var jwtErr *gojwt.ValidationError
+	if errors.As(err, &jwtErr) {
+		switch {
+		case jwtErr.Is(gojwt.ErrTokenExpired):
+			return code.ErrExpired // 100203
+		case jwtErr.Is(gojwt.ErrTokenMalformed):
+			return code.ErrTokenInvalid // 100208
+		case jwtErr.Is(gojwt.ErrTokenNotValidYet):
+			return code.ErrTokenInvalid // 100208
+		case jwtErr.Is(gojwt.ErrTokenInvalidClaims):
+			return code.ErrTokenInvalid // 100208
+		case jwtErr.Is(gojwt.ErrTokenUnverifiable):
+			return code.ErrSignatureInvalid // 100202
+		}
+	}
+	return 0
+}
+
+// 辅助函数：基于消息内容分类
+func classifyByMessage(message string, c *gin.Context) int {
+	switch {
+	case strings.Contains(message, "expired") || strings.Contains(message, "expiry"):
+		return code.ErrExpired // 100203
+	case strings.Contains(message, "signature") && (strings.Contains(message, "invalid") || strings.Contains(message, "fail")):
+		return code.ErrSignatureInvalid // 100202
+	case containsAny(message, "authorization", "header") && containsAny(message, "missing", "not present", "empty"):
+		return code.ErrMissingHeader // 100205
+	case containsAny(message, "authorization", "header") && containsAny(message, "invalid", "format"):
+		return code.ErrInvalidAuthHeader // 100204
+	case containsAny(message, "base64") && containsAny(message, "decode", "fail"):
+		return code.ErrBase64DecodeFail // 100209
+	case containsAny(message, "basic") && containsAny(message, "payload", "format"):
+		return code.ErrInvalidBasicPayload // 100210
+	case containsAny(message, "password") && containsAny(message, "incorrect", "wrong"):
+		return code.ErrPasswordIncorrect // 100206
+	case containsAny(message, "permission", "access") && containsAny(message, "denied", "forbidden"):
+		return code.ErrPermissionDenied // 100207
+	case isJsonParseError(message):
+		return code.ErrTokenInvalid // 100208
+	case isEncodingError(message):
+		return code.ErrTokenInvalid // 100208
+	case containsAny(message, "invalid", "malformed") && containsAny(message, "token", "jwt"):
+		return code.ErrTokenInvalid // 100208
+	default:
+		log.Warnf("[handleUnauthorized] 未匹配到业务码，使用默认未授权码（request-id: %s），原始消息: %s",
+			getRequestID(c), message)
+		return code.ErrTokenInvalid // 100208（更具体的默认值）
+	}
+}
+
+// 辅助函数：检查是否包含任意一个子字符串
+func containsAny(s string, substrs ...string) bool {
+	for _, substr := range substrs {
+		if strings.Contains(s, substr) {
+			return true
+		}
+	}
+	return false
+}
+
+// 辅助函数：判断是否为JSON解析错误
+func isJsonParseError(msg string) bool {
+	patterns := []string{"json", "character", "looking for", "beginning", "value", "unmarshal", "parse"}
+	return containsMultiple(msg, patterns, 2)
+}
+
+// 辅助函数：判断是否为编码错误
+func isEncodingError(msg string) bool {
+	patterns := []string{"base64", "decode", "encoding", "invalid character", "utf-8", "hex"}
+	return containsMultiple(msg, patterns, 2)
+}
+
+// 辅助函数：检查是否包含多个模式
+func containsMultiple(s string, patterns []string, minMatch int) bool {
+	count := 0
+	for _, pattern := range patterns {
+		if strings.Contains(s, pattern) {
+			count++
+			if count >= minMatch {
+				return true
+			}
+		}
+	}
+	return false
 }

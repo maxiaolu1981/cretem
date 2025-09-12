@@ -86,7 +86,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/control/v1/user"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
@@ -168,7 +167,7 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 	// 登出：使用你的自定义实现（不需要 gin-jwt 认证）
 	g.Handle(http.MethodPost, "logout", createAutHandler(), g.logoutRespons)
 	// 刷新：使用 gin-jwt 的 RefreshHandler（需要认证中间件
-	g.POST("/refresh", jwt.MiddlewareFunc(), jwt.RefreshHandler)
+	g.POST("/refresh", jwt.MiddlewareFunc(), g.refreshResponse)
 
 	return nil
 }
@@ -226,8 +225,7 @@ func createAutHandler() gin.HandlerFunc {
 			return
 		}
 		rawAuthHeader := c.GetHeader("Authorization")
-		log.Infof("[createAutHandler] 原始Authorization头：[%q]，长度：%d", rawAuthHeader, len(rawAuthHeader))
-		// 将原始头存入上下文，键名自定义（如 "raw_auth_header"）
+
 		c.Set("raw_auth_header", rawAuthHeader)
 		//jwtHandler(c) // 格式正确才进入实际登录逻辑
 		c.Next()

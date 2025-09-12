@@ -43,6 +43,11 @@ func init() {
 		400,
 		"Basic认证 payload格式无效（需用冒号分隔用户名和密码，如 username:password）",
 	)
+	register(
+		ErrRespCodeRTRevoked,
+		403,
+		"令牌已经撤销",
+	)
 
 	// 4. 通用加解码错误（1003xx）
 	register(ErrEncodingFailed, 500, "数据编码失败")          // 500：服务端编码逻辑错误

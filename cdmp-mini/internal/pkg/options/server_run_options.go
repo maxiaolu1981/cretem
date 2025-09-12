@@ -169,10 +169,10 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVarP(&s.Healthz, "server.healthz", "z", s.Healthz, ""+
 		"启用健康检查并安装 /healthz 路由。")
 
-	fs.BoolVarP(&s.CookieSecure, "server.cookieSecure", "c", s.CookieSecure, ""+
+	fs.BoolVar(&s.CookieSecure, "server.cookieSecure", s.CookieSecure, ""+
 		"启用cookie安全设置(建议在生成环境下开启。")
-		
-	fs.StringVarP(&s.CookieDomain, "server.cookieDomain", "C", s.CookieDomain, ""+
+
+	fs.StringVar(&s.CookieDomain, "server.cookieDomain", s.CookieDomain, ""+
 		"指定cookie对域的限制.空字符串表示任何域都可以绑定cookie")
 	fs.StringSliceVarP(&s.Middlewares, "server.middlewares", "w", s.Middlewares, ""+
 		"服务器允许的中间件列表，逗号分隔。如果列表为空，将使用默认中间件。")

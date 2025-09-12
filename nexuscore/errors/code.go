@@ -227,6 +227,7 @@ var codeConstNames = map[int]string{
 	100208: "ErrTokenInvalid",
 	100209: "ErrBase64DecodeFail",
 	100210: "ErrInvalidBasicPayload",
+	100211: "ErrRespCodeRTRevoked",
 
 	// 通用加解码错误
 	100301: "ErrEncodingFailed",

@@ -28,10 +28,9 @@ const (
 	ErrMethodNotAllowed //100006
 	//ErrUnsupportedMediaType 415 不支持的Content-Type，仅支持application/json
 	ErrUnsupportedMediaType //100007
-	
-	ErrContextCanceled  //100008 408 
 
-	
+	ErrContextCanceled //100008 408
+
 )
 
 // 通用数据库错误（1001xx）：服务10 + 模块01 + 序号
@@ -74,6 +73,8 @@ const (
 
 	// 100210 ErrInvalidBasicPayload - 400: Basic认证 payload格式无效（缺少冒号分隔）
 	ErrInvalidBasicPayload
+	//100211 403 //令牌被撤销
+	ErrRespCodeRTRevoked
 )
 
 // 通用加解码错误（1003xx）：服务10 + 模块03 + 序号

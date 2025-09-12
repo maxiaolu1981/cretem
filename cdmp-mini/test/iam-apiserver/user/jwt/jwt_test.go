@@ -52,9 +52,9 @@ const (
 	// 业务码常量（根据服务端实际返回调整）
 	RespCodeSuccess       = 100001 // 成功
 	RespCodeRTRequired    = 100008 // 缺少RefreshToken（避免与成功码重复，原100001修正）
-	RespCodeRTRevoked     = 100002 // RefreshToken已撤销
+	RespCodeRTRevoked     = 100211 // RefreshToken已撤销
 	RespCodeATExpired     = 100203 // AccessToken已过期
-	RespCodeInvalidAT     = 100004 // AccessToken无效
+	RespCodeInvalidAT     = 100208 // AccessToken无效
 	RespCodeRTExpired     = 100005 // RefreshToken已过期
 	RespCodeTokenMismatch = 100006 // Token不匹配
 	RespCodeInvalidAuth   = 100007 // 认证失败（密码错误等）
@@ -289,39 +289,33 @@ func login(userID, password string) (*TestContext, *APIResponse, error) {
 // body: 请求体（如刷新接口的refresh_token JSON体）
 func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*APIResponse, error) {
 	fullURL := ServerBaseURL + path
-	// 修复：使用传入的body参数创建请求（原硬编码nil导致请求体无法传递）
 	req, err := http.NewRequest(method, fullURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	// 设置AccessToken（Bearer格式，符合JWT标准）
 	if ctx.AccessToken != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ctx.AccessToken))
 	}
 
-	// 发送请求
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求无响应: %w（URL: %s）", err, fullURL)
 	}
 	defer resp.Body.Close()
 
-	// 读取完整响应体（避免原固定缓冲区截断问题）
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("读取响应体失败: %w", err)
 	}
-	// 新增：打印响应体详情（关键调试信息）
+
 	log.Debugf("发送请求后，服务端响应体: [%s]（长度: %d字节）", string(respBody), len(respBody))
 
-	// 新增：处理空响应体场景
 	if len(respBody) == 0 {
 		return nil, fmt.Errorf("服务端返回空响应体（HTTP状态码: %d）", resp.StatusCode)
 	}
 
-	// 解析响应
 	var apiResp APIResponse
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
 		return nil, fmt.Errorf(
@@ -329,7 +323,7 @@ func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*A
 			err, truncateStr(string(respBody), 300),
 		)
 	}
-	apiResp.HTTPStatus = resp.StatusCode // 补充HTTP状态码
+	apiResp.HTTPStatus = resp.StatusCode // ✅ 关键修复：添加HTTP状态码赋值
 
 	return &apiResp, nil
 }
@@ -547,7 +541,7 @@ func TestCase3_LoginLogout(t *testing.T) {
 	fmt.Printf("验证请求地址: %s\n", refreshURL)
 	fmt.Printf("请求头: Authorization=Bearer {有效AT}\n")
 	fmt.Printf("请求体: {\"refresh_token\": \"{有效RT}\"}\n") // 注销接口可能需要RT
-	fmt.Printf("预期结果: 注销HTTP=200+业务码=%d；注销后刷新HTTP=401+业务码=%d\n", RespCodeSuccess, RespCodeRTRevoked)
+	fmt.Printf("预期结果: 注销HTTP=200+业务码=%d；注销后刷新HTTP=403+业务码=%d\n", RespCodeSuccess, RespCodeRTRevoked)
 	fmt.Println("----------------------------------------")
 
 	// 前置操作：正常登录获取令牌
@@ -623,10 +617,10 @@ func TestCase3_LoginLogout(t *testing.T) {
 		redBold.Print("❌ 用例失败：")
 		t.Fatalf("注销后刷新验证失败: %v\n\n", refreshErr)
 	}
-	if refreshResp.HTTPStatus != http.StatusUnauthorized || refreshResp.Code != RespCodeRTRevoked {
+	if refreshResp.HTTPStatus != http.StatusForbidden || refreshResp.Code != RespCodeRTRevoked {
 		redBold.Print("❌ 用例失败：")
 		t.Fatalf(
-			"注销后RT仍有效: 预期HTTP=401+业务码=%d，实际HTTP=%d+业务码=%d\n\n",
+			"注销后RT仍有效: 预期HTTP=403+业务码=%d，实际HTTP=%d+业务码=%d\n\n",
 			RespCodeRTRevoked, refreshResp.HTTPStatus, refreshResp.Code,
 		)
 	}
@@ -713,7 +707,7 @@ func TestCase4_ATExpired(t *testing.T) {
 		)
 	}
 
-	if !strings.Contains(refreshResp.Error, "expired") {
+	if !strings.Contains(refreshResp.Message, "expired") {
 		redBold.Print("❌ 用例失败：")
 		t.Fatalf("错误信息不含\"expired\": 实际错误=%s\n\n", refreshResp.Error)
 	}

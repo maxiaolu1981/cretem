@@ -371,8 +371,13 @@ func (r *RedisCluster) GetKey(ctx context.Context, keyName string) (string, erro
 
 	value, err := cluster.Get(ctx, r.fixKey(keyName)).Result()
 	if err != nil {
-		log.Debugf("Error trying to get value: %s", err.Error())
-		return "", ErrKeyNotFound
+		if errors.Is(err, redis.Nil) {
+			// Key不存在是正常情况，返回空字符串而不是错误
+			log.Debugf("Key不存在: %s", fixedKey)
+			return "", nil
+		}
+		log.Debugf("无法从reids获取相关值,redis错误 %s", err.Error())
+		return "", err // 真正的错误才返回
 	}
 	return value, nil
 }
@@ -723,17 +728,18 @@ func (r *RedisCluster) GetKeysAndValues(ctx context.Context) map[string]string {
 }
 
 // DeleteKey removes a key from the database
-func (r *RedisCluster) DeleteKey(ctx context.Context, keyName string) bool {
+func (r *RedisCluster) DeleteKey(ctx context.Context, keyName string) (bool, error) {
 	if err := r.Up(); err != nil {
-		return false
+		return false, err
 	}
 	log.Debugf("DEL Key was: %s", keyName)
 	log.Debugf("DEL Key became: %s", r.fixKey(keyName))
 	n, err := r.singleton().Del(ctx, r.fixKey(keyName)).Result()
 	if err != nil {
 		log.Errorf("Error trying to delete key: %s", err.Error())
+		return false, err
 	}
-	return n > 0
+	return n > 0, nil
 }
 
 // DeleteAllKeys removes all keys from the database
@@ -749,15 +755,16 @@ func (r *RedisCluster) DeleteAllKeys(ctx context.Context) bool {
 }
 
 // DeleteRawKey removes a key without prefix
-func (r *RedisCluster) DeleteRawKey(ctx context.Context, keyName string) bool {
+func (r *RedisCluster) DeleteRawKey(ctx context.Context, keyName string) (bool, error) {
 	if err := r.Up(); err != nil {
-		return false
+		return false, err
 	}
 	n, err := r.singleton().Del(ctx, keyName).Result()
 	if err != nil {
 		log.Errorf("Error trying to delete key: %s", err.Error())
+		return false, err
 	}
-	return n > 0
+	return n > 0, nil
 }
 
 // DeleteScanMatch removes keys matching pattern in bulk
@@ -1099,18 +1106,18 @@ func (r *RedisCluster) RemoveFromSet(ctx context.Context, keyName, value string)
 }
 
 // IsMemberOfSet checks if a value is in a set
-func (r *RedisCluster) IsMemberOfSet(ctx context.Context, keyName, value string) bool {
+func (r *RedisCluster) IsMemberOfSet(ctx context.Context, keyName, value string) (bool, error) {
 	if err := r.Up(); err != nil {
 		log.Debug(err.Error())
-		return false
+		return false, err
 	}
 	val, err := r.singleton().SIsMember(ctx, r.fixKey(keyName), value).Result()
 	if err != nil {
 		log.Errorf("Error trying to check set member: %s", err.Error())
-		return false
+		return false, err
 	}
 	log.Debugf("SISMEMBER %s %s %v %v", keyName, value, val, err)
-	return val
+	return val, nil
 }
 
 // SetRollingWindow manages a time-based rolling window
