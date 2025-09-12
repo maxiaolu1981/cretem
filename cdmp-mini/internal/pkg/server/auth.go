@@ -125,9 +125,6 @@ func newJWTAuth(g *GenericAPIServer) (middleware.AuthStrategy, error) {
 		LoginResponse: func(c *gin.Context, statusCode int, token string, expire time.Time) {
 			g.loginResponse(c, token, expire)
 		},
-		// RefreshResponse: func(c *gin.Context, codef int, token string, expire time.Time) {
-		// 	g.refreshResponse(c)
-		// },
 		Unauthorized: handleUnauthorized,
 	})
 	if err != nil {
@@ -584,6 +581,18 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, token string, expire ti
 
 func (g *GenericAPIServer) refreshResponse(c *gin.Context) {
 
+	claimsValue, exists := c.Get("jwt_claims")
+	if !exists {
+		core.WriteResponse(c, errors.WithCode(code.ErrInternal, "认证信息缺失"), nil)
+		return
+	}
+
+	claims, ok := claimsValue.(gojwt.MapClaims)
+	if !ok {
+		core.WriteResponse(c, errors.WithCode(code.ErrInvalidParameter, "Token声明无效"), nil)
+		return
+	}
+
 	//debugRequestInfo(c)
 	if c.Request.Method != http.MethodPost {
 		core.WriteResponse(c, errors.WithCode(code.ErrMethodNotAllowed, "必须使用post方法传输"), nil)
@@ -618,18 +627,6 @@ func (g *GenericAPIServer) refreshResponse(c *gin.Context) {
 		return
 	}
 
-	claims := jwt.ExtractClaims(c)
-	username, ok := claims["sub"].(string)
-	if !ok || username == "" {
-		core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "无法识别用户身份"), nil)
-		return
-	}
-	// 4. 验证用户一致性（可选但推荐）
-	if claims["user_id"] != userid {
-		core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "用户身份不匹配"), nil)
-		return
-	}
-
 	// 3. 验证Refresh Token是否在户会话集合中
 	userSessionsKey := redisUserSessionsPrefix + userid
 	isMember, err := g.redis.IsMemberOfSet(c, userSessionsKey, r.RefreshToken)
@@ -640,6 +637,18 @@ func (g *GenericAPIServer) refreshResponse(c *gin.Context) {
 	}
 	if !isMember {
 		core.WriteResponse(c, errors.WithCode(code.ErrExpired, "刷新令牌已失效，请重新登录"), nil)
+		return
+	}
+
+	//claims := jwt.ExtractClaims(c)
+	username, ok := claims["sub"].(string)
+	if !ok || username == "" {
+		core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "无法识别用户身份"), nil)
+		return
+	}
+	// 4. 验证用户一致性（可选但推荐）
+	if claims["user_id"] != userid {
+		core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "用户身份不匹配"), nil)
 		return
 	}
 
@@ -1247,4 +1256,57 @@ func containsMultiple(s string, patterns []string, minMatch int) bool {
 		}
 	}
 	return false
+}
+
+func (g *GenericAPIServer) RefreshAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+			c.AbortWithStatusJSON(401, gin.H{"error": "Authorization头缺失"})
+			return
+		}
+
+		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+
+		// 1. 首先验证AT基本格式
+		parser := &gojwt.Parser{}
+		token, _, err := parser.ParseUnverified(tokenString, gojwt.MapClaims{})
+		if err != nil {
+			c.AbortWithStatusJSON(401, gin.H{"error": "Token格式无效"})
+			return
+		}
+
+		// 2. 验证必要声明存在（但不验证过期时间）
+		claims, ok := token.Claims.(gojwt.MapClaims)
+		if !ok {
+			c.AbortWithStatusJSON(401, gin.H{"error": "Token声明无效"})
+			return
+		}
+
+		// 3. 验证用户标识存在（支持多种字段）
+		hasUserIdentity := false
+		userIdentityFields := []string{"sub", "username", "user_id", "user"}
+		for _, field := range userIdentityFields {
+			if claims[field] != nil {
+				hasUserIdentity = true
+				break
+			}
+		}
+
+		if !hasUserIdentity {
+			c.AbortWithStatusJSON(401, gin.H{"error": "Token缺少用户标识"})
+			return
+		}
+
+		// 4. 验证token类型（如果是区分类型的）
+		if tokenType, exists := claims["type"]; exists {
+			if typeStr, ok := tokenType.(string); ok && typeStr != "access" {
+				c.AbortWithStatusJSON(401, gin.H{"error": "非Access Token"})
+				return
+			}
+		}
+
+		c.Set("jwt_claims", claims)
+		c.Next()
+	}
 }

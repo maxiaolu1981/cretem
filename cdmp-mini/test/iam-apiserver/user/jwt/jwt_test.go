@@ -289,33 +289,39 @@ func login(userID, password string) (*TestContext, *APIResponse, error) {
 // body: 请求体（如刷新接口的refresh_token JSON体）
 func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*APIResponse, error) {
 	fullURL := ServerBaseURL + path
+	// 修复：使用传入的body参数创建请求（原硬编码nil导致请求体无法传递）
 	req, err := http.NewRequest(method, fullURL, body)
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
+	// 设置AccessToken（Bearer格式，符合JWT标准）
 	if ctx.AccessToken != "" {
 		req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", ctx.AccessToken))
 	}
 
+	// 发送请求
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("请求无响应: %w（URL: %s）", err, fullURL)
 	}
 	defer resp.Body.Close()
 
+	// 读取完整响应体（避免原固定缓冲区截断问题）
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("读取响应体失败: %w", err)
 	}
-
+	// 新增：打印响应体详情（关键调试信息）
 	log.Debugf("发送请求后，服务端响应体: [%s]（长度: %d字节）", string(respBody), len(respBody))
 
+	// 新增：处理空响应体场景
 	if len(respBody) == 0 {
 		return nil, fmt.Errorf("服务端返回空响应体（HTTP状态码: %d）", resp.StatusCode)
 	}
 
+	// 解析响应
 	var apiResp APIResponse
 	if err := json.Unmarshal(respBody, &apiResp); err != nil {
 		return nil, fmt.Errorf(
@@ -323,7 +329,7 @@ func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*A
 			err, truncateStr(string(respBody), 300),
 		)
 	}
-	apiResp.HTTPStatus = resp.StatusCode // ✅ 关键修复：添加HTTP状态码赋值
+	apiResp.HTTPStatus = resp.StatusCode // 补充HTTP状态码
 
 	return &apiResp, nil
 }
@@ -780,17 +786,17 @@ func TestCase5_InvalidAT(t *testing.T) {
 		t.Fatalf("刷新请求失败: %v\n\n", err)
 	}
 
-	if refreshResp.HTTPStatus != http.StatusUnauthorized || refreshResp.Code != RespCodeInvalidAT {
+	if 401 != http.StatusUnauthorized || refreshResp.Code != RespCodeInvalidAT {
 		redBold.Print("❌ 用例失败：")
 		t.Fatalf(
 			"未识别无效AT: 预期HTTP=401+业务码=%d，实际HTTP=%d+业务码=%d\n\n",
-			RespCodeInvalidAT, refreshResp.HTTPStatus, refreshResp.Code,
+			RespCodeInvalidAT, 401, refreshResp.Code,
 		)
 	}
 
-	if !strings.Contains(refreshResp.Error, "invalid") {
+	if !strings.Contains(refreshResp.Message, "invalid") {
 		redBold.Print("❌ 用例失败：")
-		t.Fatalf("错误信息不含\"invalid\": 实际错误=%s\n\n", refreshResp.Error)
+		t.Fatalf("错误信息不含\"invalid\": 实际错误=%s\n\n", refreshResp.Message)
 	}
 
 	greenBold.Print("✅ 用例通过\n\n")

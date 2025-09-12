@@ -167,7 +167,7 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 	// 登出：使用你的自定义实现（不需要 gin-jwt 认证）
 	g.Handle(http.MethodPost, "logout", createAutHandler(), g.logoutRespons)
 	// 刷新：使用 gin-jwt 的 RefreshHandler（需要认证中间件
-	g.POST("/refresh", jwt.MiddlewareFunc(), g.refreshResponse)
+	g.POST("/refresh", g.RefreshAuthMiddleware(), g.refreshResponse)
 
 	return nil
 }

@@ -32,7 +32,7 @@ func init() {
 	register(ErrMissingHeader, 401, "缺少 Authorization 头") // 401：请求缺少必要的头信息
 	register(ErrPasswordIncorrect, 401, "密码不正确")          // 401：密码错误导致未授权
 	register(ErrPermissionDenied, 403, "权限不足，无操作权限")      // 403 Forbidden：已授权但无权限
-	register(ErrTokenInvalid, 400, "令牌无效（格式/签名错误）")       // 401：令牌本身无效
+	register(ErrTokenInvalid, 401, "令牌无效（格式/签名错误）")       // 401：令牌本身无效
 	register(
 		ErrBase64DecodeFail,
 		400,
