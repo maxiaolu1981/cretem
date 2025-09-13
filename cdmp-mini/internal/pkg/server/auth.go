@@ -38,12 +38,13 @@ import (
 
 // Redis键名常量（统一前缀避免冲突）
 const (
-	redisRefreshTokenPrefix = "auth:refresh_token:"
-	redisLoginFailPrefix    = "auth:login_fail:"
-	redisBlacklistPrefix    = "auth:blacklist:"
-	redisUserSessionsPrefix = "auth:user_sessions:"
-	redisAtSessionIDPrefix  = "auth:atsession_id:"
-	redisRtSessionIDPrefix  = "auth:rtsession_id:"
+	redisGenericapiserverPrefix = "genericapiserver:"
+	redisRefreshTokenPrefix     = "auth:refresh_token:"
+	redisLoginFailPrefix        = "auth:login_fail:"
+	redisBlacklistPrefix        = "auth:blacklist:"
+	redisUserSessionsPrefix     = "auth:user_sessions:"
+	redisAtSessionIDPrefix      = "auth:atsession_id:"
+	redisRtSessionIDPrefix      = "auth:rtsession_id:"
 )
 
 // 登录失败限制配置
@@ -345,47 +346,92 @@ func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomC
 	defer cancel()
 
 	userID := claims.UserID
-	userSessionsKey := redisUserSessionsPrefix + userID
+	userSessionsKey := redisUserSessionsPrefix + userID // 这个已经是 "usersessions:user123"
+	jti := claims.ID
+	expTimestamp := claims.ExpiresAt.Time
 
-	// 1. 获取用户的所有Refresh Token
-	tokens, err := g.redis.GetSet(ctx, userSessionsKey)
-	if err != nil && !errors.Is(err, redis.Nil) {
-		log.Errorf("获取用户会话失败: %v", err)
+	// Lua 脚本实现原子操作
+	luaScript := `
+    -- KEYS[1]: 通用前缀
+    -- KEYS[2]: 用户会话键前缀（usersessions:）
+    -- KEYS[3]: refresh token 前缀（refreshtoken:）
+    -- KEYS[4]: 黑名单前缀（blacklist:）
+    -- ARGV[1]: userID
+    -- ARGV[2]: jti
+    -- ARGV[3]: 过期时间戳
+    -- ARGV[4]: 当前时间戳
+    
+    local genericPrefix = KEYS[1]
+    local userSessionsPrefix = KEYS[2]
+    local refreshTokenPrefix = KEYS[3]
+    local blacklistPrefix = KEYS[4]
+    local userID = ARGV[1]
+    local jti = ARGV[2]
+    local expireTimestamp = tonumber(ARGV[3])
+    local currentTime = tonumber(ARGV[4])
+    
+    -- 构建完整的键名
+    local userSessionsKey = genericPrefix .. userSessionsPrefix .. userID
+    local blacklistKey = genericPrefix .. blacklistPrefix .. jti
+    
+    -- 1. 获取用户的所有Refresh Token并删除会话集合
+    local tokens = redis.call('SMEMBERS', userSessionsKey)
+    redis.call('DEL', userSessionsKey)
+    
+    -- 2. 使所有Refresh Token失效（需要添加完整前缀）
+    for _, token in ipairs(tokens) do
+        local rtKey = genericPrefix .. refreshTokenPrefix .. token
+        redis.call('DEL', rtKey)
+    end
+    
+    -- 3. 将当前Access Token加入黑名单
+    local ttl = expireTimestamp - currentTime + 3600  -- 过期时间+1小时
+    
+    if ttl > 0 then
+        redis.call('SETEX', blacklistKey, ttl, '1')
+    else
+        redis.call('SETEX', blacklistKey, 3600, '1')  -- 默认1小时
+    end
+    
+    return #tokens
+    `
+
+	// 执行Lua脚本
+	result, err := g.redis.GetClient().Eval(ctx, luaScript,
+		[]string{
+			redisGenericapiserverPrefix,               // "genericapiserver:"
+			redisUserSessionsPrefix,                   // "usersessions:"
+			redisRefreshTokenPrefix,                   // "refreshtoken:"
+			g.options.JwtOptions.Blacklist_key_prefix, // "blacklist:"
+		},
+		[]interface{}{
+			userID,
+			jti,
+			expTimestamp.Unix(),
+			time.Now().Unix(),
+		},
+	).Result()
+
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			log.Infof("用户会话不存在，无需清理: user_id=%s", userID)
+			return
+		}
+		log.Errorf("登出清理Lua脚本执行失败: user_id=%s, error=%v", userID, err)
 		return
 	}
 
-	// 2. 使所有Refresh Token失效
-	for _, refreshToken := range tokens {
-		rtKey := redisRefreshTokenPrefix + refreshToken // ✅ 正确的拼接顺序
-		if deleted, err := g.redis.DeleteKey(ctx, rtKey); err != nil {
-			log.Warnf("删除Refresh Token失败: %s, error=%v", refreshToken, err)
-		} else if deleted {
-			log.Infof("Refresh Token已失效: %s", refreshToken)
-		} else {
-			log.Warnf("Refresh Token不存在: %s", refreshToken)
-		}
+	tokenCount := 0
+	if result != nil {
+		tokenCount = int(result.(int64))
 	}
 
-	// 3. 删除用户会话集合
-	if deleted, err := g.redis.DeleteKey(ctx, userSessionsKey); err != nil {
-		log.Errorf("删除用户会话集合失败: user_id=%s, error=%v", userID, err)
-	} else if deleted {
-		log.Infof("用户会话集合已删除: user_id=%s", userID)
-	} else {
-		log.Infof("用户会话集合不存在，无需删除: user_id=%s", userID)
-	}
-
-	// 4. 将当前Access Token加入黑名单
-	jti := claims.ID
-	expTimestamp := claims.ExpiresAt.Time
-	if err := g.addTokenToBlacklist(ctx, jti, expTimestamp); err != nil {
-		log.Errorf("将Access Token加入黑名单失败: jti=%s, error=%v", jti, err)
-	} else {
-		log.Infof("Access Token已加入黑名单: jti=%s, user_id=%s", jti, userID)
-	}
-
-	log.Debugf("登出-用户会话Key: %s", userSessionsKey)
+	log.Infof("用户登出清理完成: user_id=%s, 清理了%d个refresh token, jti=%s",
+		userID, tokenCount, jti)
+	log.Debugf("登出-用户会话Key: %s", redisGenericapiserverPrefix+userSessionsKey)
 }
+
+
 
 // clearAuthCookies 清理客户端Cookie
 func (g *GenericAPIServer) clearAuthCookies(c *gin.Context) {
@@ -1422,17 +1468,17 @@ func (g *GenericAPIServer) storeCompleteAuthSession(userID, sessionID, refreshTo
 
 	_, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		// 1. AT Session存储
-		pipe.Set(ctx, redisAtSessionIDPrefix+userID, sessionID, atExpire)
+		pipe.Set(ctx, redisGenericapiserverPrefix+redisAtSessionIDPrefix+userID, sessionID, atExpire)
 
 		// 2. RT Session存储
-		pipe.Set(ctx, redisRtSessionIDPrefix+userID, sessionID, rtExpire)
+		pipe.Set(ctx, redisGenericapiserverPrefix+redisRtSessionIDPrefix+userID, sessionID, rtExpire)
 
 		// 3. Refresh Token映射存储
-		pipe.Set(ctx, redisRefreshTokenPrefix+refreshToken, userID, rtExpire)
+		pipe.Set(ctx, redisGenericapiserverPrefix+redisRefreshTokenPrefix+refreshToken, userID, rtExpire)
 
 		// 4. 用户会话集合添加
-		pipe.SAdd(ctx, redisUserSessionsPrefix+userID, refreshToken)
-		pipe.Expire(ctx, redisUserSessionsPrefix+userID, rtExpire)
+		pipe.SAdd(ctx, redisGenericapiserverPrefix+redisUserSessionsPrefix+userID, refreshToken)
+		pipe.Expire(ctx, redisGenericapiserverPrefix+redisUserSessionsPrefix+userID, rtExpire)
 
 		return nil
 	})
