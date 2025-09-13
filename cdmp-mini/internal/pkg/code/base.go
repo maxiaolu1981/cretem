@@ -75,6 +75,8 @@ const (
 	ErrInvalidBasicPayload
 	//100211 403 //令牌被撤销
 	ErrRespCodeRTRevoked
+   //100212  
+	ErrTokenMismatch
 )
 
 // 通用加解码错误（1003xx）：服务10 + 模块03 + 序号

@@ -48,6 +48,11 @@ func init() {
 		403,
 		"令牌已经撤销",
 	)
+	register(
+		ErrTokenMismatch,
+		401,
+		"访问令牌和刷新令牌不匹配",
+	)
 
 	// 4. 通用加解码错误（1003xx）
 	register(ErrEncodingFailed, 500, "数据编码失败")          // 500：服务端编码逻辑错误

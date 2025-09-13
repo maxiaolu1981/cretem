@@ -367,7 +367,7 @@ func (r *RedisCluster) GetKey(ctx context.Context, keyName string) (string, erro
 
 	cluster := r.singleton()
 	fixedKey := r.fixKey(keyName)
-	log.Debugf("Redis GetKey: 原始键名=%s, fixKey后键名=%s", keyName, fixedKey) // 新增日志
+	log.Debugf("Redis GetKey: 原始键名=%s, fixKey后键名=%s", keyName, r.fixKey(keyName)) // 新增日志
 
 	value, err := cluster.Get(ctx, r.fixKey(keyName)).Result()
 	if err != nil {
