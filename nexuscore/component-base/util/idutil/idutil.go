@@ -137,8 +137,10 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/iputil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/stringutil"
@@ -376,4 +378,27 @@ func NewHashedSecretKey(algorithm string) (originalKey, hashedKey string, err er
 	}
 
 	return originalKey, hashedKey, err
+}
+
+// 使用你已有的Sonyflake实例
+// GenerateSecureSessionID 使用密码学安全的UUID
+func GenerateSecureSessionID(prefix string) string {
+	if prefix == "" {
+		prefix = "sess_"
+	}
+
+	// 生成16字节随机数
+	bytes := make([]byte, 16)
+	_, err := rand.Read(bytes)
+	if err != nil {
+		// 如果crypto/rand失败，使用fallback（但添加时间戳）
+		nanos := time.Now().UnixNano()
+		bytes = []byte{
+			byte(nanos), byte(nanos >> 8), byte(nanos >> 16), byte(nanos >> 24),
+			byte(nanos >> 32), byte(nanos >> 40), byte(nanos >> 48), byte(nanos >> 56),
+		}
+	}
+
+	// 转换为hex字符串
+	return prefix + hex.EncodeToString(bytes)[:16]
 }

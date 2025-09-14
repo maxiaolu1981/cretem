@@ -32,7 +32,9 @@ CONCURRENT_USERS=20 REQUESTS_PER_USER=10 go test -v -run TestAllConcurrentCases
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,14 +95,14 @@ const (
 	RespCodeATExpired     = 100203
 	RespCodeInvalidAT     = 100208
 	RespCodeRTExpired     = 100203
-	RespCodeTokenMismatch = 100006
+	RespCodeTokenMismatch = 100212
 	RespCodeInvalidAuth   = 100007
 
 	//ConcurrentUsers = 1
 	//RequestsPerUser = 1
 
 	ConcurrentUsers = 100
-	RequestsPerUser = 100
+	RequestsPerUser = 500
 
 	ConcurrentTestPrefix = "testuser_"
 )
@@ -250,7 +252,7 @@ func login(username, password string) (*TestContext, *APIResponse, error) {
 
 	accessToken, _ := tokenData["access_token"].(string)
 	refreshToken, _ := tokenData["refresh_token"].(string)
-
+	apiResp.HTTPStatus = resp.StatusCode
 	return &TestContext{
 		Username:     username,
 		AccessToken:  accessToken,
@@ -260,6 +262,7 @@ func login(username, password string) (*TestContext, *APIResponse, error) {
 
 func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*APIResponse, error) {
 	fullURL := ServerBaseURL + path
+	fmt.Println(fullURL)
 	req, err := http.NewRequest(method, fullURL, body)
 	if err != nil {
 		return nil, err
@@ -733,19 +736,16 @@ func TestCase8_RTRevoked_Concurrent(t *testing.T) {
 
 func TestCase9_TokenMismatch_Concurrent(t *testing.T) {
 	runConcurrentTest(t, "Token不匹配并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
-		// 两次登录获取不同令牌
-		ctx1, loginResp1, err1 := login(username, password)
-		if err1 != nil {
-			t.Logf("用户 %s 请求 %d 第一次登录失败: %v", username, userID, err1)
-			return false, loginResp1, http.StatusUnauthorized, RespCodeTokenMismatch
-		}
+		// 第一次登录
+		ctx1, _, _ := login(username, password)
 
-		time.Sleep(100 * time.Millisecond)
-		ctx2, loginResp2, err2 := login(username, password)
-		if err2 != nil {
-			t.Logf("用户 %s 请求 %d 第二次登录失败: %v", username, userID, err2)
-			return false, loginResp2, http.StatusUnauthorized, RespCodeTokenMismatch
-		}
+		// 第二次登录（确保是不同的会话）
+		ctx2, _, _ := login(username, password)
+
+		// 调试信息
+		session1, _ := extractSessionID(ctx1.AccessToken)
+		session2, _ := extractSessionID(ctx2.AccessToken)
+		fmt.Printf("Session1: %s, Session2: %s\n", session1, session2)
 
 		// 使用不匹配的Token组合
 		testCtx := &TestContext{
@@ -766,6 +766,100 @@ func TestCase9_TokenMismatch_Concurrent(t *testing.T) {
 		success := refreshResp.Code == RespCodeTokenMismatch
 		return success, refreshResp, http.StatusUnauthorized, RespCodeTokenMismatch
 	})
+}
+
+// extractSessionID 使用jwt库解析token提取session_id
+func extractSessionID(tokenString string) (string, error) {
+	if tokenString == "" {
+		return "", errors.New("空token")
+	}
+
+	parts := strings.Split(tokenString, ".")
+	if len(parts) != 3 {
+		return "", errors.New("无效的JWT格式")
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("base64解码失败: %v", err)
+	}
+
+	var claims map[string]interface{}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return "", fmt.Errorf("JSON解析失败: %v", err)
+	}
+
+	sessionID, ok := claims["session_id"].(string)
+	if !ok || sessionID == "" {
+		return "", errors.New("缺少session_id")
+	}
+
+	return sessionID, nil
+}
+
+// 简化的自定义设备登录函数
+func loginWithCustomDevice(username, password, deviceID string) (*TestContext, *APIResponse, error) {
+	loginURL := ServerBaseURL + LoginAPIPath
+	loginData := map[string]string{
+		"username": username,
+		"password": password,
+	}
+
+	jsonData, err := json.Marshal(loginData)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, loginURL, bytes.NewBuffer(jsonData))
+	if err != nil {
+		return nil, nil, err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Request-Id", fmt.Sprintf("test-%d", time.Now().UnixNano()))
+	req.Header.Set("X-Device-ID", deviceID)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var apiResp APIResponse
+	if err := json.Unmarshal(body, &apiResp); err != nil {
+		return nil, nil, err
+	}
+
+	apiResp.HTTPStatus = resp.StatusCode
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, &apiResp, fmt.Errorf("登录失败: %s", apiResp.Message)
+	}
+
+	// 解析token数据
+	var tokenData struct {
+		Data struct {
+			AccessToken  string `json:"access_token"`
+			RefreshToken string `json:"refresh_token"`
+		} `json:"data"`
+	}
+
+	if err := json.Unmarshal(body, &tokenData); err != nil {
+		return nil, &apiResp, err
+	}
+
+	testCtx := &TestContext{
+		Username:     username,
+		AccessToken:  tokenData.Data.AccessToken,
+		RefreshToken: tokenData.Data.RefreshToken,
+	}
+
+	return testCtx, &apiResp, nil
 }
 
 func TestCase10_WrongPassword_Concurrent(t *testing.T) {

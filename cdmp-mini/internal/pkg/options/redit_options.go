@@ -28,7 +28,7 @@ type RedisOptions struct {
 
 func NewRedisOptions() *RedisOptions {
 	return &RedisOptions{
-		Host:                  "192.168.10.14",
+		Host:                  "127.0.0.1",
 		Port:                  6379,
 		Addrs:                 []string{},
 		Username:              "",
