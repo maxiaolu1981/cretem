@@ -242,14 +242,14 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	if errs := validation.IsQualifiedName(login.Username); len(errs) > 0 {
 		errsMsg := strings.Join(errs, ":")
 		log.Warnw("用户名不合法:", errsMsg)
-		err := errors.WithCode(code.ErrValidation, "%s", errsMsg)
+		err := errors.WithCode(code.ErrInvalidParameter, "%s", errsMsg)
 		recordErrorToContext(c, err)
 		return nil, err
 
 	}
 	if err := validation.IsValidPassword(login.Password); err != nil {
 		errMsg := "密码不合法：" + err.Error()
-		err := errors.WithCode(code.ErrValidation, "%s", errMsg)
+		err := errors.WithCode(code.ErrInvalidParameter, "%s", errMsg)
 		recordErrorToContext(c, err)
 		return nil, err
 	}
@@ -1544,10 +1544,10 @@ func (g *GenericAPIServer) rollbackAuthSession(userID, refreshToken string) {
 
 	_, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		// 1. 删除新创建的AT Session（无论原来是否存在）
-		pipe.Del(ctx, redisAtSessionIDPrefix+userID)
+		//pipe.Del(ctx, redisAtSessionIDPrefix+userID)
 
 		// 2. 删除新创建的RT Session（无论原来是否存在）
-		pipe.Del(ctx, redisRtSessionIDPrefix+userID)
+		//pipe.Del(ctx, redisRtSessionIDPrefix+userID)
 
 		// 3. 删除新创建的Refresh Token映射
 		pipe.Del(ctx, redisRefreshTokenPrefix+refreshToken)

@@ -81,6 +81,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
@@ -91,6 +92,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
@@ -162,8 +164,14 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 	if !ok {
 		return fmt.Errorf("转换jwtStrategy错误")
 	}
+	loginLimiter := common.LoginRateLimiter(g.redis, 200, time.Second)
 	// 登录：使用 gin-jwt 的 LoginHandler（需要认证中间件）
-	g.Handle(http.MethodPost, "/login", createAutHandler(), jwt.LoginHandler)
+	g.Handle(http.MethodPost, "/login",
+		loginLimiter,       // 限流放在最前面
+		createAutHandler(), // 然后是认证相关的中间件
+		jwt.LoginHandler,   // 最后是实际的登录处理函数
+	)
+
 	g.POST("logout", createAutHandler(), g.logoutRespons)
 	// 刷新：使用 gin-jwt 的 RefreshHandler（需要认证中间件
 	g.POST("/refresh", g.ValidateATMiddleware(), g.ValidateATForRefreshMiddleware)
