@@ -12,8 +12,8 @@ require (
 	github.com/go-playground/validator/v10 v10.27.0
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/go-sql-driver/mysql v1.9.3
+	github.com/golang-jwt/jwt v3.2.2+incompatible
 	github.com/golang-jwt/jwt/v4 v4.5.2
-	github.com/golang-jwt/jwt/v5 v5.3.0
 	github.com/mattn/go-isatty v0.0.20
 	github.com/maxiaolu1981/cretem/nexuscore v0.0.0-20250901231038-fa914272025d
 	github.com/satori/go.uuid v1.2.1-0.20181028125025-b2ce2384e17b

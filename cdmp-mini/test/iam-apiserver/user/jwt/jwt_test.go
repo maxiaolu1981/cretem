@@ -45,6 +45,7 @@ import (
 
 	"github.com/fatih/color"
 	redisV8 "github.com/go-redis/redis/v8"
+	"github.com/golang-jwt/jwt"
 )
 
 var testUsers = []struct {
@@ -102,6 +103,7 @@ const (
 
 	//ConcurrentUsers      = 10
 	//RequestsPerUser      = 1000
+
 	ConcurrentTestPrefix = "testuser_"
 )
 
@@ -123,6 +125,17 @@ type TestContext struct {
 	RefreshToken string
 }
 
+type TestResult struct {
+	User         string
+	RequestID    int
+	Success      bool
+	ExpectedHTTP int
+	ExpectedBiz  int
+	ActualHTTP   int
+	ActualBiz    int
+	Message      string
+}
+
 // ==================== 全局变量 ====================
 var (
 	httpClient  = &http.Client{Timeout: RequestTimeout}
@@ -131,6 +144,57 @@ var (
 	greenBold   = color.New(color.FgGreen).Add(color.Bold)
 	cyan        = color.New(color.FgCyan)
 )
+
+// ==================== 修复的响应码统计函数 ====================
+func printResponseCodeSummary(results []TestResult) {
+	httpCodeCount := make(map[int]int)
+	bizCodeCount := make(map[int]int)
+
+	for _, result := range results {
+		httpCodeCount[result.ActualHTTP]++
+		bizCodeCount[result.ActualBiz]++
+	}
+
+	fmt.Printf("\n📋 响应码统计:\n")
+	fmt.Printf("   HTTP状态码分布:\n")
+	for code, count := range httpCodeCount {
+		fmt.Printf("     %d: %d次\n", code, count)
+	}
+
+	fmt.Printf("   业务码分布:\n")
+	for code, count := range bizCodeCount {
+		fmt.Printf("     %d: %d次\n", code, count)
+	}
+}
+
+// ==================== 修复的详细结果表格函数 ====================
+func printDetailedResultsTable(results []TestResult) {
+	if len(results) == 0 {
+		return
+	}
+
+	fmt.Printf("\n📋 详细结果对比:\n")
+	fmt.Printf("┌─────────┬──────────┬────────┬──────────────┬──────────────┬────────────────────┐\n")
+	fmt.Printf("│  用户   │  请求ID  │  结果  │  HTTP状态码  │   业务码     │       消息        │\n")
+	fmt.Printf("│         │          │        │  预期/实际   │  预期/实际   │                    │\n")
+	fmt.Printf("├─────────┼──────────┼────────┼──────────────┼──────────────┼────────────────────┤\n")
+
+	for _, result := range results {
+		user := truncateStr(result.User, 6)
+		status := "✅"
+		if !result.Success {
+			status = "❌"
+		}
+		message := truncateStr(result.Message, 18)
+
+		httpCompare := fmt.Sprintf("%d/%d", result.ExpectedHTTP, result.ActualHTTP)
+		bizCompare := fmt.Sprintf("%d/%d", result.ExpectedBiz, result.ActualBiz)
+
+		fmt.Printf("│ %-7s │ %8d │ %-6s │ %-12s │ %-12s │ %-18s │\n",
+			user, result.RequestID, status, httpCompare, bizCompare, message)
+	}
+	fmt.Printf("└─────────┴──────────┴────────┴──────────────┴──────────────┴────────────────────┘\n")
+}
 
 // ==================== Redis 操作 ====================
 func initRedis() error {
@@ -228,38 +292,18 @@ func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*A
 	return &apiResp, nil
 }
 
-// ==================== 修复：恢复使用用户名参数 / ==================== 修改 runConcurrentTest 函数支持多用户 ====================
-func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, int, string, string) bool) {
-	fmt.Printf("\n%s\n", strings.Repeat("═", 70))
+// ==================== 完整的 runConcurrentTest 函数 ====================
+func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, int, string, string) (bool, *APIResponse, int, int)) {
+	fmt.Printf("\n%s\n", strings.Repeat("═", 80))
 	fmt.Printf("🚀 开始并发测试: %s\n", testName)
-	fmt.Printf("%s\n", strings.Repeat("─", 70))
+	fmt.Printf("%s\n", strings.Repeat("─", 80))
 
 	startTime := time.Now()
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	successCount := 0
 	failCount := 0
-
-	// 确定测试模式
-	testMode := "单用户模式"
-	actualUsers := 1
-	if EnableMultiUserTest && len(testUsers) > 1 {
-		testMode = "多用户模式"
-		actualUsers = min(ConcurrentUsers, len(testUsers))
-	}
-
-	fmt.Printf("   🎯 测试模式: %s\n", testMode)
-	fmt.Printf("   👥 并发用户数: %d\n", ConcurrentUsers)
-	fmt.Printf("   👤 实际使用用户数: %d\n", actualUsers)
-	fmt.Printf("   📋 每个用户请求次数: %d\n", RequestsPerUser)
-	fmt.Printf("   📦 总请求数: %d\n", ConcurrentUsers*RequestsPerUser)
-
-	if EnableMultiUserTest {
-		fmt.Printf("   📋 测试用户: %v\n", getTestUserNames())
-	} else {
-		fmt.Printf("   👤 测试用户: %s\n", TestUsername)
-	}
-	fmt.Printf("%s\n", strings.Repeat("─", 70))
+	var testResults []TestResult
 
 	// 创建进度通道
 	progress := make(chan string, ConcurrentUsers*RequestsPerUser)
@@ -278,7 +322,6 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 		go func(userID int) {
 			defer wg.Done()
 
-			// 确定使用的用户名和密码
 			var username, password string
 			if EnableMultiUserTest && len(testUsers) > 0 {
 				userIndex := userID % len(testUsers)
@@ -292,9 +335,11 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 			for j := 0; j < RequestsPerUser; j++ {
 				requestID := userID*RequestsPerUser + j + 1
 
+				// 显示进度
 				progress <- fmt.Sprintf("🟡 [用户%s] 请求 %d/%d 开始...", username, requestID, ConcurrentUsers*RequestsPerUser)
 
-				success := testFunc(t, userID, username, password)
+				// 调用测试函数
+				success, resp, expectedHTTP, expectedBiz := testFunc(t, userID, username, password)
 
 				mu.Lock()
 				if success {
@@ -303,6 +348,32 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 				} else {
 					failCount++
 					progress <- fmt.Sprintf("🔴 [用户%s] 请求 %d 失败", username, requestID)
+				}
+
+				// 记录测试结果详情
+				if resp != nil {
+					testResults = append(testResults, TestResult{
+						User:         username,
+						RequestID:    requestID,
+						Success:      success,
+						ExpectedHTTP: expectedHTTP,
+						ExpectedBiz:  expectedBiz,
+						ActualHTTP:   resp.HTTPStatus,
+						ActualBiz:    resp.Code,
+						Message:      resp.Message,
+					})
+				} else {
+					// 处理resp为nil的情况
+					testResults = append(testResults, TestResult{
+						User:         username,
+						RequestID:    requestID,
+						Success:      success,
+						ExpectedHTTP: expectedHTTP,
+						ExpectedBiz:  expectedBiz,
+						ActualHTTP:   0,
+						ActualBiz:    0,
+						Message:      "无响应",
+					})
 				}
 				mu.Unlock()
 
@@ -318,23 +389,24 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 	duration := time.Since(startTime)
 	totalRequests := ConcurrentUsers * RequestsPerUser
 
-	// 输出测试结果
-	fmt.Printf("%s\n", strings.Repeat("─", 70))
+	// 输出详细测试结果
+	fmt.Printf("%s\n", strings.Repeat("─", 80))
 	fmt.Printf("📊 测试结果统计:\n")
-	fmt.Printf("   🎯 测试模式: %s\n", testMode)
 	fmt.Printf("   ✅ 成功请求: %d\n", successCount)
 	fmt.Printf("   ❌ 失败请求: %d\n", failCount)
 	fmt.Printf("   📈 成功率: %.1f%%\n", float64(successCount)/float64(totalRequests)*100)
 	fmt.Printf("   ⏱️  总耗时: %v\n", duration.Round(time.Millisecond))
 	fmt.Printf("   🚀 QPS: %.1f\n", float64(totalRequests)/duration.Seconds())
-	fmt.Printf("   📦 总请求数: %d\n", totalRequests)
 
-	// 性能评级
-	rate := float64(successCount) / float64(totalRequests) * 100
-	fmt.Printf("   🏆 性能评级: %s\n", getPerformanceRating(rate))
-	fmt.Printf("%s\n", strings.Repeat("═", 70))
+	// 输出响应码统计
+	printResponseCodeSummary(testResults)
 
-	t.Logf("测试完成: %s, 成功率: %.1f%%, 耗时: %v", testName, rate, duration)
+	// 输出详细结果表格
+	printDetailedResultsTable(testResults)
+
+	fmt.Printf("%s\n", strings.Repeat("═", 80))
+
+	t.Logf("测试完成: %s, 成功率: %.1f%%, 耗时: %v", testName, float64(successCount)/float64(totalRequests)*100, duration)
 }
 
 // ==================== 辅助函数 ====================
@@ -368,39 +440,32 @@ func min(a, b int) int {
 
 // ==================== 修复所有测试用例的函数签名 ====================
 
+// ==================== 修改所有测试用例函数签名 ====================
+
+// ==================== 修改所有10个测试用例函数签名 ====================
+
 func TestCase1_LoginSuccess_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "正常登录并发测试", func(t *testing.T, userID int, username, password string) bool {
+	runConcurrentTest(t, "正常登录并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
 		ctx, resp, err := login(username, password)
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登录失败: %v", username, userID, err)
-			return false
+			return false, resp, http.StatusOK, RespCodeSuccess
 		}
 
-		if ctx.AccessToken == "" {
-			t.Logf("用户 %s 请求 %d 未获取到AccessToken", username, userID)
-			return false
-		}
+		success := ctx.AccessToken != "" &&
+			strings.Count(ctx.AccessToken, ".") == 2 &&
+			resp.Code == RespCodeSuccess
 
-		if strings.Count(ctx.AccessToken, ".") != 2 {
-			t.Logf("用户 %s 请求 %d AccessToken格式错误", username, userID)
-			return false
-		}
-
-		if resp.Code != RespCodeSuccess {
-			t.Logf("用户 %s 请求 %d 业务码错误: 预期=%d, 实际=%d", username, userID, RespCodeSuccess, resp.Code)
-			return false
-		}
-
-		return true
+		return success, resp, http.StatusOK, RespCodeSuccess
 	})
 }
 
 func TestCase2_RefreshValid_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "有效刷新令牌并发测试", func(t *testing.T, userID int, username, password string) bool {
+	runConcurrentTest(t, "有效刷新令牌并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
 		ctx, _, err := login(username, password)
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登录失败: %v", username, userID, err)
-			return false
+			return false, nil, http.StatusOK, RespCodeSuccess
 		}
 
 		refreshBody := fmt.Sprintf(`{"refresh_token": "%s"}`, ctx.RefreshToken)
@@ -409,25 +474,21 @@ func TestCase2_RefreshValid_Concurrent(t *testing.T) {
 
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 刷新请求失败: %v", username, userID, err)
-			return false
+			return false, refreshResp, http.StatusOK, RespCodeSuccess
 		}
 
-		if refreshResp.Code != RespCodeSuccess {
-			t.Logf("用户 %s 请求 %d 刷新业务失败: 预期=%d, 实际=%d", username, userID, RespCodeSuccess, refreshResp.Code)
-			return false
-		}
-
-		return true
+		success := refreshResp.Code == RespCodeSuccess
+		return success, refreshResp, http.StatusOK, RespCodeSuccess
 	})
 }
 
 func TestCase3_LoginLogout_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "登录登出并发测试", func(t *testing.T, userID int, username, password string) bool {
+	runConcurrentTest(t, "登录登出并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
 		// 登录
-		ctx, _, err := login(username, password)
+		ctx, loginResp, err := login(username, password)
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登录失败: %v", username, userID, err)
-			return false
+			return false, loginResp, http.StatusOK, RespCodeSuccess
 		}
 
 		// 登出
@@ -437,30 +498,32 @@ func TestCase3_LoginLogout_Concurrent(t *testing.T) {
 
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登出请求失败: %v", username, userID, err)
-			return false
+			return false, logoutResp, http.StatusOK, RespCodeSuccess
 		}
 
-		if logoutResp.Code != RespCodeSuccess {
-			t.Logf("用户 %s 请求 %d 登出业务失败: 预期=%d, 实际=%d", username, userID, RespCodeSuccess, logoutResp.Code)
-			return false
-		}
-
-		return true
+		success := logoutResp.Code == RespCodeSuccess
+		return success, logoutResp, http.StatusOK, RespCodeSuccess
 	})
 }
 
 func TestCase4_ATExpired_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "AT过期并发测试", func(t *testing.T, userID int, username, password string) bool {
-		ctx, _, err := login(username, password)
+	runConcurrentTest(t, "AT过期并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
+		ctx, loginResp, err := login(username, password)
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登录失败: %v", username, userID, err)
-			return false
+			return false, loginResp, http.StatusOK, RespCodeSuccess
 		}
 
-		// 使用过期AT但有效RT
+		// 修改AT为过期状态但保留声明信息
+		expiredAT, err := modifyTokenToExpired(ctx.AccessToken)
+		if err != nil {
+			t.Logf("用户 %s 请求 %d 生成过期AT失败: %v", username, userID, err)
+			return false, nil, http.StatusOK, RespCodeSuccess
+		}
+
 		testCtx := &TestContext{
 			Username:     username,
-			AccessToken:  "expired.token." + strings.Repeat("x", 100),
+			AccessToken:  expiredAT,
 			RefreshToken: ctx.RefreshToken,
 		}
 
@@ -470,20 +533,21 @@ func TestCase4_ATExpired_Concurrent(t *testing.T) {
 
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 过期AT刷新失败: %v", username, userID, err)
-			return false
+			return false, refreshResp, http.StatusOK, RespCodeSuccess
 		}
 
-		t.Logf("用户 %s 请求 %d 过期AT刷新结果: 业务码=%d", username, userID, refreshResp.Code)
-		return true
+		// 期望成功刷新（如果系统实现正确）
+		success := refreshResp.Code == RespCodeSuccess
+		return success, refreshResp, http.StatusOK, RespCodeSuccess
 	})
 }
 
 func TestCase5_InvalidAT_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "无效AT并发测试", func(t *testing.T, userID int, username, password string) bool {
-		ctx, _, err := login(username, password)
+	runConcurrentTest(t, "无效AT并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
+		ctx, loginResp, err := login(username, password)
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登录失败: %v", username, userID, err)
-			return false
+			return false, loginResp, http.StatusUnauthorized, RespCodeInvalidAT
 		}
 
 		testCtx := &TestContext{
@@ -496,35 +560,35 @@ func TestCase5_InvalidAT_Concurrent(t *testing.T) {
 		bodyReader := strings.NewReader(refreshBody)
 		refreshResp, err := sendTokenRequest(testCtx, http.MethodPost, RefreshAPIPath, bodyReader)
 
-		if err == nil && refreshResp.Code == RespCodeInvalidAT {
-			t.Logf("用户 %s 请求 %d 无效AT检测成功", username, userID)
-			return true
-		} else {
-			t.Logf("用户 %s 请求 %d 无效AT检测失败: 业务码=%d", username, userID, refreshResp.Code)
-			return false
+		if err != nil {
+			t.Logf("用户 %s 请求 %d 无效AT检测失败: %v", username, userID, err)
+			return false, refreshResp, http.StatusUnauthorized, RespCodeInvalidAT
 		}
+
+		success := refreshResp.Code == RespCodeInvalidAT
+		return success, refreshResp, http.StatusUnauthorized, RespCodeInvalidAT
 	})
 }
 
 func TestCase6_MissingRT_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "缺少RT并发测试", func(t *testing.T, userID int, username, password string) bool {
-		ctx, _, err := login(username, password)
+	runConcurrentTest(t, "缺少RT并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
+		ctx, loginResp, err := login(username, password)
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登录失败: %v", username, userID, err)
-			return false
+			return false, loginResp, http.StatusBadRequest, RespCodeRTRequired
 		}
 
 		refreshBody := `{"refresh_token": ""}`
 		bodyReader := strings.NewReader(refreshBody)
 		refreshResp, err := sendTokenRequest(ctx, http.MethodPost, RefreshAPIPath, bodyReader)
 
-		if err == nil && refreshResp.Code == RespCodeRTRequired {
-			t.Logf("用户 %s 请求 %d 缺少RT检测成功", username, userID)
-			return true
-		} else {
-			t.Logf("用户 %s 请求 %d 缺少RT检测失败: 业务码=%d", username, userID, refreshResp.Code)
-			return false
+		if err != nil {
+			t.Logf("用户 %s 请求 %d 缺少RT检测失败: %v", username, userID, err)
+			return false, refreshResp, http.StatusBadRequest, RespCodeRTRequired
 		}
+
+		success := refreshResp.Code == RespCodeRTRequired
+		return success, refreshResp, http.StatusBadRequest, RespCodeRTRequired
 	})
 }
 
@@ -534,11 +598,11 @@ func TestCase7_RTExpired_Concurrent(t *testing.T) {
 		return
 	}
 
-	runConcurrentTest(t, "RT过期并发测试", func(t *testing.T, userID int, username, password string) bool {
-		ctx, _, err := login(username, password)
+	runConcurrentTest(t, "RT过期并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
+		ctx, loginResp, err := login(username, password)
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登录失败: %v", username, userID, err)
-			return false
+			return false, loginResp, http.StatusUnauthorized, RespCodeRTExpired
 		}
 
 		// 设置RT过期
@@ -551,29 +615,35 @@ func TestCase7_RTExpired_Concurrent(t *testing.T) {
 		bodyReader := strings.NewReader(refreshBody)
 		refreshResp, err := sendTokenRequest(ctx, http.MethodPost, RefreshAPIPath, bodyReader)
 
-		if err == nil && refreshResp.Code == RespCodeRTExpired {
-			t.Logf("用户 %s 请求 %d 过期RT检测成功", username, userID)
-			return true
-		} else {
-			t.Logf("用户 %s 请求 %d 过期RT检测失败: 业务码=%d", username, userID, refreshResp.Code)
-			return false
+		if err != nil {
+			t.Logf("用户 %s 请求 %d 过期RT检测失败: %v", username, userID, err)
+			return false, refreshResp, http.StatusUnauthorized, RespCodeRTExpired
 		}
+
+		success := refreshResp.Code == RespCodeRTExpired
+		return success, refreshResp, http.StatusUnauthorized, RespCodeRTExpired
 	})
 }
 
 func TestCase8_RTRevoked_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "RT撤销并发测试", func(t *testing.T, userID int, username, password string) bool {
+	runConcurrentTest(t, "RT撤销并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
 		// 登录并立即注销
-		ctx, _, err := login(username, password)
+		ctx, loginResp, err := login(username, password)
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登录失败: %v", username, userID, err)
-			return false
+			return false, loginResp, http.StatusUnauthorized, RespCodeRTRevoked
 		}
 
 		// 注销使RT失效
 		logoutBody := fmt.Sprintf(`{"refresh_token": "%s"}`, ctx.RefreshToken)
 		bodyReader := strings.NewReader(logoutBody)
-		sendTokenRequest(ctx, http.MethodPost, LogoutAPIPath, bodyReader)
+		logoutResp, err := sendTokenRequest(ctx, http.MethodPost, LogoutAPIPath, bodyReader)
+
+		if err != nil || logoutResp.Code != RespCodeSuccess {
+			t.Logf("用户 %s 请求 %d 注销失败", username, userID)
+			return false, logoutResp, http.StatusUnauthorized, RespCodeRTRevoked
+		}
+
 		time.Sleep(100 * time.Millisecond)
 
 		// 尝试使用已撤销的RT刷新
@@ -581,30 +651,30 @@ func TestCase8_RTRevoked_Concurrent(t *testing.T) {
 		bodyReader = strings.NewReader(refreshBody)
 		refreshResp, err := sendTokenRequest(ctx, http.MethodPost, RefreshAPIPath, bodyReader)
 
-		if err == nil && refreshResp.HTTPStatus == http.StatusUnauthorized {
-			t.Logf("用户 %s 请求 %d 撤销RT检测成功", username, userID)
-			return true
-		} else {
-			t.Logf("用户 %s 请求 %d 撤销RT检测失败: HTTP=%d, 业务码=%d", username, userID, refreshResp.HTTPStatus, refreshResp.Code)
-			return false
+		if err != nil {
+			t.Logf("用户 %s 请求 %d 撤销RT检测失败: %v", username, userID, err)
+			return false, refreshResp, http.StatusUnauthorized, RespCodeRTRevoked
 		}
+
+		success := refreshResp.Code == RespCodeRTRevoked || refreshResp.HTTPStatus == http.StatusUnauthorized
+		return success, refreshResp, http.StatusUnauthorized, RespCodeRTRevoked
 	})
 }
 
 func TestCase9_TokenMismatch_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "Token不匹配并发测试", func(t *testing.T, userID int, username, password string) bool {
+	runConcurrentTest(t, "Token不匹配并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
 		// 两次登录获取不同令牌
-		ctx1, _, err1 := login(username, password)
+		ctx1, loginResp1, err1 := login(username, password)
 		if err1 != nil {
 			t.Logf("用户 %s 请求 %d 第一次登录失败: %v", username, userID, err1)
-			return false
+			return false, loginResp1, http.StatusUnauthorized, RespCodeTokenMismatch
 		}
 
 		time.Sleep(100 * time.Millisecond)
-		ctx2, _, err2 := login(username, password)
+		ctx2, loginResp2, err2 := login(username, password)
 		if err2 != nil {
 			t.Logf("用户 %s 请求 %d 第二次登录失败: %v", username, userID, err2)
-			return false
+			return false, loginResp2, http.StatusUnauthorized, RespCodeTokenMismatch
 		}
 
 		// 使用不匹配的Token组合
@@ -618,32 +688,29 @@ func TestCase9_TokenMismatch_Concurrent(t *testing.T) {
 		bodyReader := strings.NewReader(refreshBody)
 		refreshResp, err := sendTokenRequest(testCtx, http.MethodPost, RefreshAPIPath, bodyReader)
 
-		if err == nil && refreshResp.Code == RespCodeTokenMismatch {
-			t.Logf("用户 %s 请求 %d Token不匹配检测成功", username, userID)
-			return true
-		} else {
-			t.Logf("用户 %s 请求 %d Token不匹配检测失败: 业务码=%d", username, userID, refreshResp.Code)
-			return false
+		if err != nil {
+			t.Logf("用户 %s 请求 %d Token不匹配检测失败: %v", username, userID, err)
+			return false, refreshResp, http.StatusUnauthorized, RespCodeTokenMismatch
 		}
+
+		success := refreshResp.Code == RespCodeTokenMismatch
+		return success, refreshResp, http.StatusUnauthorized, RespCodeTokenMismatch
 	})
 }
 
 func TestCase10_WrongPassword_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "错误密码并发测试", func(t *testing.T, userID int, username, password string) bool {
+	runConcurrentTest(t, "错误密码并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
 		// 使用错误密码登录，期望失败才是成功
 		wrongPassword := "WrongPassword123"
 		_, resp, err := login(username, wrongPassword)
 
-		if err != nil && resp.Code == RespCodeInvalidAuth {
-			t.Logf("用户 %s 请求 %d 错误密码检测成功", username, userID)
-			return true
-		} else if err == nil {
-			t.Logf("用户 %s 请求 %d 错误密码检测失败: 预期失败但成功", username, userID)
-			return false
-		} else {
-			t.Logf("用户 %s 请求 %d 错误密码检测失败: 业务码=%d", username, userID, resp.Code)
-			return false
+		if err != nil {
+			t.Logf("用户 %s 请求 %d 错误密码检测失败: %v", username, userID, err)
+			return false, resp, http.StatusUnauthorized, RespCodeInvalidAuth
 		}
+
+		success := resp.Code == RespCodeInvalidAuth
+		return success, resp, http.StatusUnauthorized, RespCodeInvalidAuth
 	})
 }
 
@@ -862,4 +929,47 @@ func formatJSON(data interface{}) string {
 		return fmt.Sprintf("JSON格式化失败: %v", err)
 	}
 	return string(jsonBytes)
+}
+
+// 修改令牌为过期状态，但保留所有原始声明信息
+func modifyTokenToExpired(originalAT string) (string, error) {
+	// 解析原始AT但不验证签名（因为我们只是要获取claims）
+	parser := jwt.Parser{}
+	token, _, err := parser.ParseUnverified(originalAT, jwt.MapClaims{})
+	if err != nil {
+		return "", fmt.Errorf("解析原始AT失败: %w", err)
+	}
+
+	// 获取原始claims
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		return "", errors.New("无法获取JWT声明")
+	}
+
+	// 修改过期时间，但保留所有其他声明
+	claims["exp"] = time.Now().Add(-1 * time.Hour).Unix() // 设置为1小时前过期
+	claims["iat"] = time.Now().Add(-2 * time.Hour).Unix() // 设置为2小时前签发
+	// 保留所有其他重要声明：sub, user_id, jti, session_id, role等
+
+	// 使用相同的签名方法重新签名
+	newToken := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return newToken.SignedString([]byte(JWTSigningKey))
+}
+
+// 辅助函数：解析令牌claims
+func parseTokenClaims(tokenString string) jwt.MapClaims {
+	if tokenString == "" {
+		return nil
+	}
+
+	parser := jwt.Parser{}
+	token, _, err := parser.ParseUnverified(tokenString, jwt.MapClaims{})
+	if err != nil {
+		return nil
+	}
+
+	if claims, ok := token.Claims.(jwt.MapClaims); ok {
+		return claims
+	}
+	return nil
 }

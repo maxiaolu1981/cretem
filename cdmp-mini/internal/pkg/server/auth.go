@@ -431,8 +431,6 @@ func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomC
 	log.Debugf("登出-用户会话Key: %s", redisGenericapiserverPrefix+userSessionsKey)
 }
 
-
-
 // clearAuthCookies 清理客户端Cookie
 func (g *GenericAPIServer) clearAuthCookies(c *gin.Context) {
 	domain := g.options.ServerRunOptions.CookieDomain
@@ -1348,7 +1346,7 @@ func (g *GenericAPIServer) ValidateATMiddleware() gin.HandlerFunc {
 		parser := &gojwt.Parser{}
 		token, _, err := parser.ParseUnverified(tokenString, gojwt.MapClaims{})
 		if err != nil {
-			core.WriteResponse(c, errors.WithCode(code.ErrTokenInvalid, "invalid:访问令牌无效"), nil)
+			core.WriteResponse(c, errors.WithCode(code.ErrTokenInvalid, "invalid:访问令牌无效:%V", err), nil)
 			return
 		}
 
