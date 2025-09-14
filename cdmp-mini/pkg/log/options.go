@@ -64,7 +64,7 @@ func NewOptions() *Options {
 		Format:            consoleFormat,
 		EnableColor:       false,
 		Development:       false,
-		OutputPaths:       []string{"stdout", "C:\\Users\\maxia\\log\\iam-apiserver\\iam-apiserver.log"},
+		OutputPaths:       []string{"stdout", "/var/log/iam/iam-apiserver.log"},
 		ErrorOutputPaths:  []string{"stderr"},
 	}
 }
