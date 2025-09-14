@@ -71,9 +71,9 @@ func (info Info) GetAdaptiveString() (string, error) {
 			// 直接使用 os.Stdout 的 Fd() 方法（*os.File 有 Fd() 方法），无需多余断言
 			if isatty.IsTerminal(os.Stdout.Fd()) {
 				// 调用 getTerminalCols 时直接传入 os.Stdout（已确定是 *os.File）
-				if terminalCols, err := getTerminalCols(os.Stdout); err == nil && terminalCols >= 40 {
-					cols = terminalCols
-				}
+				// if terminalCols, err := getTerminalCols(os.Stdout); err == nil && terminalCols >= 40 {
+				// 	cols = terminalCols
+				// }
 			}
 		}
 	}

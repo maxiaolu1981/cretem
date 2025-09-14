@@ -105,7 +105,7 @@ func NewMySQLOptions() *MySQLOptions {
 	return &MySQLOptions{
 		AdminUsername:         "root",
 		AdminPassword:         "iam59!z$",
-		Host:                  "127.0.0.1:3306",
+		Host:                  "192.168.10.14:3306",
 		Username:              "",
 		Password:              "",
 		MaxIdleConnections:    100,

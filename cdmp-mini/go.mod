@@ -25,6 +25,7 @@ require (
 	github.com/zsais/go-gin-prometheus v1.0.1
 	go.uber.org/zap v1.27.0
 	golang.org/x/sync v0.16.0
+	golang.org/x/term v0.34.0
 	gorm.io/driver/mysql v1.6.0
 	gorm.io/gorm v1.30.1
 	k8s.io/klog v1.0.0

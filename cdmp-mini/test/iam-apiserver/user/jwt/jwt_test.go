@@ -38,6 +38,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -46,6 +47,7 @@ import (
 	"github.com/fatih/color"
 	redisV8 "github.com/go-redis/redis/v8"
 	"github.com/golang-jwt/jwt"
+	"golang.org/x/term"
 )
 
 var testUsers = []struct {
@@ -53,18 +55,14 @@ var testUsers = []struct {
 	password string
 }{
 	{"admin", "Admin@2021"},
-	{"gettest-user105", "TestPass123!"},
-	{"gettest-user135", "TestPass123!"},
-	{"gettest-user136", "TestPass123!"},
-	{"gettest-user137", "TestPass123!"},
-	{"gettest-user138", "TestPass123!"},
-	{"gettest-user139", "TestPass123!"},
-	{"gettest-user140", "TestPass123!"},
-	{"gettest-user141", "TestPass123!"},
-	{"gettest-user142", "TestPass123!"},
-	{"gettest-user143", "TestPass123!"},
+
 	// ... 添加更多用户
 }
+
+const (
+	ExpectedHTTPSuccess = 200 // 期望的HTTP成功状态码
+	// 业务成功码根据不同的测试用例动态传入
+)
 
 // ==================== 配置常量 ====================
 const (
@@ -98,11 +96,11 @@ const (
 	RespCodeTokenMismatch = 100006
 	RespCodeInvalidAuth   = 100007
 
-	ConcurrentUsers = 1
-	RequestsPerUser = 1
+	//ConcurrentUsers = 1
+	//RequestsPerUser = 1
 
-	//ConcurrentUsers      = 10
-	//RequestsPerUser      = 1000
+	ConcurrentUsers = 100
+	RequestsPerUser = 100
 
 	ConcurrentTestPrefix = "testuser_"
 )
@@ -292,11 +290,38 @@ func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*A
 	return &apiResp, nil
 }
 
-// ==================== 完整的 runConcurrentTest 函数 ====================
 func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, int, string, string) (bool, *APIResponse, int, int)) {
-	fmt.Printf("\n%s\n", strings.Repeat("═", 80))
+	// 获取终端宽度
+	width := 80
+	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
+		if w, _, err := term.GetSize(fd); err == nil {
+			width = w
+		}
+	}
+
+	// 清屏并设置显示区域
+	fmt.Print("\033[2J")   // 清屏
+	fmt.Print("\033[1;1H") // 光标移动到左上角
+
+	// 显示顶部标题
+	fmt.Printf("%s\n", strings.Repeat("═", width))
 	fmt.Printf("🚀 开始并发测试: %s\n", testName)
-	fmt.Printf("%s\n", strings.Repeat("─", 80))
+	fmt.Printf("%s\n", strings.Repeat("─", width))
+
+	// 预留进度显示区域（第4-6行）
+	fmt.Printf("\033[4;1H") // 移动到第4行
+	fmt.Printf("进度显示区域...\n\n\n")
+
+	// 预留统计结果显示区域（从第7行开始）
+	fmt.Printf("\033[7;1H") // 移动到第7行
+	fmt.Printf("%s\n", strings.Repeat("─", width))
+	fmt.Printf("📊 实时统计:\n")
+	fmt.Printf("   ✅ 成功请求: 0\n")
+	fmt.Printf("   ❌ 失败请求: 0\n")
+	fmt.Printf("   📈 成功率: 0.0%%\n")
+	fmt.Printf("   ⏱️  当前耗时: 0ms\n")
+	fmt.Printf("   🚀 实时QPS: 0.0\n")
+	fmt.Printf("%s\n", strings.Repeat("─", width))
 
 	startTime := time.Now()
 	var wg sync.WaitGroup
@@ -311,100 +336,150 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 
 	// 启动进度显示器
 	go func() {
+		line := 4 // 从第4行开始显示进度
 		for msg := range progress {
-			fmt.Printf("   %s\n", msg)
+			fmt.Printf("\033[%d;1H", line) // 移动到指定行
+			fmt.Printf("\033[K")           // 清除行
+			fmt.Printf("   %s", msg)
+			line++
+			if line > 6 { // 保持在4-6行范围内
+				line = 4
+			}
 		}
 		done <- true
 	}()
 
+	// 启动统计信息更新器
+	statsTicker := time.NewTicker(100 * time.Millisecond)
+	defer statsTicker.Stop()
+
+	go func() {
+		for range statsTicker.C {
+			mu.Lock()
+			currentSuccess := successCount
+			currentFail := failCount
+			currentDuration := time.Since(startTime)
+			totalRequests := currentSuccess + currentFail
+			mu.Unlock()
+
+			if totalRequests > 0 {
+				// 更新统计信息区域（第8-13行）
+				fmt.Printf("\033[8;1H") // 移动到第8行
+				fmt.Printf("\033[K")    // 清除行
+				fmt.Printf("   ✅ 成功请求: %d\n", currentSuccess)
+				fmt.Printf("\033[9;1H\033[K")
+				fmt.Printf("   ❌ 失败请求: %d\n", currentFail)
+				fmt.Printf("\033[10;1H\033[K")
+				fmt.Printf("   📈 成功率: %.1f%%\n", float64(currentSuccess)/float64(totalRequests)*100)
+				fmt.Printf("\033[11;1H\033[K")
+				fmt.Printf("   ⏱️  当前耗时: %v\n", currentDuration.Round(time.Millisecond))
+				fmt.Printf("\033[12;1H\033[K")
+				fmt.Printf("   🚀 实时QPS: %.1f\n", float64(totalRequests)/currentDuration.Seconds())
+				fmt.Printf("\033[13;1H\033[K")
+				fmt.Printf("%s", strings.Repeat("─", width))
+			}
+		}
+	}()
+
 	for i := 0; i < ConcurrentUsers; i++ {
 		wg.Add(1)
-		go func(userID int) {
+		// 通过参数传递 expectedBizCode
+		go func(userID int, bizCode int) {
 			defer wg.Done()
 
-			var username, password string
+			var currentUsername, currentPassword string
 			if EnableMultiUserTest && len(testUsers) > 0 {
 				userIndex := userID % len(testUsers)
-				username = testUsers[userIndex].username
-				password = testUsers[userIndex].password
+				currentUsername = testUsers[userIndex].username
+				currentPassword = testUsers[userIndex].password
 			} else {
-				username = TestUsername
-				password = ValidPassword
+				currentUsername = TestUsername
+				currentPassword = ValidPassword
 			}
 
 			for j := 0; j < RequestsPerUser; j++ {
 				requestID := userID*RequestsPerUser + j + 1
+				progress <- fmt.Sprintf("🟡 [用户%s] 请求 %d/%d 开始...", currentUsername, requestID, ConcurrentUsers*RequestsPerUser)
 
-				// 显示进度
-				progress <- fmt.Sprintf("🟡 [用户%s] 请求 %d/%d 开始...", username, requestID, ConcurrentUsers*RequestsPerUser)
-
-				// 调用测试函数
-				success, resp, expectedHTTP, expectedBiz := testFunc(t, userID, username, password)
+				success, resp, expectedHTTP, _ := testFunc(t, userID, currentUsername, currentPassword)
 
 				mu.Lock()
 				if success {
 					successCount++
-					progress <- fmt.Sprintf("🟢 [用户%s] 请求 %d 成功", username, requestID)
+					progress <- fmt.Sprintf("🟢 [用户%s] 请求 %d 成功", currentUsername, requestID)
 				} else {
 					failCount++
-					progress <- fmt.Sprintf("🔴 [用户%s] 请求 %d 失败", username, requestID)
+					progress <- fmt.Sprintf("🔴 [用户%s] 请求 %d 失败", currentUsername, requestID)
 				}
 
-				// 记录测试结果详情
 				if resp != nil {
+					message := resp.Message
+					if !success {
+						message = "失败原因: " + getErrorMessage(resp, expectedHTTP, bizCode)
+					}
+
 					testResults = append(testResults, TestResult{
-						User:         username,
+						User:         currentUsername,
 						RequestID:    requestID,
 						Success:      success,
 						ExpectedHTTP: expectedHTTP,
-						ExpectedBiz:  expectedBiz,
+						ExpectedBiz:  bizCode, // 使用传递的bizCode
 						ActualHTTP:   resp.HTTPStatus,
 						ActualBiz:    resp.Code,
-						Message:      resp.Message,
+						Message:      message,
 					})
 				} else {
-					// 处理resp为nil的情况
+					message := "无响应"
+					if !success {
+						message = "失败原因: 无法连接到服务器或超时"
+					}
+
 					testResults = append(testResults, TestResult{
-						User:         username,
+						User:         currentUsername,
 						RequestID:    requestID,
 						Success:      success,
 						ExpectedHTTP: expectedHTTP,
-						ExpectedBiz:  expectedBiz,
+						ExpectedBiz:  bizCode,
 						ActualHTTP:   0,
 						ActualBiz:    0,
-						Message:      "无响应",
+						Message:      message,
 					})
 				}
 				mu.Unlock()
 
 				time.Sleep(50 * time.Millisecond)
 			}
-		}(i)
+		}(i, expectedBizCode) // 传递 expectedBizCode
 	}
-
 	wg.Wait()
 	close(progress)
 	<-done
+	statsTicker.Stop()
 
 	duration := time.Since(startTime)
 	totalRequests := ConcurrentUsers * RequestsPerUser
 
-	// 输出详细测试结果
-	fmt.Printf("%s\n", strings.Repeat("─", 80))
-	fmt.Printf("📊 测试结果统计:\n")
+	// 显示最终结果在统计区域
+	fmt.Printf("\033[8;1H\033[K")
 	fmt.Printf("   ✅ 成功请求: %d\n", successCount)
+	fmt.Printf("\033[9;1H\033[K")
 	fmt.Printf("   ❌ 失败请求: %d\n", failCount)
+	fmt.Printf("\033[10;1H\033[K")
 	fmt.Printf("   📈 成功率: %.1f%%\n", float64(successCount)/float64(totalRequests)*100)
+	fmt.Printf("\033[11;1H\033[K")
 	fmt.Printf("   ⏱️  总耗时: %v\n", duration.Round(time.Millisecond))
-	fmt.Printf("   🚀 QPS: %.1f\n", float64(totalRequests)/duration.Seconds())
+	fmt.Printf("\033[12;1H\033[K")
+	fmt.Printf("   🚀 最终QPS: %.1f\n", float64(totalRequests)/duration.Seconds())
+	fmt.Printf("\033[13;1H\033[K")
+	fmt.Printf("%s\n", strings.Repeat("─", width))
 
-	// 输出响应码统计
+	// 输出响应码统计和详细结果表格
+	fmt.Printf("\033[15;1H") // 移动到第15行
 	printResponseCodeSummary(testResults)
-
-	// 输出详细结果表格
 	printDetailedResultsTable(testResults)
 
-	fmt.Printf("%s\n", strings.Repeat("═", 80))
+	fmt.Printf("\033[30;1H") // 移动到屏幕底部
+	fmt.Printf("%s\n", strings.Repeat("═", width))
 
 	t.Logf("测试完成: %s, 成功率: %.1f%%, 耗时: %v", testName, float64(successCount)/float64(totalRequests)*100, duration)
 }
@@ -972,4 +1047,34 @@ func parseTokenClaims(tokenString string) jwt.MapClaims {
 		return claims
 	}
 	return nil
+}
+
+// 获取错误信息的辅助函数
+func getErrorMessage(resp *APIResponse, expectedHTTP, expectedBiz int) string {
+	if resp == nil {
+		return "无响应"
+	}
+
+	var errorMessages []string
+
+	// 检查HTTP状态码
+	if resp.HTTPStatus != expectedHTTP {
+		errorMessages = append(errorMessages, fmt.Sprintf("HTTP状态码期望%d实际%d", expectedHTTP, resp.HTTPStatus))
+	}
+
+	// 检查业务码
+	if resp.Code != expectedBiz {
+		errorMessages = append(errorMessages, fmt.Sprintf("业务码期望%d实际%d", expectedBiz, resp.Code))
+	}
+
+	// 如果有自定义错误消息
+	if resp.Message != "" && resp.Message != "成功" {
+		errorMessages = append(errorMessages, "消息: "+resp.Message)
+	}
+
+	if len(errorMessages) > 0 {
+		return strings.Join(errorMessages, " | ")
+	}
+
+	return "未知错误"
 }
