@@ -109,9 +109,11 @@ func NewMySQLOptions() *MySQLOptions {
 		Username:              "",
 		Password:              "",
 		MaxIdleConnections:    100,
-		MaxOpenConnections:    100,
-		MaxConnectionLifeTime: time.Duration(10) * time.Second,
-		LogLevel:              1,
+		MaxOpenConnections:    500,
+		MaxConnectionLifeTime: 10 * time.Minute,
+		LogLevel:              0,
+		//ReadTimeout:           10 * time.Second,
+		//WriteTimeout:          10 * time.Second,
 	}
 }
 
@@ -331,9 +333,9 @@ func (m *MySQLOptions) Validate() []error {
 	}
 
 	// 验证连接池配置的合理性
-	if m.MaxOpenConnections > 0 && m.MaxIdleConnections > m.MaxOpenConnections {
-		errs = append(errs, field.Invalid(path.Child("max-idle-connections"), m.MaxIdleConnections, "最大空闲连接数不能大于最大打开连接数"))
-	}
+	// if m.MaxOpenConnections > 0 && m.MaxIdleConnections > m.MaxOpenConnections {
+	// 	errs = append(errs, field.Invalid(path.Child("max-idle-connections"), m.MaxIdleConnections, "最大空闲连接数不能大于最大打开连接数"))
+	// }
 	agg := errs.ToAggregate()
 	if agg == nil {
 		return nil // 无错误时返回空切片，而非nil

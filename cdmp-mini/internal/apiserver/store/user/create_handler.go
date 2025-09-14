@@ -168,7 +168,7 @@ func (u *Users) logCreateSuccess(logger log.Logger, cost time.Duration) {
 
 // logGetSuccess 记录查询成功日志
 func (u *Users) logGetSuccess(user *v1.User, logger log.Logger, cost time.Duration) {
-	logger.Debugf("用户查询成功",
+	logger.Debugf("用户查询成功%v%v%v",
 		log.Int64("cost_ms", cost.Milliseconds()),
 		log.Uint64("user_id", user.ID),
 		log.Any("user_status", user.Status),

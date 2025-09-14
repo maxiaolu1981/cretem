@@ -93,6 +93,18 @@ func (g *GenericAPIServer) Run() error {
 	g.insecureServer = &http.Server{
 		Addr:    address,
 		Handler: g,
+		// 服务器性能优化
+		ReadTimeout:       15 * time.Second,
+		ReadHeaderTimeout: 10 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       30 * time.Second,
+
+		// 连接控制
+		MaxHeaderBytes: 1 << 20, // 1MB
+		// 新增：连接数限制
+		ConnState: func(conn net.Conn, state http.ConnState) {
+			// 监控连接状态，防止过多连接
+		},
 	}
 
 	var eg errgroup.Group

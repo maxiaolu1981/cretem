@@ -73,7 +73,7 @@ const (
 	RefreshAPIPath = "/refresh"
 	LogoutAPIPath  = "/logout"
 
-	RedisAddr     = "localhost:6379"
+	RedisAddr     = "192.168.10.14:6379"
 	RedisPassword = ""
 	RedisDB       = 0
 
@@ -383,74 +383,68 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 
 	for i := 0; i < ConcurrentUsers; i++ {
 		wg.Add(1)
-		// 通过参数传递 expectedBizCode
-		go func(userID int, bizCode int) {
+		go func(userID int) {
 			defer wg.Done()
 
-			var currentUsername, currentPassword string
+			var username, password string
 			if EnableMultiUserTest && len(testUsers) > 0 {
 				userIndex := userID % len(testUsers)
-				currentUsername = testUsers[userIndex].username
-				currentPassword = testUsers[userIndex].password
+				username = testUsers[userIndex].username
+				password = testUsers[userIndex].password
 			} else {
-				currentUsername = TestUsername
-				currentPassword = ValidPassword
+				username = TestUsername
+				password = ValidPassword
 			}
 
 			for j := 0; j < RequestsPerUser; j++ {
 				requestID := userID*RequestsPerUser + j + 1
-				progress <- fmt.Sprintf("🟡 [用户%s] 请求 %d/%d 开始...", currentUsername, requestID, ConcurrentUsers*RequestsPerUser)
 
-				success, resp, expectedHTTP, _ := testFunc(t, userID, currentUsername, currentPassword)
+				// 显示进度
+				progress <- fmt.Sprintf("🟡 [用户%s] 请求 %d/%d 开始...", username, requestID, ConcurrentUsers*RequestsPerUser)
+
+				// 调用测试函数
+				success, resp, expectedHTTP, expectedBiz := testFunc(t, userID, username, password)
 
 				mu.Lock()
 				if success {
 					successCount++
-					progress <- fmt.Sprintf("🟢 [用户%s] 请求 %d 成功", currentUsername, requestID)
+					progress <- fmt.Sprintf("🟢 [用户%s] 请求 %d 成功", username, requestID)
 				} else {
 					failCount++
-					progress <- fmt.Sprintf("🔴 [用户%s] 请求 %d 失败", currentUsername, requestID)
+					progress <- fmt.Sprintf("🔴 [用户%s] 请求 %d 失败", username, requestID)
 				}
 
+				// 记录测试结果详情
 				if resp != nil {
-					message := resp.Message
-					if !success {
-						message = "失败原因: " + getErrorMessage(resp, expectedHTTP, bizCode)
-					}
-
 					testResults = append(testResults, TestResult{
-						User:         currentUsername,
+						User:         username,
 						RequestID:    requestID,
 						Success:      success,
 						ExpectedHTTP: expectedHTTP,
-						ExpectedBiz:  bizCode, // 使用传递的bizCode
+						ExpectedBiz:  expectedBiz,
 						ActualHTTP:   resp.HTTPStatus,
 						ActualBiz:    resp.Code,
-						Message:      message,
+						Message:      resp.Message,
 					})
 				} else {
-					message := "无响应"
-					if !success {
-						message = "失败原因: 无法连接到服务器或超时"
-					}
-
 					testResults = append(testResults, TestResult{
-						User:         currentUsername,
+						User:         username,
 						RequestID:    requestID,
 						Success:      success,
 						ExpectedHTTP: expectedHTTP,
-						ExpectedBiz:  bizCode,
+						ExpectedBiz:  expectedBiz,
 						ActualHTTP:   0,
 						ActualBiz:    0,
-						Message:      message,
+						Message:      "无响应",
 					})
 				}
 				mu.Unlock()
 
 				time.Sleep(50 * time.Millisecond)
 			}
-		}(i, expectedBizCode) // 传递 expectedBizCode
+		}(i)
 	}
+
 	wg.Wait()
 	close(progress)
 	<-done
@@ -521,6 +515,7 @@ func min(a, b int) int {
 
 func TestCase1_LoginSuccess_Concurrent(t *testing.T) {
 	runConcurrentTest(t, "正常登录并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
+
 		ctx, resp, err := login(username, password)
 		if err != nil {
 			t.Logf("用户 %s 请求 %d 登录失败: %v", username, userID, err)
