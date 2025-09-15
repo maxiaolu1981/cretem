@@ -70,6 +70,10 @@ func (u *UserController) Create(ctx *gin.Context) {
 	}
 	//校验用户名
 	username := r.Name
+	if strings.TrimSpace(username) == "" {
+		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不能为空"), nil)
+		return 
+	}
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errsMsg := strings.Join(errs, ":")
 		log.Warnw("用户名不合法:", errsMsg)

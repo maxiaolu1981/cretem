@@ -1137,7 +1137,7 @@ func (g *GenericAPIServer) addTokenToBlacklist(ctx context.Context, jti string, 
 	}
 	key := g.options.JwtOptions.Blacklist_key_prefix + jti
 	log.Debugf("黑名单key:%s", key)
-	expire := expireAt.Sub(time.Now()) + time.Hour
+	expire := time.Until(expireAt) + time.Hour
 	if expire < 0 {
 		expire = time.Hour
 	}
