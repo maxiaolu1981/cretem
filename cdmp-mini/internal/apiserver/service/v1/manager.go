@@ -1,6 +1,9 @@
 package v1
 
 import (
+	"sync"
+
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 
@@ -12,9 +15,11 @@ import (
 )
 
 type ServiceSrv struct {
-	Store   interfaces.Factory
-	Redis   *storage.RedisCluster
-	Options *options.Options
+	Store       interfaces.Factory
+	Redis       *storage.RedisCluster
+	Options     *options.Options
+	BloomFilter *bloom.BloomFilter
+	BloomMutex  *sync.RWMutex
 }
 
 type ServiceManager interface {
@@ -37,9 +42,11 @@ func (s *ServiceSrv) Policies() policy.PolicySrv {
 
 func NewUsers(s *ServiceSrv) *user.UserService {
 	return &user.UserService{
-		Store:   s.Store,
-		Redis:   s.Redis,
-		Options: s.Options,
+		Store:       s.Store,
+		Redis:       s.Redis,
+		Options:     s.Options,
+		BloomFilter: s.BloomFilter,
+		BloomMutex:  s.BloomMutex,
 	}
 }
 func NewSecrets(s *ServiceSrv) *secret.SecretService {
@@ -58,10 +65,19 @@ func NewPolicies(s *ServiceSrv) *policy.PolicService {
 	}
 }
 
-func NewService(store interfaces.Factory, redis *storage.RedisCluster, options *options.Options) ServiceManager {
-	return &ServiceSrv{
-		Store:   store,
-		Redis:   redis,
-		Options: options,
+func NewService(store interfaces.Factory,
+	redis *storage.RedisCluster,
+	options *options.Options,
+	bloomFilter *bloom.BloomFilter,
+	bloomMutex *sync.RWMutex) (ServiceManager, error) {
+	// 初始化布隆过滤器（根据预期用户数量配置）
+	s := &ServiceSrv{
+		Store:       store,
+		Redis:       redis,
+		Options:     options,
+		BloomFilter: bloomFilter,
+		BloomMutex:  bloomMutex,
 	}
+
+	return s, nil
 }

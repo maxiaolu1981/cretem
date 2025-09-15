@@ -102,7 +102,8 @@ func (u *UserController) Create(ctx *gin.Context) {
 	r.Status = 1
 	r.LoginedAt = time.Now()
 
-	if err := u.srv.Users().Create(ctx, &r, metav1.CreateOptions{}); err != nil {
+	if err := u.srv.Users().Create(ctx, &r, 
+		metav1.CreateOptions{}); err != nil {
 		core.WriteResponse(ctx, err, nil)
 		return
 	}

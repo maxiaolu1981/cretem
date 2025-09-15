@@ -1,7 +1,9 @@
 package user
 
 import (
+	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
 )
 
@@ -22,4 +24,35 @@ func NewUsers(db *gorm.DB, policyStore interfaces.PolicyStore) *Users {
 		db:          db,
 		policyStore: policyStore,
 	}
+}
+
+// isMySQLDuplicateError 检查是否是MySQL唯一键冲突错误
+func (u *Users) isMySQLDuplicateError(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		return mysqlErr.Number == 1062 // MySQL重复键错误码
+	}
+	return false
+}
+
+// isMySQLDeadlockError 检查是否是MySQL死锁错误
+func (u *Users) isMySQLDeadlockError(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		return mysqlErr.Number == 1213 // MySQL死锁错误码
+	}
+	return false
+}
+
+// isMySQLConnectionError 检查是否是MySQL连接错误（可选添加）
+func (u *Users) isMySQLConnectionError(err error) bool {
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		// 常见的连接相关错误码
+		switch mysqlErr.Number {
+		case 2002, 2003, 2006, 2013:
+			return true
+		}
+	}
+	return false
 }

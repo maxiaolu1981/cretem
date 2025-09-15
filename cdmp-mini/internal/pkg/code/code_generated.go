@@ -23,7 +23,10 @@ func init() {
 	// 2. 通用数据库错误（1001xx）
 	register(ErrDatabase, 500, "数据库操作错误")        // 500：服务端数据库层错误
 	register(ErrDatabaseTimeout, 504, "数据库操作超时") // 504 Gateway Timeout：数据库响应超时（HTTP 通用规则）
+	register(ErrDatabaseDeadlock, 504, "数据库死锁") // 504 Gateway Timeout：数据库响应超时（HTTP 通用规则）
 
+
+	
 	// 3. 通用授权认证错误（1002xx）
 	register(ErrEncrypt, 500, "用户密码加密失败")                 // 500：服务端加密逻辑错误
 	register(ErrSignatureInvalid, 400, "签名无效")            // 401 Unauthorized：未授权（签名验证失败）

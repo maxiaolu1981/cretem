@@ -2,19 +2,22 @@ package user
 
 import (
 	"context"
+	"sync"
 
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
-
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 )
 
 type UserService struct {
-	Store   interfaces.Factory
-	Redis   *storage.RedisCluster
-	Options *options.Options
+	Store       interfaces.Factory
+	Redis       *storage.RedisCluster
+	Options     *options.Options
+	BloomFilter *bloom.BloomFilter
+	BloomMutex  *sync.RWMutex
 }
 
 // NewUserService 创建用户服务实例
@@ -35,4 +38,10 @@ type UserSrv interface {
 	List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error)
 	ListWithBadPerformance(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error)
 	ChangePassword(ctx context.Context, user *v1.User) error
+}
+
+// 业务方法：检查用户名是否可能存在
+func (us *UserService) UsernameMightExist(username string) bool {
+	// 使用字符串专用的便捷方法
+	return us.BloomFilter.TestString(username)
 }

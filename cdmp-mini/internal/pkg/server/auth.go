@@ -218,6 +218,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	var err error
 	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
 	// 1. 解析认证信息（Header/Body）：透传解析错误（已携带正确错误码）
+
 	if authHeader := c.Request.Header.Get("Authorization"); authHeader != "" {
 		login, err = parseWithHeader(c) // 之前已修复：返回 Basic 认证相关错误码（如 ErrInvalidAuthHeader）
 	} else {
@@ -228,6 +229,16 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		recordErrorToContext(c, err)
 		return nil, err
 	}
+
+	// 新增：使用布隆过滤器快速检查用户名是否存在
+	if !g.BloomFilter.TestString(login.Username) {
+		// 布隆过滤器确认用户名肯定不存在
+		log.Warnf("登录失败：用户名不存在（布隆过滤器验证）: username=%s", login.Username)
+		err := errors.WithCode(code.ErrUserNotFound, "用户不存在")
+		recordErrorToContext(c, err)
+		return nil, err
+	}
+
 	//检查登录异常
 	failCount, err := g.getLoginFailCount(c, login.Username)
 	if err != nil {

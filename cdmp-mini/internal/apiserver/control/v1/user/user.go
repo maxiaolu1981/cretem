@@ -1,6 +1,9 @@
 package user
 
 import (
+	"sync"
+
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	service "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
@@ -18,12 +21,22 @@ type UserController struct {
 }
 
 // NewUserController creates a user handler.
-func NewUserController(store interfaces.Factory, redis *storage.RedisCluster, options *options.Options) *UserController {
+func NewUserController(store interfaces.Factory,
+	redis *storage.RedisCluster,
+	options *options.Options,
+	bloomFilter *bloom.BloomFilter,
+	bloomMutex *sync.RWMutex) (*UserController, error) {
 
-	return &UserController{
-		srv:     service.NewService(store, redis, options),
-		options: options,
+	s, err := service.NewService(store,
+		redis, options,
+		bloomFilter, bloomMutex)
+	if err != nil {
+		return nil, err
 	}
+	return &UserController{
+		srv:     s,
+		options: options,
+	}, nil
 }
 
 // BusinessValidateListOptions 业务层验证函数

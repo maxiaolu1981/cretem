@@ -185,18 +185,6 @@ func (g *GenericAPIServer) installApiRoutes() error {
 		return err
 	}
 	g.NoRoute(func(c *gin.Context) {
-		// // 1. 校验请求方法必须为POST
-		// if c.Request.Method != http.MethodPost {
-		// 	c.Header("Allow", http.MethodPost)
-		// 	core.WriteResponse(
-		// 		c,
-		// 		errors.WithCode(code.ErrMethodNotAllowed, "仅支持POST方法"),
-		// 		nil,
-		// 	)
-		// 	return
-		// }
-
-		// 4. 若不存在允许的方法（说明是“路径不存在”），返回 404
 		core.WriteResponse(
 			c,
 			errors.WithCode(code.ErrPageNotFound, "业务不存在"),
@@ -209,7 +197,12 @@ func (g *GenericAPIServer) installApiRoutes() error {
 	{
 		userv1 := v1.Group("/users")
 		{
-			userController := user.NewUserController(storeIns, g.redis, g.options)
+			userController, err := user.NewUserController(storeIns,
+				g.redis, g.options,
+				g.BloomFilter, &g.BloomMutex)
+			if err != nil {
+				return err
+			}
 			userv1.Use(auto.AuthFunc(), middleware.Validation())
 			userv1.DELETE(":name", userController.Delete)
 			userv1.DELETE(":name/force", userController.ForceDelete)

@@ -10,14 +10,24 @@ import (
 	"gorm.io/gorm"
 )
 
+/*
+	       死锁错误 → 重试 ✅
+		   超时错误 → 重试 ✅
+		   连接错误 → 重试 ✅
+		   重复键错误 → 不重试 ❌（业务逻辑错误）
+		  其他错误 → 根据默认策略
+*/
 type RetryConfig struct {
-	MaxRetries   int
-	InitialDelay time.Duration
-	IsRetryable  func(error) bool
+	MaxAttempts       int           //最大重试次数
+	InitialBackoff    time.Duration //初始退避时间
+	InitialDelay      time.Duration
+	MaxBackoff        time.Duration    // 最大退避时间
+	BackoffMultiplier float32          //退避倍数
+	IsRetryable       func(error) bool // 重试判断函数
 }
 
 var DefaultRetryConfig = RetryConfig{
-	MaxRetries:   2,
+	MaxAttempts:  2,
 	InitialDelay: 100 * time.Millisecond,
 	IsRetryable:  DefaultIsRetryable,
 }
@@ -43,7 +53,7 @@ func DefaultIsRetryable(err error) bool {
 func Do(ctx context.Context, config RetryConfig, operation func() error) error {
 	retryDelay := config.InitialDelay
 
-	for attempt := 0; attempt <= config.MaxRetries; attempt++ {
+	for attempt := 0; attempt <= config.MaxAttempts; attempt++ {
 		if attempt > 0 {
 			time.Sleep(retryDelay)
 			retryDelay *= 2
@@ -54,7 +64,7 @@ func Do(ctx context.Context, config RetryConfig, operation func() error) error {
 			return nil
 		}
 
-		if !config.IsRetryable(err) || attempt == config.MaxRetries {
+		if !config.IsRetryable(err) || attempt == config.MaxAttempts {
 			return err
 		}
 

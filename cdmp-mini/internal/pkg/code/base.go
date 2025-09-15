@@ -39,7 +39,8 @@ const (
 	ErrDatabase int = iota + 100101 // 100101
 
 	// ErrDatabaseTimeout - 500: 数据库超时
-	ErrDatabaseTimeout // 100102
+	ErrDatabaseTimeout  // 100102
+	ErrDatabaseDeadlock //100103 数据库死锁
 )
 
 // 通用授权认证错误（1002xx）：服务10 + 模块02 + 序号
@@ -75,7 +76,7 @@ const (
 	ErrInvalidBasicPayload
 	//100211 403 //令牌被撤销
 	ErrRespCodeRTRevoked
-   //100212  
+	//100212
 	ErrTokenMismatch
 )
 

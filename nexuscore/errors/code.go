@@ -215,6 +215,7 @@ var codeConstNames = map[int]string{
 	// 通用数据库错误
 	100101: "ErrDatabase",
 	100102: "ErrDatabaseTimeout",
+	100103: "ErrDatabaseDeadlock",
 
 	// 通用授权认证错误
 	100201: "ErrEncrypt",

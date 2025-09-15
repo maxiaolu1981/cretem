@@ -19,25 +19,110 @@ func (u *Users) Create(ctx context.Context, user *v1.User, opts metav1.CreateOpt
 	logger := u.createLogger(ctx, user)
 	logger.Info("开始执行用户创建的数据库操作")
 
-	// 设置超时上下文
-	dbCtx, cancel := u.createTimeoutContext(ctx)
-	defer cancel()
-
 	startTime := time.Now()
 
-	// 使用retry工具执行数据库操作
-	err := db.Do(dbCtx, db.DefaultRetryConfig, func() error {
-		return u.db.WithContext(dbCtx).Create(user).Error
-	})
+	// 使用带重试的事务执行
+	retryConfig := u.getCreateRetryConfig()
 
-	costMs := time.Since(startTime)
+	var costMs time.Duration
+	var attempt int
+
+	err := db.Do(ctx, retryConfig, func() error {
+		attempt++
+		attemptStart := time.Now()
+		err := u.createWithOptimizedTransaction(ctx, user, logger, attempt)
+		costMs = time.Since(attemptStart)
+
+		if err != nil && attempt < retryConfig.MaxAttempts {
+			logger.Warn("创建用户尝试失败，准备重试",
+				log.Int("attempt", attempt),
+				log.String("error", err.Error()),
+				log.Int64("cost_ms", costMs.Milliseconds()))
+		}
+
+		return err
+	})
 
 	if err != nil {
 		return u.handleCreateError(err, logger, costMs)
 	}
 
-	u.logCreateSuccess(logger, costMs)
+	logger.Info("用户创建成功",
+		log.Int("total_attempts", attempt),
+		log.Int64("total_cost_ms", time.Since(startTime).Milliseconds()),
+		log.Int64("last_attempt_cost_ms", costMs.Milliseconds()))
+
 	return nil
+}
+
+// createWithOptimizedTransaction 优化的事务创建
+func (u *Users) createWithOptimizedTransaction(ctx context.Context, user *v1.User, logger log.Logger, attempt int) error {
+	return u.executeInTransaction(ctx, logger, func(tx *gorm.DB) error {
+		// 设置事务隔离级别（如果支持）
+		if attempt > 1 {
+			// 重试时使用更宽松的隔离级别
+			if err := tx.Exec("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").Error; err != nil {
+				logger.Debug("设置事务隔离级别失败，继续执行", log.String("error", err.Error()))
+			}
+		}
+
+		// 检查是否存在
+		var count int64
+		if err := tx.Model(&v1.User{}).
+			Where("name = ?", user.Name).
+			Count(&count).Error; err != nil {
+			return err
+		}
+
+		if count > 0 {
+			return errors.WithCode(code.ErrUserAlreadyExist, "用户已存在")
+		}
+
+		// 执行创建
+		return tx.Create(user).Error
+	})
+}
+
+// getCreateRetryConfig 获取创建操作的重试配置
+func (u *Users) getCreateRetryConfig() db.RetryConfig {
+	return db.RetryConfig{
+		MaxAttempts:       5,                      // 最大重试次数
+		InitialBackoff:    100 * time.Millisecond, //初次退避时间
+		MaxBackoff:        2 * time.Second,        //最大退避时间
+		BackoffMultiplier: 1.5,                    // 减小退避倍数
+		IsRetryable:       u.isCreateRetryable,    //重试判断函数
+	}
+}
+
+// isCreateRetryable 创建操作的重试判断
+func (u *Users) isCreateRetryable(err error) bool {
+	// 死锁错误重试
+	if u.isMySQLDeadlockError(err) {
+		return true
+	}
+
+	// 超时错误重试
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+
+	// 连接错误重试
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		// 连接相关的错误码重试
+		switch mysqlErr.Number {
+		case 1205, 1213, 2002, 2003, 2006, 2013: // 锁超时、死锁、连接错误
+			return true
+		}
+	}
+
+	// 重复键错误不重试
+	if u.isMySQLDuplicateError(err) {
+		return false
+	}
+
+	// 其他错误使用默认判断
+	return db.DefaultIsRetryable(err)
 }
 
 // createLogger 创建专用的日志实例
@@ -97,28 +182,30 @@ func (u *Users) isRetryableError(err error) bool {
 		return true
 	}
 
-	// 可以在这里添加特定的重试逻辑
-	// 例如：某些特定的业务错误也可以重试
-
 	return false
 }
 
-// handleCreateError 处理创建错误
+// 增强的错误处理
 func (u *Users) handleCreateError(err error, logger log.Logger, cost time.Duration) error {
 	logger = logger.WithValues("cost_ms", cost.Milliseconds())
 
+	var mysqlErr *mysql.MySQLError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		logger.Warn("用户创建操作超时", log.String("error", err.Error()))
+		logger.Warn("用户创建操作超时")
 		return errors.WithCode(code.ErrDatabaseTimeout, "创建用户超时")
 
+	case errors.As(err, &mysqlErr) && mysqlErr.Number == 1213:
+		logger.Warn("用户创建遇到死锁")
+		return errors.WithCode(code.ErrDatabaseDeadlock, "系统繁忙，请稍后重试")
+
 	case u.isMySQLDuplicateError(err):
-		logger.Info("创建用户失败：用户已存在", log.String("error", err.Error()))
+		logger.Info("创建用户失败：用户已存在")
 		return errors.WithCode(code.ErrUserAlreadyExist, "用户已存在")
 
 	default:
 		logger.Error("用户创建操作失败", log.String("error", err.Error()))
-		return errors.WithCode(code.ErrDatabase, "数据库操作失败: %v", err)
+		return errors.WithCode(code.ErrDatabase, "数据库操作失败")
 	}
 }
 
@@ -147,15 +234,6 @@ func (u *Users) handleGetError(err error, username string, logger log.Logger, co
 		)
 		return errors.WithCode(code.ErrDatabase, "数据库查询失败: %v", err)
 	}
-}
-
-// isMySQLDuplicateError 检查是否是MySQL唯一键冲突错误
-func (u *Users) isMySQLDuplicateError(err error) bool {
-	var mysqlErr *mysql.MySQLError
-	if errors.As(err, &mysqlErr) {
-		return mysqlErr.Number == 1062
-	}
-	return false
 }
 
 // logCreateSuccess 记录创建成功日志

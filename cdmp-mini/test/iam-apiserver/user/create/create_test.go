@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"strings"
@@ -32,8 +33,8 @@ const (
 	RespCodeValidation = 100400
 	RespCodeConflict   = 100409
 
-	ConcurrentUsers = 1                     // 增加并发用户数
-	RequestsPerUser = 1                     // 每个用户的请求数
+	ConcurrentUsers = 20                    // 增加并发用户数
+	RequestsPerUser = 20                    // 每个用户的请求数
 	RequestInterval = 50 * time.Millisecond // 请求间隔
 )
 
@@ -229,7 +230,7 @@ func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*A
 
 func generateValidUserName(userID int) string {
 	timestamp := time.Now().UnixNano() % 10000
-	return fmt.Sprintf("user_%d_%d", userID, timestamp)
+	return fmt.Sprintf("user_%d_%d_%d", userID, timestamp, rand.IntN(1000000))
 }
 
 func truncateStr(s string, maxLen int) string {

@@ -25,7 +25,7 @@ func (u *Users) Get(ctx context.Context, username string, opts metav1.GetOptions
 
 	// 使用自定义配置的retry（查询操作重试延迟更短）
 	queryConfig := db.RetryConfig{
-		MaxRetries:   2,
+		MaxAttempts:  2,
 		InitialDelay: 50 * time.Millisecond,
 		IsRetryable:  u.isRetryableError, // 使用自定义的重试判断
 	}

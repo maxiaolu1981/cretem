@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"sync"
 
 	"fmt"
 	"net"
@@ -12,15 +13,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
-	"github.com/maxiaolu1981/cretem/nexuscore/errors"
-	"golang.org/x/sync/errgroup"
-
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+	"golang.org/x/sync/errgroup"
 )
 
 // 全局变量存储Redis客户端（用于监控）
@@ -35,6 +39,9 @@ type GenericAPIServer struct {
 	options     *options.Options
 	redis       *storage.RedisCluster
 	redisCancel context.CancelFunc
+	BloomFilter *bloom.BloomFilter
+	BloomMutex  sync.RWMutex
+	initErr     error
 }
 
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
@@ -59,6 +66,12 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		return nil, err
 	}
 
+	//初始化boolm
+	g.initBloomFiliter()
+	if g.initErr != nil {
+		log.Warnf("初始化boolm失败%v", g.initErr)
+	}
+
 	//安装中间件
 	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
 		return nil, err
@@ -67,6 +80,27 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	g.installRoutes()
 
 	return g, nil
+}
+
+func (g *GenericAPIServer) initBloomFiliter() error {
+	// 使用sync.Once确保只执行一次初始化
+	var initOnce sync.Once
+	initOnce.Do(func() {
+		g.BloomMutex.Lock()
+		defer g.BloomMutex.Unlock()
+		// 从数据库加载所有用户名
+		users, err := interfaces.Client().Users().List(context.TODO(), metav1.ListOptions{})
+		if err != nil {
+			g.initErr = errors.WithCode(code.ErrUnknown, "创建Bloom错误%v", err)
+			return
+		}
+
+		for _, user := range users.Items {
+			g.BloomFilter.AddString(user.Name)
+		}
+		log.Debugf("Bloom filter initialized with %d usernames", len(users.Items))
+	})
+	return nil
 }
 
 func (g *GenericAPIServer) configureGin() error {
