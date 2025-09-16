@@ -21,17 +21,19 @@ type Producer struct {
 }
 
 // 创建生成者
-func NewKafkaProducer(brokers []string, topic string) *Producer {
+func (g *GenericAPIServer) NewKafkaProducer(brokers []string, topic string) *Producer {
 	return &Producer{
 		writer: &kafka.Writer{
 			Addr:         kafka.TCP(brokers...),
 			Topic:        topic,
+			BatchSize:    g.options.KafkaOptions.BatchSize,
+			BatchTimeout: g.options.KafkaOptions.BatchTimeout,
 			Balancer:     &kafka.LeastBytes{},
 			RequiredAcks: kafka.RequireOne,
 			Async:        true, // 启用异步模式提高吞吐量
 			Completion: func(messages []kafka.Message, err error) {
 				if err != nil {
-					log.Warnf("消息%v发送失败:v", messages, err)
+					log.Errorf("消息%v发送失败:v", messages, err)
 				}
 			},
 		},
@@ -41,6 +43,7 @@ func NewKafkaProducer(brokers []string, topic string) *Producer {
 func (p *Producer) SendUserCreateMessage(ctx context.Context, user *v1.User) error {
 	userData, err := json.Marshal(user)
 	if err != nil {
+		log.Errorf("消息序列化失败%v:v", err)
 		return errors.WithCode(code.ErrEncodingJSON, "消息序列化失败%v", err)
 	}
 
@@ -49,6 +52,7 @@ func (p *Producer) SendUserCreateMessage(ctx context.Context, user *v1.User) err
 		Value: userData,
 		Time:  time.Now(),
 	}
+	log.Infof("准备发送用户消息: topic=%s, user=%+v", p.writer.Topic, user) // 新增日志
 
 	return p.writer.WriteMessages(ctx, msg)
 }

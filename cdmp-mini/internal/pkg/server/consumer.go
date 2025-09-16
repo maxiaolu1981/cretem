@@ -67,44 +67,84 @@ func (c *Consumer) worker(ctx context.Context, workerID int) {
 		default:
 			msg, err := c.reader.FetchMessage(ctx)
 			if err != nil {
-				fmt.Printf("Worker %d: failed to fetch message: %v\n", workerID, err)
+				log.Errorf("Worker %d: failed to fetch message: %v\n", workerID, err)
 				continue
 			}
 
 			if err := c.processMessage(ctx, msg); err != nil {
-				fmt.Printf("Worker %d: failed to process message: %v\n", workerID, err)
+				log.Errorf("Worker %d: failed to process message: %v\n", workerID, err)
 				// 可以考虑重试逻辑或者将失败消息发送到死信队列
 				continue
 			}
 
 			if err := c.reader.CommitMessages(ctx, msg); err != nil {
-				fmt.Printf("Worker %d: failed to commit message: %v\n", workerID, err)
+				log.Errorf("Worker %d: failed to commit message: %v\n", workerID, err)
 			}
 		}
 	}
 }
 
 func (c *Consumer) processMessage(ctx context.Context, msg kafka.Message) error {
-	var user *v1.User
+	// 修复1：正确的Unmarshal方式
+	var user v1.User // 改为值类型
 	if err := json.Unmarshal(msg.Value, &user); err != nil {
 		return fmt.Errorf("failed to unmarshal user: %v", err)
 	}
 
-	// 新增：使用布隆过滤器快速检查用户名是否存在
-	if c.BloomFilter.TestString(user.Name) {
-		// 布隆过滤器确认用户名肯定不存在
-		log.Debugf("用户名已经存在（布隆过滤器验证）: username=%s", user.Name)
+	// 修复2：添加上下文日志
+	log.Debugf("开始处理用户创建消息: username=%s, email=%s", user.Name, user.Email)
+
+	// 检查用户是否已存在
+	exists, err := c.checkUserExists(ctx, user.Name)
+	if err != nil {
+		return fmt.Errorf("检查用户存在性失败: %v", err)
+	}
+	if exists {
+		log.Debugf("用户已存在，跳过插入: username=%s", user.Name)
 		return nil
 	}
 
-	// 设置创建时间和更新时间
+	// 设置时间字段
 	now := time.Now()
 	user.CreatedAt = now
 	user.UpdatedAt = now
-	// 保存用户到数据库
-	if err := c.db.Create(&user).Error; err != nil {
-		return fmt.Errorf("创建用户失败")
+
+	// 插入数据库
+	if err := c.db.WithContext(ctx).Create(&user).Error; err != nil {
+		log.Errorf("创建用户失败: username=%s, error=%v", user.Name, err)
+		return fmt.Errorf("创建用户失败: %v", err)
 	}
-	log.Debugf("成功创建用户:%s\n", user.Name)
+
+	// 修复3：添加到布隆过滤器（如果存在）
+	if c.BloomFilter != nil {
+		c.BloomFilter.AddString(user.Name)
+		log.Debugf("用户已添加到布隆过滤器: username=%s", user.Name)
+	}
+
+	log.Infof("成功创建用户: username=%s, id=%d", user.Name, user.ID)
 	return nil
+}
+
+// checkUserExists 抽离用户存在性检查逻辑
+func (c *Consumer) checkUserExists(ctx context.Context, username string) (bool, error) {
+	// 1. 先检查布隆过滤器（如果可用）
+	if c.BloomFilter != nil {
+		if !c.BloomFilter.TestString(username) {
+			// 布隆过滤器确认不存在
+			return false, nil
+		}
+		// 布隆过滤器返回true，需要进一步检查数据库
+	}
+
+	// 2. 检查数据库
+	var count int64
+	err := c.db.WithContext(ctx).Model(&v1.User{}).
+		Where("name = ?", username).
+		Count(&count).Error
+
+	if err != nil {
+		return false, fmt.Errorf("数据库查询失败: %v", err)
+	}
+
+	return count > 0, nil
 }

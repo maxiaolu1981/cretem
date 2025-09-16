@@ -38,14 +38,16 @@ var distributedLockEnabled bool
 type GenericAPIServer struct {
 	insecureServer *http.Server
 	*gin.Engine
-	options     *options.Options
-	redis       *storage.RedisCluster
-	redisCancel context.CancelFunc
-	BloomFilter *bloom.BloomFilter
-	BloomMutex  sync.RWMutex
-	initOnce    sync.Once
-	initErr     error
-	producer    *Producer
+	options        *options.Options
+	redis          *storage.RedisCluster
+	redisCancel    context.CancelFunc
+	BloomFilter    *bloom.BloomFilter
+	BloomMutex     sync.RWMutex
+	initOnce       sync.Once
+	initErr        error
+	producer       *Producer
+	consumerCtx    context.Context
+	consumerCancel context.CancelFunc
 }
 
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
@@ -92,16 +94,14 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	log.Info("初始化boolm服务成功")
 
 	// 初始化Kafka生产者和消费者（同时启动！）
-	producer, consumer := initKafkaComponents(g.options.KafkaOptions.Brokers,
+	producer, consumer := g.initKafkaComponents(g.options.KafkaOptions.Brokers,
 		"user-create-topic", "user-group", dbIns)
 	g.producer = producer
-	defer producer.Close()
-	defer consumer.Close()
 
 	// 4. 启动Kafka消费者（后台运行）
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
+	g.consumerCtx = ctx
+	g.consumerCancel = cancel
 	go startKafkaConsumer(ctx, consumer, 5) // 启动5个消费者worker
 
 	//安装中间件
@@ -117,11 +117,9 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 // 启动Kafka消费者
 func startKafkaConsumer(ctx context.Context, consumer *Consumer, workerCount int) {
 	log.Infof("开始运行kafka消费者%d workers...", workerCount)
-
 	// 这里会阻塞运行，直到context被取消
 	consumer.StartConsuming(ctx, workerCount)
 
-	log.Info("kafka消费者被停止")
 }
 
 func (g *GenericAPIServer) initBloomFiliter() error {
@@ -283,9 +281,9 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 }
 
 // 初始化Kafka组件
-func initKafkaComponents(brokers []string, topic, groupID string, db *gorm.DB) (*Producer, *Consumer) {
+func (g *GenericAPIServer) initKafkaComponents(brokers []string, topic, groupID string, db *gorm.DB) (*Producer, *Consumer) {
 	// 初始化生产者
-	producer := NewKafkaProducer(brokers, topic)
+	producer := g.NewKafkaProducer(brokers, topic)
 	log.Infof("初始化kafka生产者: %s", topic)
 
 	// 初始化消费者（注入数据库连接）

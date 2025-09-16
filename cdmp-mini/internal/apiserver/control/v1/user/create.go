@@ -118,6 +118,7 @@ func (u *UserController) Create(ctx *gin.Context) {
 
 	err := p.SendUserCreateMessage(ctx, &r)
 	if err != nil {
+		log.Errorf("生产者消息发送失败%v", err)
 		core.WriteResponse(ctx, errors.WithCode(code.ErrUnknown, "生产者消息发送失败"), nil)
 		return
 	}

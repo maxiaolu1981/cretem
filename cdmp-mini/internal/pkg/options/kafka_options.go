@@ -58,8 +58,8 @@ func NewKafkaOptions() *KafkaOptions {
 		ConsumerGroup: "default-consumer-group",
 		RequiredAcks:  1, // leader确认
 		Async:         true,
-		BatchSize:     100,
-		BatchTimeout:  100 * time.Millisecond,
+		BatchSize:     500,
+		BatchTimeout:  50 * time.Millisecond,
 		MaxRetries:    3,
 		MinBytes:      10 * 1024,        // 10KB
 		MaxBytes:      10 * 1024 * 1024, // 10MB

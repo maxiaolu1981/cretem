@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"io"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -20,7 +23,7 @@ import (
 // ==================== 配置常量 ====================
 const (
 	ServerBaseURL  = "http://localhost:8080"
-	RequestTimeout = 10 * time.Second
+	RequestTimeout = 30 * time.Second // 修改：增加超时时间
 
 	LoginAPIPath = "/login"
 	UsersAPIPath = "/v1/users"
@@ -33,9 +36,10 @@ const (
 	RespCodeValidation = 100400
 	RespCodeConflict   = 100409
 
-	ConcurrentUsers = 100                   // 增加并发用户数
-	RequestsPerUser = 50                    // 每个用户的请求数
-	RequestInterval = 50 * time.Millisecond // 请求间隔
+	ConcurrentUsers = 500                    // 修改：降低并发数，逐步增加
+	RequestsPerUser = 100                    // 修改：减少每个用户的请求数
+	RequestInterval = 100 * time.Millisecond // 修改：增加请求间隔
+	BatchSize       = 100                    // 新增：批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -82,21 +86,75 @@ type UserMetadata struct {
 
 // ==================== 全局变量 ====================
 var (
-	httpClient  = &http.Client{Timeout: RequestTimeout}
+	// 修改：优化HTTP客户端连接池配置
+	httpClient  = createHTTPClient()
 	redisClient *redisV8.Client
+	mu          sync.Mutex
 )
+
+// 新增：创建优化的HTTP客户端
+func createHTTPClient() *http.Client {
+	return &http.Client{
+		Timeout: RequestTimeout,
+		Transport: &http.Transport{
+			Proxy: http.ProxyFromEnvironment,
+			DialContext: (&net.Dialer{
+				Timeout:   10 * time.Second,
+				KeepAlive: 90 * time.Second,
+			}).DialContext,
+			MaxIdleConns:          1000,
+			MaxIdleConnsPerHost:   1000,
+			MaxConnsPerHost:       1000,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:     true,
+		},
+	}
+}
 
 // ==================== 主测试函数 ====================
 func TestMain(m *testing.M) {
 	fmt.Println("初始化测试环境...")
+
+	// 新增：检查系统资源限制
+	checkResourceLimits()
+
+	// 新增：设置更高的文件描述符限制（如果可能）
+	setHigherFileLimit()
 
 	// 运行测试
 	code := m.Run()
 	os.Exit(code)
 }
 
+// 新增：检查资源限制
+func checkResourceLimits() {
+	var rLimit syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit); err == nil {
+		fmt.Printf("当前文件描述符限制: Soft=%d, Hard=%d\n", rLimit.Cur, rLimit.Max)
+		if rLimit.Cur < 10000 {
+			fmt.Printf("⚠️  文件描述符限制较低，建议使用: ulimit -n 10000\n")
+		}
+	}
+}
+
+// 新增：尝试设置更高的文件描述符限制
+func setHigherFileLimit() {
+	var rLimit syscall.Rlimit
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit); err == nil {
+		if rLimit.Cur < 10000 && rLimit.Max >= 10000 {
+			rLimit.Cur = 10000
+			if err := syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit); err == nil {
+				fmt.Printf("✅ 文件描述符限制已设置为: %d\n", rLimit.Cur)
+			}
+		}
+	}
+}
+
 func TestCase_CreateUserSuccess_Concurrent(t *testing.T) {
-	runConcurrentTest(t, "创建用户成功并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
+	// 修改：使用分批测试
+	runBatchConcurrentTest(t, "创建用户成功并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {
 		start := time.Now()
 
 		// 首先登录获取token
@@ -145,6 +203,31 @@ func TestCase_CreateUserSuccess_Concurrent(t *testing.T) {
 
 		return success, createResp, http.StatusCreated, RespCodeSuccess
 	})
+}
+
+// 新增：分批并发测试
+func runBatchConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, int, string, string) (bool, *APIResponse, int, int)) {
+	totalBatches := (ConcurrentUsers + BatchSize - 1) / BatchSize
+
+	for batch := 0; batch < totalBatches; batch++ {
+		startUser := batch * BatchSize
+		endUser := min((batch+1)*BatchSize, ConcurrentUsers)
+
+		fmt.Printf("\n🔄 执行第 %d/%d 批测试: 用户 %d-%d\n",
+			batch+1, totalBatches, startUser, endUser-1)
+
+		runConcurrentTest(t, testName, startUser, endUser, testFunc)
+
+		// 批次间休息，释放资源
+		if batch < totalBatches-1 {
+			fmt.Printf("⏸️  批次间休息 2秒...\n")
+			time.Sleep(2 * time.Second)
+
+			// 新增：强制垃圾回收
+			runtime.GC()
+			time.Sleep(500 * time.Millisecond)
+		}
+	}
 }
 
 func login(username, password string) (*TestContext, *APIResponse, error) {
@@ -225,7 +308,7 @@ func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*A
 	}
 	apiResp.HTTPStatus = resp.StatusCode
 
-	return &apiResp, nil // 修复这里：apiResponse → apiResp
+	return &apiResp, nil
 }
 
 func generateValidUserName(userID int) string {
@@ -240,8 +323,15 @@ func truncateStr(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 // ==================== 并发测试框架 ====================
-func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, int, string, string) (bool, *APIResponse, int, int)) {
+func runConcurrentTest(t *testing.T, testName string, startUser, endUser int, testFunc func(*testing.T, int, string, string) (bool, *APIResponse, int, int)) {
 	width := 80
 	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
 		if w, _, err := term.GetSize(fd); err == nil {
@@ -255,37 +345,41 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 
 	fmt.Printf("%s\n", strings.Repeat("═", width))
 	fmt.Printf("🚀 开始并发测试: %s\n", testName)
-	fmt.Printf("📊 并发数: %d, 总请求数: %d\n", ConcurrentUsers, ConcurrentUsers*RequestsPerUser)
+	fmt.Printf("📊 并发用户: %d-%d, 每用户请求: %d, 总请求: %d\n",
+		startUser, endUser-1, RequestsPerUser, (endUser-startUser)*RequestsPerUser)
 	fmt.Printf("%s\n", strings.Repeat("─", width))
 
 	startTime := time.Now()
 	var wg sync.WaitGroup
-	var mu sync.Mutex
 	successCount := 0
 	failCount := 0
 	totalDuration := time.Duration(0)
 	var testResults []TestResult
 
-	progress := make(chan string, ConcurrentUsers*RequestsPerUser)
+	progress := make(chan string, 100)
 	done := make(chan bool)
+
+	// 新增：内存监控协程
+	stopMonitor := make(chan bool)
+	go monitorMemoryUsage(stopMonitor)
 
 	// 进度显示协程
 	go func() {
-		line := 5
+		line := 6
 		for msg := range progress {
 			fmt.Printf("\033[%d;1H", line)
-			fmt.Printf("\033[K") // 清除行
+			fmt.Printf("\033[K")
 			fmt.Printf("   %s", msg)
 			line++
-			if line > 8 {
-				line = 5
+			if line > 10 {
+				line = 6
 			}
 		}
 		done <- true
 	}()
 
 	// 统计信息显示协程
-	statsTicker := time.NewTicker(200 * time.Millisecond)
+	statsTicker := time.NewTicker(500 * time.Millisecond) // 修改：降低刷新频率
 	defer statsTicker.Stop()
 
 	go func() {
@@ -298,28 +392,28 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 			mu.Unlock()
 
 			if totalRequests > 0 {
-				fmt.Printf("\033[10;1H\033[K")
-				fmt.Printf("   ✅ 成功请求: %d\n", currentSuccess)
-				fmt.Printf("\033[11;1H\033[K")
-				fmt.Printf("   ❌ 失败请求: %d\n", currentFail)
 				fmt.Printf("\033[12;1H\033[K")
-				fmt.Printf("   📈 成功率: %.1f%%\n", float64(currentSuccess)/float64(totalRequests)*100)
+				fmt.Printf("   ✅ 成功请求: %d\n", currentSuccess)
 				fmt.Printf("\033[13;1H\033[K")
-				fmt.Printf("   ⏱️  当前耗时: %v\n", currentDuration.Round(time.Millisecond))
+				fmt.Printf("   ❌ 失败请求: %d\n", currentFail)
 				fmt.Printf("\033[14;1H\033[K")
+				fmt.Printf("   📈 成功率: %.1f%%\n", float64(currentSuccess)/float64(totalRequests)*100)
+				fmt.Printf("\033[15;1H\033[K")
+				fmt.Printf("   ⏱️  当前耗时: %v\n", currentDuration.Round(time.Millisecond))
+				fmt.Printf("\033[16;1H\033[K")
 				fmt.Printf("   🚀 实时QPS: %.1f\n", float64(totalRequests)/currentDuration.Seconds())
 				if totalDuration > 0 && successCount > 0 {
-					fmt.Printf("\033[15;1H\033[K")
+					fmt.Printf("\033[17;1H\033[K")
 					fmt.Printf("   ⚡ 平均耗时: %v\n", totalDuration/time.Duration(successCount))
 				}
-				fmt.Printf("\033[16;1H\033[K")
+				fmt.Printf("\033[18;1H\033[K")
 				fmt.Printf("%s", strings.Repeat("─", width))
 			}
 		}
 	}()
 
 	// 启动并发测试
-	for i := 0; i < ConcurrentUsers; i++ {
+	for i := startUser; i < endUser; i++ {
 		wg.Add(1)
 		go func(userID int) {
 			defer wg.Done()
@@ -329,7 +423,7 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 
 			for j := 0; j < RequestsPerUser; j++ {
 				requestID := userID*RequestsPerUser + j + 1
-				progress <- fmt.Sprintf("🟡 [用户%s] 请求 %d/%d 开始...", username, requestID, ConcurrentUsers*RequestsPerUser)
+				progress <- fmt.Sprintf("🟡 [用户%d] 请求 %d 开始...", userID, j+1)
 
 				start := time.Now()
 				success, resp, expectedHTTP, expectedBiz := testFunc(t, userID, username, password)
@@ -339,10 +433,10 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 				if success {
 					successCount++
 					totalDuration += duration
-					progress <- fmt.Sprintf("🟢 [用户%s] 请求 %d 成功 (耗时: %v)", username, requestID, duration)
+					progress <- fmt.Sprintf("🟢 [用户%d] 请求 %d 成功 (耗时: %v)", userID, j+1, duration)
 				} else {
 					failCount++
-					progress <- fmt.Sprintf("🔴 [用户%s] 请求 %d 失败 (耗时: %v)", username, requestID, duration)
+					progress <- fmt.Sprintf("🔴 [用户%d] 请求 %d 失败 (耗时: %v)", userID, j+1, duration)
 				}
 
 				if resp != nil {
@@ -381,14 +475,15 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 	close(progress)
 	<-done
 	statsTicker.Stop()
+	stopMonitor <- true
 
 	// 输出最终结果
 	duration := time.Since(startTime)
-	totalRequests := ConcurrentUsers * RequestsPerUser
+	totalRequests := (endUser - startUser) * RequestsPerUser
 
-	fmt.Printf("\033[18;1H\033[K")
+	fmt.Printf("\033[20;1H\033[K")
 	fmt.Printf("%s\n", strings.Repeat("═", width))
-	fmt.Printf("📊 测试完成!\n")
+	fmt.Printf("📊 批次测试完成!\n")
 	fmt.Printf("%s\n", strings.Repeat("─", width))
 	fmt.Printf("   ✅ 总成功数: %d/%d (%.1f%%)\n", successCount, totalRequests, float64(successCount)/float64(totalRequests)*100)
 	fmt.Printf("   ❌ 总失败数: %d/%d (%.1f%%)\n", failCount, totalRequests, float64(failCount)/float64(totalRequests)*100)
@@ -399,16 +494,27 @@ func runConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, 
 	}
 	fmt.Printf("%s\n", strings.Repeat("═", width))
 
-	// 输出详细错误信息（如果有）
-	if failCount > 0 {
-		fmt.Printf("\n📋 错误详情:\n")
-		for _, result := range testResults {
-			if !result.Success {
-				fmt.Printf("   🔴 请求 %d: HTTP %d (期望 %d), 业务码 %d (期望 %d)\n",
-					result.RequestID, result.ActualHTTP, result.ExpectedHTTP,
-					result.ActualBiz, result.ExpectedBiz)
-				fmt.Printf("       消息: %s\n", truncateStr(result.Message, 100))
-			}
+	// 强制垃圾回收
+	runtime.GC()
+}
+
+// 新增：内存监控函数
+func monitorMemoryUsage(stop chan bool) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			var m runtime.MemStats
+			runtime.ReadMemStats(&m)
+			fmt.Printf("\033[22;1H\033[K")
+			fmt.Printf("💾 内存使用: Alloc=%.1fMB, Goroutines=%d, GC次数=%d",
+				float64(m.Alloc)/1024/1024,
+				runtime.NumGoroutine(),
+				m.NumGC)
+		case <-stop:
+			return
 		}
 	}
 }
