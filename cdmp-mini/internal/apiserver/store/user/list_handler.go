@@ -3,11 +3,12 @@ package user
 import (
 	"context"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 )
 
-func (u *Users) List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error) {
+func (u *Users) List(ctx context.Context, opts metav1.ListOptions,opt *options.Options) (*v1.UserList, error) {
 	ret := &v1.UserList{}
 
 	// 移除分页和条件限制，直接查询所有记录的name字段

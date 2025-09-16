@@ -20,7 +20,7 @@ import (
 type RetryConfig struct {
 	MaxAttempts       int           //最大重试次数
 	InitialBackoff    time.Duration //初始退避时间
-	InitialDelay      time.Duration
+	InitialDelay      time.Duration //每次重试尝试之间等待的固定间隔时间
 	MaxBackoff        time.Duration    // 最大退避时间
 	BackoffMultiplier float32          //退避倍数
 	IsRetryable       func(error) bool // 重试判断函数

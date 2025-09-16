@@ -46,7 +46,7 @@ func (u *UserController) List(c *gin.Context) {
 		return
 	}
 
-	userList, err := u.srv.Users().List(c, r)
+	userList, err := u.srv.Users().List(c, r, u.options)
 	if err != nil {
 		errWrap := errors.WrapC(err, code.ErrInternal, "%s", errors.GetMessage(err))
 		core.WriteResponse(c, errWrap, nil)

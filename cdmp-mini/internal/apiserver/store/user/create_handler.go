@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/go-sql-driver/mysql"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -15,7 +16,7 @@ import (
 )
 
 // Create 创建用户
-func (u *Users) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error {
+func (u *Users) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
 	logger := u.createLogger(ctx, user)
 	logger.Info("开始执行用户创建的数据库操作")
 
@@ -148,7 +149,6 @@ func (u *Users) getLogger(ctx context.Context) log.Logger {
 // createTimeoutContext 创建超时上下文
 func (u *Users) createTimeoutContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	defaultTimeout := 3 * time.Second
-
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline)
 		if remaining < defaultTimeout {

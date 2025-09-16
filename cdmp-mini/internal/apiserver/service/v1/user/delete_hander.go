@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-redis/redis/v8"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/lock"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -17,11 +18,11 @@ import (
 	pkgopt "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 )
 
-func (u *UserService) DeleteCollection(ctx context.Context, username []string, force bool, opts metav1.DeleteOptions) error {
+func (u *UserService) DeleteCollection(ctx context.Context, username []string, force bool, opts metav1.DeleteOptions, opt *options.Options) error {
 	return nil
 }
 
-func (u *UserService) Delete(ctx context.Context, username string, force bool, opts metav1.DeleteOptions) error {
+func (u *UserService) Delete(ctx context.Context, username string, force bool, opts metav1.DeleteOptions, opt *options.Options) error {
 	lockConfig := u.Options.DistributedLock
 	bizLockKey := "user:delete"
 
@@ -206,10 +207,10 @@ func (u *UserService) executeDelete(ctx context.Context, username string,
 	var err error
 	if force {
 		opts = metav1.DeleteOptions{Unscoped: true}
-		err = u.Store.Users().DeleteForce(ctx, username, opts)
+		err = u.Store.Users().DeleteForce(ctx, username, opts, u.Options)
 	} else {
 		opts = metav1.DeleteOptions{Unscoped: false}
-		err = u.Store.Users().Delete(ctx, username, opts)
+		err = u.Store.Users().Delete(ctx, username, opts, u.Options)
 	}
 
 	if err != nil {

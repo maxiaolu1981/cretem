@@ -139,8 +139,6 @@ type TestResult struct {
 var (
 	httpClient  = &http.Client{Timeout: RequestTimeout}
 	redisClient *redisV8.Client
-	redBold     = color.New(color.FgRed).Add(color.Bold)
-	greenBold   = color.New(color.FgGreen).Add(color.Bold)
 	cyan        = color.New(color.FgCyan)
 )
 
@@ -499,13 +497,6 @@ func getPerformanceRating(rate float64) string {
 	default:
 		return "❌ 较差"
 	}
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 // ==================== 修复所有测试用例的函数签名 ====================

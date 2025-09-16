@@ -43,7 +43,7 @@ func (u *UserController) Delete(ctx *gin.Context) {
 	}
 	logger = logger.WithValues("delete_username", deleteUsername)
 	logger.Info("开始处理用户删除")
-	_, err := interfaces.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{})
+	_, err := interfaces.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{}, u.options)
 	if err != nil {
 		// 关键：匹配 Get 方法返回的 "用户不存在" 错误码 code.ErrUserNotFound
 		if errors.IsCode(err, code.ErrUserNotFound) {
@@ -57,7 +57,7 @@ func (u *UserController) Delete(ctx *gin.Context) {
 		return
 	}
 
-	if err := u.srv.Users().Delete(stdCtx, deleteUsername, false, metav1.DeleteOptions{Unscoped: false}); err != nil {
+	if err := u.srv.Users().Delete(stdCtx, deleteUsername, false, metav1.DeleteOptions{Unscoped: false}, u.options); err != nil {
 		logger.Errorf("用户删除失败%v", err)
 		core.WriteResponse(ctx, err, nil)
 		return
@@ -135,7 +135,8 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	logger = logger.WithValues("delete_username", deleteUsername)
 
 	// 5. 业务校验：查询用户是否存在（资源不存在/服务端错误场景）
-	_, rawGetErr := interfaces.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{})
+	_, rawGetErr := interfaces.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{}, u.options)
+
 	if rawGetErr != nil {
 		// 子场景1：用户不存在（业务码→HTTP 404）
 		if errors.IsCode(rawGetErr, code.ErrUserNotFound) {
@@ -170,8 +171,9 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	rawDelErr := u.srv.Users().Delete(
 		stdCtx,
 		deleteUsername,
-		true,                                 // force=true：强制删除
-		metav1.DeleteOptions{Unscoped: true}, // Unscoped：忽略命名空间限制
+		true, // force=true：强制删除
+		metav1.DeleteOptions{Unscoped: true},
+		u.options,
 	)
 	if rawDelErr != nil {
 		logger.Errorf("失败删除用户:[%s]: %+v", deleteUsername, rawDelErr)

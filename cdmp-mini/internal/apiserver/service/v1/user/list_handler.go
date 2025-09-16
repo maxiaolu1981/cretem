@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -13,7 +14,7 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-func (u *UserService) List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error) {
+func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
 	startTime := time.Now()
 	logger := log.L(ctx).WithValues(
 		"operation", "ListUsers",
@@ -23,7 +24,7 @@ func (u *UserService) List(ctx context.Context, opts metav1.ListOptions) (*v1.Us
 	)
 
 	// 步骤1：查询原始用户列表
-	users, err := u.Store.Users().List(ctx, opts)
+	users, err := u.Store.Users().List(ctx, opts, u.Options)
 	if err != nil {
 		logger.Errorf("List users from storage failed: %v", err)
 		return nil, errors.WithCode(code.ErrDatabase, "query raw users failed: %v", err)
@@ -204,5 +205,3 @@ func (u *UserService) processSingleUserWithTimeout(ctx context.Context, user *v1
 		LoginedAt: user.LoginedAt,
 	}, nil
 }
-
-

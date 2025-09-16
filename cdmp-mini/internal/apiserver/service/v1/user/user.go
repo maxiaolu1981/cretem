@@ -31,14 +31,14 @@ func NewUserService(store interfaces.Factory, redis *storage.RedisCluster, opts 
 }
 
 type UserSrv interface {
-	Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error
-	Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions) error
-	Delete(ctx context.Context, username string, force bool, opts metav1.DeleteOptions) error
-	DeleteCollection(ctx context.Context, username []string, force bool, opts metav1.DeleteOptions) error
-	Get(ctx context.Context, username string, opts metav1.GetOptions) (*v1.User, error)
-	List(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error)
-	ListWithBadPerformance(ctx context.Context, opts metav1.ListOptions) (*v1.UserList, error)
-	ChangePassword(ctx context.Context, user *v1.User) error
+	Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions,opt *options.Options) error
+	Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions,opt *options.Options) error
+	Delete(ctx context.Context, username string, force bool, opts metav1.DeleteOptions,opt *options.Options) error
+	DeleteCollection(ctx context.Context, username []string, force bool, opts metav1.DeleteOptions,opt *options.Options) error
+	Get(ctx context.Context, username string, opts metav1.GetOptions,opt *options.Options) (*v1.User, error)
+	List(ctx context.Context, opts metav1.ListOptions,opt *options.Options) (*v1.UserList, error)
+	ListWithBadPerformance(ctx context.Context, opts metav1.ListOptions,opt *options.Options) (*v1.UserList, error)
+	ChangePassword(ctx context.Context, user *v1.User,opt *options.Options) error
 }
 
 // 业务方法：检查用户名是否可能存在

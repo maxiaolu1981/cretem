@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -12,11 +13,11 @@ import (
 	"gorm.io/gorm"
 )
 
-func (u *Users) Delete(ctx context.Context, username string, opts metav1.DeleteOptions) error {
+func (u *Users) Delete(ctx context.Context, username string, opts metav1.DeleteOptions, opt *options.Options) error {
 	return nil
 }
 
-func (u *Users) DeleteForce(ctx context.Context, username string, opts metav1.DeleteOptions) error {
+func (u *Users) DeleteForce(ctx context.Context, username string, opts metav1.DeleteOptions, opt *options.Options) error {
 	logger := log.L(ctx).WithValues(
 		"method", "DeleteForce",
 		"unscoped", true,
@@ -117,6 +118,6 @@ func (u *Users) deleteUserMainData(tx *gorm.DB, username string, opts metav1.Del
 	return nil
 }
 
-func (u *Users) DeleteCollection(ctx context.Context, usernames []string, opts metav1.DeleteOptions) error {
+func (u *Users) DeleteCollection(ctx context.Context, usernames []string, opts metav1.DeleteOptions, opt *options.Options) error {
 	return nil
 }

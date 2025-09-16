@@ -19,6 +19,7 @@ import (
 	gojwt "github.com/golang-jwt/jwt/v4"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/core"
@@ -71,11 +72,26 @@ type loginInfo struct {
 }
 
 // 认证策略工厂
-func newBasicAuth() middleware.AuthStrategy {
+func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 	return auth.NewBasicStrategy(func(username string, password string) bool {
-		// fetch user from database
-		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{})
+		start := time.Now()
+		// 防止用户枚举无效登录
+		if !g.BloomFilter.TestString(username) {
+			elapsed := time.Since(start)
+			targetDelay := 150 * time.Millisecond
+			if elapsed < targetDelay {
+				time.Sleep(targetDelay - elapsed)
+			}
+			return false
+		}
+		//找到了
+		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{}, &options.Options{})
 		if err != nil {
+			elapsed := time.Since(start)
+			targetDelay := 150 * time.Millisecond
+			if elapsed < targetDelay {
+				time.Sleep(targetDelay - elapsed)
+			}
 			return false
 		}
 
@@ -84,14 +100,18 @@ func newBasicAuth() middleware.AuthStrategy {
 			return false
 		}
 
-		user.LoginedAt = time.Now()
-		_ = interfaces.Client().Users().Update(context.TODO(), user, metav1.UpdateOptions{})
-
+		go func() {
+			user.LoginedAt = time.Now()
+			err = interfaces.Client().Users().Update(context.TODO(), user, metav1.UpdateOptions{}, g.options)
+		}()
+		if err != nil {
+			log.Errorf("用户%s更新登录时间失败", username)
+		}
 		return true
 	})
 }
 
-func newJWTAuth(g *GenericAPIServer) (middleware.AuthStrategy, error) {
+func (g *GenericAPIServer) newJWTAuth() (middleware.AuthStrategy, error) {
 	//基础配置：初始化核心参数
 	realm := viper.GetString("jwt.realm")
 	signingAlgorithm := "HS256"
@@ -124,7 +144,7 @@ func newJWTAuth(g *GenericAPIServer) (middleware.AuthStrategy, error) {
 		IdentityHandler: func(ctx *gin.Context) interface{} {
 			return g.identityHandler(ctx)
 		},
-		Authorizator:          authorizator(),
+		Authorizator:          g.authorizator(),
 		HTTPStatusMessageFunc: errors.HTTPStatusMessageFunc,
 		LoginResponse: func(c *gin.Context, statusCode int, token string, expire time.Time) {
 			g.loginResponse(c, token, expire)
@@ -266,7 +286,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	}
 
 	//查询用户信息：透传 store 层错误（store 已按场景返回对应码）
-	user, err := interfaces.Client().Users().Get(c, login.Username, metav1.GetOptions{})
+	user, err := interfaces.Client().Users().Get(c, login.Username, metav1.GetOptions{}, g.options)
 	if err != nil {
 		log.Errorf("获取用户信息失败: username=%s, error=%v", login.Username, err)
 		recordErrorToContext(c, err)
@@ -288,7 +308,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	c.Set("current_user", user)
 	//更新登录时间：忽略非关键错误（仅日志记录，不阻断认证）
 	user.LoginedAt = time.Now()
-	if updateErr := interfaces.Client().Users().Update(c, user, metav1.UpdateOptions{}); updateErr != nil {
+	if updateErr := interfaces.Client().Users().Update(c, user, metav1.UpdateOptions{}, g.options); updateErr != nil {
 		log.Warnf("update user logined time failed: username=%s, error=%v", login.Username, updateErr)
 	}
 	// 新增：在返回前打印 user 信息，确认非 nil
@@ -569,32 +589,46 @@ func (g *GenericAPIServer) generateAccessTokenClaims(data interface{}) jwt.MapCl
 	return claims
 }
 
-func authorizator() func(data interface{}, c *gin.Context) bool {
+func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context) bool {
 	return func(data interface{}, c *gin.Context) bool {
 		u, ok := data.(string)
 		if !ok {
 			log.L(c).Info("无效的user data")
 			return false
 		}
-		user, err := interfaces.Client().Users().Get(c, u, metav1.GetOptions{})
+
+		start := time.Now()
+		path := c.Request.URL.Path
+		if !g.BloomFilter.TestString(u) {
+			// 布隆过滤器判定用户不存在，模拟一个数据库查询的耗时
+			elapsed := time.Since(start)
+			targetDelay := 150 * time.Millisecond // 模拟的耗时
+			if elapsed < targetDelay {
+				time.Sleep(targetDelay - elapsed)
+			}
+			return false
+		}
+		user, err := interfaces.Client().Users().Get(c, u, metav1.GetOptions{}, g.options)
 		if err != nil {
+			elapsed := time.Since(start)
+			targetDelay := 150 * time.Millisecond
+			if elapsed < targetDelay {
+				time.Sleep(targetDelay - elapsed)
+			}
 			log.L(c).Warnf("用户%s没有查询到", u)
 			return false
 		}
-
 		if user.Status != 1 {
 			log.L(c).Warnf("用户%s没有激活", user.Name)
 			return false
 		}
-		path := c.Request.URL.Path
-		if strings.HasPrefix(user.Name, "/admin/") && user.Role != "admin" {
+
+		if strings.HasPrefix(path, "/admin/") && user.Role != "admin" {
 			log.L(c).Warnf("用户%s无权访问%s(需要管理员校色)", user.Name, path)
 			return false
 		}
-		log.L(c).Infof("用户 `%s`已经通过认证", user.Name) // 添加参数
+		log.Info("用户认证通过") // 添加参数
 		c.Set(common.UsernameKey, user.Name)
-		// 新增：在返回前打印 user 信息，确认非 nil
-		log.Infof("authenticate 函数即将返回 user：username=%s, user_id=%s, 类型=%T", user.Name, user.InstanceID, user)
 
 		return true
 	}
@@ -660,26 +694,12 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire 
 }
 
 func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
-	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
 
-	claimsValue, exists := c.Get("jwt_claims")
-	if !exists {
-		core.WriteResponse(c, errors.WithCode(code.ErrInternal, "认证信息缺失"), nil)
-		return
-	}
-
-	claims, ok := claimsValue.(gojwt.MapClaims)
-	if !ok {
-		core.WriteResponse(c, errors.WithCode(code.ErrInvalidParameter, "Token声明无效"), nil)
-		return
-	}
-
-	//debugRequestInfo(c)
 	if c.Request.Method != http.MethodPost {
 		core.WriteResponse(c, errors.WithCode(code.ErrMethodNotAllowed, "必须使用post方法传输"), nil)
 		return
 	}
-	// 令牌响应结构（匹配服务端返回格式）
+	//  获取刷新令牌
 	type TokenRequest struct {
 		RefreshToken string `json:"refresh_token"`
 	}
@@ -694,13 +714,35 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 		core.WriteResponse(c, errors.WithCode(code.ErrInvalidParameter, "refresh token为空"), nil)
 		return
 	}
+	//验证用户是否存在
+	claimsValue, exists := c.Get("jwt_claims")
+	if !exists {
+		core.WriteResponse(c, errors.WithCode(code.ErrInternal, "认证信息缺失"), nil)
+		return
+	}
+	claims, ok := claimsValue.(gojwt.MapClaims)
+	if !ok {
+		core.WriteResponse(c, errors.WithCode(code.ErrInvalidParameter, "Token声明无效"), nil)
+		return
+	}
+	username, ok := getUsernameFromClaims(claims)
+	if !ok {
+		core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "请在username,sub,user任意字段中填入用户名"), nil)
+		return
+	}
 
-	// 2. 验证Refresh Token有效性
+	// 验证用户是否同一会话
+	accessToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+
+	if err := g.validateSameSession(accessToken, r.RefreshToken); err != nil {
+		core.WriteResponse(c, err, nil)
+		return
+	}
+
+	//验证Refresh Token有效性
 	rtKey := redisRefreshTokenPrefix + r.RefreshToken
-	log.Debugf("rtKey=%s", rtKey)
 	userid, err := g.redis.GetKey(c, rtKey)
 	if err != nil {
-		log.Warn("系查询刷新令牌的userid键")
 		core.WriteResponse(c, errors.WithCode(code.ErrUnknown, "系查询刷新令牌的Redis键"), nil)
 		return
 	}
@@ -709,8 +751,7 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 		core.WriteResponse(c, errors.WithCode(code.ErrExpired, "刷新令牌已经过期,请重新登录"), nil)
 		return
 	}
-
-	// 3. 验证Refresh Token是否在户会话集合中
+	// 验证Refresh Token是否在户会话集合中
 	userSessionsKey := redisUserSessionsPrefix + userid
 	isMember, err := g.redis.IsMemberOfSet(c, userSessionsKey, r.RefreshToken)
 	if err != nil {
@@ -723,28 +764,14 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 		return
 	}
 
-	username, ok := getUsernameFromClaims(claims)
-	if !ok {
-		core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "请在username,sub,user任意字段中填入用户名"), nil)
-		return
-	}
-
-	// 4. 验证用户一致性（可选但推荐）
-	if claims["user_id"] != userid {
+	//验证用户一致性
+	claimsUserID, ok := claims["user_id"].(string)
+	if !ok || claimsUserID != userid {
 		core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "用户身份不匹配"), nil)
 		return
 	}
-
-	// 在现有验证后添加会话验证
-	// 获取access token
-	accessToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
-	log.Debugf("accessToken", accessToken)
-	if err := g.validateSameSession(accessToken, r.RefreshToken); err != nil {
-		core.WriteResponse(c, err, nil)
-		return
-	}
-
-	user, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{})
+	//获取用户全部信息,作为上下文保存
+	user, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{}, g.options)
 	if err != nil {
 		log.Errorf("查询用户信息失败: %v", err)
 		core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "用户不存在"), nil)
@@ -770,7 +797,7 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 		"expire_in":    strconv.Itoa(int(expireIn)),
 		"token_type":   "Bearer",
 	})
-	log.Debugf("正确退出调用方法:%s", c.HandlerName())
+
 }
 
 func (g *GenericAPIServer) generateAccessTokenAndGetID(c *gin.Context) (string, time.Time, error) {
@@ -799,9 +826,9 @@ func (g *GenericAPIServer) generateAccessTokenAndGetID(c *gin.Context) (string, 
 }
 
 // newAutoAuth 创建Auto认证策略（处理所有错误场景，避免panic）
-func newAutoAuth(g *GenericAPIServer) (middleware.AuthStrategy, error) {
+func (g *GenericAPIServer) newAutoAuth() (middleware.AuthStrategy, error) {
 	// 1. 初始化JWT认证策略：处理初始化失败错误
-	jwtStrategy, err := newJWTAuth(g)
+	jwtStrategy, err := g.newJWTAuth()
 	if err != nil {
 		// 场景1：JWT策略初始化失败（如密钥加载失败、配置错误）
 		return nil, errors.WithCode(
@@ -823,7 +850,7 @@ func newAutoAuth(g *GenericAPIServer) (middleware.AuthStrategy, error) {
 	}
 
 	// 3. 初始化Basic认证策略：补充错误处理（原代码直接断言，会panic）
-	basicStrategy := newBasicAuth()
+	basicStrategy := g.newBasicAuth()
 	// 3.1 Basic策略类型转换：处理转换失败
 	basicAuth, ok := basicStrategy.(auth.BasicStrategy)
 	if !ok {

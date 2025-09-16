@@ -60,10 +60,10 @@ func (u *UserController) Get(c *gin.Context) {
 		core.WriteResponse(c, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errMsg), nil)
 		return
 	}
-	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{})
+
+	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{}, u.options)
 	if err != nil {
 		log.Debugw("查询用户失败", "username:", username, "error:", err.Error())
-
 		coder := errors.ParseCoderByErr(err)
 		log.Debugf("cotrol:返回的业务码%v", coder.Code())
 		core.WriteResponse(c, err, nil)

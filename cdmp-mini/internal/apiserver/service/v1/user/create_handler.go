@@ -5,6 +5,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -13,7 +14,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions) error {
+func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
 	// 使用辅助函数获取上下文值
 
 	logger := log.L(ctx).WithValues(
@@ -24,20 +25,18 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	if u.BloomFilter.TestString(user.Name) {
 		// 布隆过滤器说可能存在，需要进一步数据库确认
 		logger.Info("布隆过滤器提示用户名可能存在，进行数据库确认")
-		_, err := u.Store.Users().Get(ctx, user.Name, metav1.GetOptions{})
+		_, err := u.Store.Users().Get(ctx, user.Name, metav1.GetOptions{}, u.Options)
 		if err == nil {
 			return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在%s", user.Name)
 		}
-		// 如果是其他错误，继续执行创建逻辑
+
 	} else {
 		// 布隆过滤器说肯定不存在，直接跳过数据库查询
 		logger.Info("布隆过滤器确认用户名不存在，跳过数据库查询")
 	}
 
-	logger.Info("开始执行用户创建逻辑")
-
 	// 执行数据库操作
-	err := u.Store.Users().Create(ctx, user, opts)
+	err := u.Store.Users().Create(ctx, user, opts,u.Options)
 	if err == nil {
 		// 添加到布隆过滤器
 		u.BloomFilter.AddString(user.Name)
