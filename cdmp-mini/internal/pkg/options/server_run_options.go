@@ -69,6 +69,7 @@ package options
 
 import (
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/sets"
@@ -84,8 +85,9 @@ type ServerRunOptions struct {
 	EnableProfiling bool
 	EnableMetrics   bool
 	// 新增：Cookie相关配置
-	CookieDomain string `json:"cookieDomain"    mapstructure:"cookieDomain"`
-	CookieSecure bool   `json:"cookieSecure"    mapstructure:"cookieSecure"`
+	CookieDomain string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
+	CookieSecure bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
+	CtxTimeout   time.Duration `json:"ctxtimeout"    mapstructure:"ctxtimeout"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -98,6 +100,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		EnableMetrics:   true,
 		CookieDomain:    "",
 		CookieSecure:    false,
+		CtxTimeout:      5 * time.Second,
 	}
 }
 
