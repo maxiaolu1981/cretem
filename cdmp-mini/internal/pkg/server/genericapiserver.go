@@ -16,15 +16,17 @@ import (
 	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	mysql "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
-	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"golang.org/x/sync/errgroup"
+	"gorm.io/gorm"
 )
 
 // 全局变量存储Redis客户端（用于监控）
@@ -41,7 +43,9 @@ type GenericAPIServer struct {
 	redisCancel context.CancelFunc
 	BloomFilter *bloom.BloomFilter
 	BloomMutex  sync.RWMutex
+	initOnce    sync.Once
 	initErr     error
+	producer    *Producer
 }
 
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
@@ -50,8 +54,11 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 
 	//创建服务器实例
 	g := &GenericAPIServer{
-		Engine:  gin.New(),
-		options: opts,
+		Engine:      gin.New(),
+		options:     opts,
+		BloomFilter: bloom.NewWithEstimates(1000000, 0.001),
+		BloomMutex:  sync.RWMutex{},
+		initOnce:    sync.Once{},
 	}
 
 	//设置gin运行模式
@@ -59,18 +66,43 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		return nil, err
 	}
 
+	//初始化mysql
+	log.Info("正在初始化mysql服务器")
+	storeIns, dbIns, err := mysql.GetMySQLFactoryOr(opts.MysqlOptions)
+	if err != nil {
+		return nil, err
+	}
+	interfaces.SetClient(storeIns)
+	log.Info("mysql服务器初始化成功")
+
 	//初始化redis
 	log.Info("正在初始化redis服务器")
 	if err := g.initRedisStore(); err != nil {
 		log.Error("初始化redis服务器失败")
 		return nil, err
 	}
+	log.Info("redis服务器初始化成功")
 
 	//初始化boolm
+	log.Info("正在初始化boolm服务")
 	g.initBloomFiliter()
 	if g.initErr != nil {
 		log.Warnf("初始化boolm失败%v", g.initErr)
 	}
+	log.Info("初始化boolm服务成功")
+
+	// 初始化Kafka生产者和消费者（同时启动！）
+	producer, consumer := initKafkaComponents(g.options.KafkaOptions.Brokers,
+		"user-create-topic", "user-group", dbIns)
+	g.producer = producer
+	defer producer.Close()
+	defer consumer.Close()
+
+	// 4. 启动Kafka消费者（后台运行）
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go startKafkaConsumer(ctx, consumer, 5) // 启动5个消费者worker
 
 	//安装中间件
 	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
@@ -82,23 +114,38 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	return g, nil
 }
 
+// 启动Kafka消费者
+func startKafkaConsumer(ctx context.Context, consumer *Consumer, workerCount int) {
+	log.Infof("开始运行kafka消费者%d workers...", workerCount)
+
+	// 这里会阻塞运行，直到context被取消
+	consumer.StartConsuming(ctx, workerCount)
+
+	log.Info("kafka消费者被停止")
+}
+
 func (g *GenericAPIServer) initBloomFiliter() error {
 	// 使用sync.Once确保只执行一次初始化
-	var initOnce sync.Once
-	initOnce.Do(func() {
+
+	g.initOnce.Do(func() {
 		g.BloomMutex.Lock()
 		defer g.BloomMutex.Unlock()
 		// 从数据库加载所有用户名
-		users, err := interfaces.Client().Users().List(context.TODO(), metav1.ListOptions{})
+		users, err := interfaces.Client().Users().ListAllUsernames(context.TODO())
 		if err != nil {
 			g.initErr = errors.WithCode(code.ErrUnknown, "创建Bloom错误%v", err)
 			return
 		}
-
-		for _, user := range users.Items {
-			g.BloomFilter.AddString(user.Name)
+		if len(users) == 0 {
+			log.Debug("目前没有任何用户记录,未初始化布隆过滤器")
+			return
 		}
-		log.Debugf("Bloom filter initialized with %d usernames", len(users.Items))
+
+		for _, name := range users {
+			g.BloomFilter.AddString(name)
+		}
+
+		log.Debugf("Bloom filter initialized with %d usernames", len(users))
 	})
 	return nil
 }
@@ -176,7 +223,7 @@ func (g *GenericAPIServer) Run() error {
 	select {
 	case <-serverStarted:
 		log.Info("GenericAPIServer服务器已开始监听，准备进行健康检查...")
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		return fmt.Errorf("GenericAPIServer服务器启动超时，无法在5秒内开始监听")
 	}
 
@@ -194,19 +241,6 @@ func (g *GenericAPIServer) Run() error {
 			return fmt.Errorf("健康检查失败: %w", err)
 		}
 	}
-
-	// 添加最终的成功日志
-	log.Infof("✨ GenericAPIServer 服务已在 %s 成功启动并运行", address)
-	fmt.Printf("--------------%v------------", time.Now())
-	fmt.Printf("--------------%v------------", time.Now())
-	fmt.Printf("--------------%v------------", time.Now())
-	fmt.Printf("--------------%v------------", time.Now())
-	fmt.Printf("--------------%v------------", time.Now())
-	fmt.Printf("--------------%v------------", time.Now())
-	fmt.Printf("--------------%v------------", time.Now())
-	fmt.Printf("--------------%v------------", time.Now())
-	fmt.Printf("--------------%v------------", time.Now())
-	errors.ListAllCodes()
 
 	if err := eg.Wait(); err != nil {
 		return fmt.Errorf("服务器运行错误: %w", err)
@@ -248,57 +282,17 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 	}
 }
 
-func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
-	host, port, err := net.SplitHostPort(address)
-	if err != nil {
-		return fmt.Errorf("无效的地址格式: %w", err)
-	}
+// 初始化Kafka组件
+func initKafkaComponents(brokers []string, topic, groupID string, db *gorm.DB) (*Producer, *Consumer) {
+	// 初始化生产者
+	producer := NewKafkaProducer(brokers, topic)
+	log.Infof("初始化kafka生产者: %s", topic)
 
-	if host == "0.0.0.0" {
-		host = "127.0.0.1"
-	}
+	// 初始化消费者（注入数据库连接）
+	consumer := NewKafkaConsumer(brokers, topic, groupID, db)
+	log.Infof("初始化kafka消费者: %s, group: %s", topic, groupID)
 
-	url := fmt.Sprintf("http://%s/healthz", net.JoinHostPort(host, port))
-	log.Infof("开始健康检查，目标URL: %s", url)
-
-	startTime := time.Now()
-	attempt := 0
-
-	for {
-		attempt++
-		if err := ctx.Err(); err != nil {
-			return fmt.Errorf("健康检查超时: %w", err)
-		}
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return fmt.Errorf("创建请求失败: %w", err)
-		}
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			if attempt%3 == 0 { // 每3次失败记录一次日志，避免日志过多
-				log.Infof("健康检查尝试 %d 失败: %v", attempt, err)
-			}
-		} else {
-			defer resp.Body.Close()
-
-			if resp.StatusCode == http.StatusOK {
-				log.Infof("健康检查成功! 总共尝试 %d 次, 耗时 %v",
-					attempt, time.Since(startTime))
-				return nil
-			}
-
-			log.Infof("健康检查尝试 %d: 状态码 %d", attempt, resp.StatusCode)
-		}
-
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("健康检查超时: %w", ctx.Err())
-		case <-time.After(1 * time.Second):
-			// 继续重试
-		}
-	}
+	return producer, consumer
 }
 
 // initRedisStore 初始化Redis存储，根据分布式锁开关状态调整初始化策略
@@ -480,7 +474,7 @@ func pingRedis(ctx context.Context, client redis.UniversalClient) error {
 	}()
 
 	// 超时控制（2秒）：结合外部ctx和超时
-	timeoutCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	select {
@@ -503,4 +497,57 @@ func handlePingError(err error) error {
 		return fmt.Errorf("连接失败: %v", err)
 	}
 	return fmt.Errorf("PING失败: %v", err)
+}
+
+func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return fmt.Errorf("无效的地址格式: %w", err)
+	}
+
+	if host == "0.0.0.0" {
+		host = "127.0.0.1"
+	}
+
+	url := fmt.Sprintf("http://%s/healthz", net.JoinHostPort(host, port))
+	log.Infof("开始健康检查，目标URL: %s", url)
+
+	startTime := time.Now()
+	attempt := 0
+
+	for {
+		attempt++
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("健康检查超时: %w", err)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return fmt.Errorf("创建请求失败: %w", err)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			if attempt%3 == 0 { // 每3次失败记录一次日志，避免日志过多
+				log.Infof("健康检查尝试 %d 失败: %v", attempt, err)
+			}
+		} else {
+			defer resp.Body.Close()
+
+			if resp.StatusCode == http.StatusOK {
+				log.Infof("健康检查成功! 总共尝试 %d 次, 耗时 %v",
+					attempt, time.Since(startTime))
+				return nil
+			}
+
+			log.Infof("健康检查尝试 %d: 状态码 %d", attempt, resp.StatusCode)
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("健康检查超时: %w", ctx.Err())
+		case <-time.After(1 * time.Second):
+			// 继续重试
+		}
+	}
 }

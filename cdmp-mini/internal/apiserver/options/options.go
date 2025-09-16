@@ -45,6 +45,7 @@ type Options struct {
 	RedisOptions           *options.RedisOptions           `json:"redis"    mapstructure:"redis"`
 	DistributedLock        *options.DistributedLockOptions `json:"distributedLock" mapstructure:"distributedLock"`
 	MetaOptions            *options.MetaOptions            `json:"metoptions" mapstructure:"metoptions"`
+	KafkaOptions           *options.KafkaOptions           `json:"kafkaoptions" mapstructure:"kafkaoptions"`
 }
 
 func NewOptions() *Options {
@@ -57,6 +58,7 @@ func NewOptions() *Options {
 		RedisOptions:           options.NewRedisOptions(),
 		DistributedLock:        options.NewDistributedLockOptions(),
 		MetaOptions:            options.NewMetaOptions(),
+		KafkaOptions:           options.NewKafkaOptions(),
 	}
 }
 
@@ -68,6 +70,7 @@ func (o *Options) Complete() {
 	o.Log.Complete()
 	o.DistributedLock.Complete()
 	o.MetaOptions.Complete()
+	o.KafkaOptions.Complete()
 }
 
 func (o *Options) Validate() []error {
@@ -80,6 +83,7 @@ func (o *Options) Validate() []error {
 	errs = append(errs, o.RedisOptions.Validate()...)
 	errs = append(errs, o.DistributedLock.Validate()...)
 	errs = append(errs, o.MetaOptions.Validate()...)
+	errs = append(errs, o.KafkaOptions.Validate()...)
 	return errs
 }
 
@@ -92,5 +96,6 @@ func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.RedisOptions.AddFlags(fss.FlagSet("redis"))
 	o.DistributedLock.AddFlags(fss.FlagSet("distributedLock"))
 	o.MetaOptions.AddFlags(fss.FlagSet("meta"))
+	o.KafkaOptions.AddFlags(fss.FlagSet("kafka"))
 	return fss
 }

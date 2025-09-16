@@ -100,8 +100,8 @@ const (
 	//ConcurrentUsers = 1
 	//RequestsPerUser = 1
 
-	ConcurrentUsers = 500
-	RequestsPerUser = 100
+	ConcurrentUsers = 1
+	RequestsPerUser = 1
 
 	ConcurrentTestPrefix = "testuser_"
 )

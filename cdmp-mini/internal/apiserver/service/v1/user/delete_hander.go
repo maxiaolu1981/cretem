@@ -93,7 +93,7 @@ func (u *UserService) Delete(ctx context.Context, username string, force bool, o
 	needLock := bizConfig.ForceLock || bizConfig.Enabled
 	if !needLock {
 		logger.Debugf("服务层:开始删除用户[%s](未加锁)", username)
-		return u.executeDelete(ctx, username, force, opts, logger)
+		return u.executeDelete(ctx, username, force, opts)
 	}
 
 	// 走到这里说明需要加锁，消除未使用警告
@@ -136,7 +136,7 @@ func (u *UserService) Delete(ctx context.Context, username string, force bool, o
 		case "fail":
 			return errors.WithCode(code.ErrInternal, "服务层:Redis不可用，拒绝操作")
 		case "skip":
-			return u.executeDelete(ctx, username, force, opts, logger)
+			return u.executeDelete(ctx, username, force, opts)
 		default:
 			return errors.WithCode(code.ErrInternal, "服务层:无效的降级策略")
 		}
@@ -197,11 +197,12 @@ func (u *UserService) Delete(ctx context.Context, username string, force bool, o
 
 	// 执行删除逻辑
 	logger.Debugw("服务层:获取锁成功，执行删除", "lock_key", fullLockKey)
-	return u.executeDelete(ctx, username, force, opts, logger)
+	return u.executeDelete(ctx, username, force, opts)
 }
 
 // executeDelete 执行删除业务逻辑
-func (u *UserService) executeDelete(ctx context.Context, username string, force bool, opts metav1.DeleteOptions, logger log.Logger) error {
+func (u *UserService) executeDelete(ctx context.Context, username string,
+	force bool, opts metav1.DeleteOptions) error {
 	var err error
 	if force {
 		opts = metav1.DeleteOptions{Unscoped: true}

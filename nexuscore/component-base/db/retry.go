@@ -24,6 +24,7 @@ type RetryConfig struct {
 	MaxBackoff        time.Duration    // 最大退避时间
 	BackoffMultiplier float32          //退避倍数
 	IsRetryable       func(error) bool // 重试判断函数
+	Jitter            float32          //随机防抖动
 }
 
 var DefaultRetryConfig = RetryConfig{

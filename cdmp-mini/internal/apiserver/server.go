@@ -103,9 +103,6 @@ package apiserver
 
 import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
-	mysql "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
-
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
 
 	_ "github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator"
@@ -118,13 +115,6 @@ type apiServer struct {
 }
 
 func newApiServer(opts *options.Options) (*apiServer, error) {
-
-	//mysql
-	storeIns, err := mysql.GetMySQLFactoryOr(opts.MysqlOptions)
-	if err != nil {
-		return nil, err
-	}
-	interfaces.SetClient(storeIns)
 
 	genericAPIServer, err := server.NewGenericAPIServer(opts)
 	if err != nil {

@@ -87,7 +87,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/control/v1/user"
-
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
@@ -164,6 +163,7 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 	if !ok {
 		return fmt.Errorf("转换jwtStrategy错误")
 	}
+
 	loginLimiter := common.LoginRateLimiter(g.redis, 200, time.Second)
 	// 登录：使用 gin-jwt 的 LoginHandler（需要认证中间件）
 	g.Handle(http.MethodPost, "/login",
@@ -192,14 +192,17 @@ func (g *GenericAPIServer) installApiRoutes() error {
 		)
 
 	})
-	storeIns, _ := store.GetMySQLFactoryOr(nil)
+	storeIns, _, _ := store.GetMySQLFactoryOr(nil)
 	v1 := g.Group("/v1")
 	{
 		userv1 := v1.Group("/users")
 		{
 			userController, err := user.NewUserController(storeIns,
 				g.redis, g.options,
-				g.BloomFilter, &g.BloomMutex)
+				g.BloomFilter,
+				&g.BloomMutex,
+				g.producer,
+			)
 			if err != nil {
 				return err
 			}

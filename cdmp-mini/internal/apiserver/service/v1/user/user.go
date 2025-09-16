@@ -18,6 +18,7 @@ type UserService struct {
 	Options     *options.Options
 	BloomFilter *bloom.BloomFilter
 	BloomMutex  *sync.RWMutex
+	Producer    interface{}
 }
 
 // NewUserService 创建用户服务实例

@@ -7,6 +7,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	service "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -16,8 +17,9 @@ import (
 )
 
 type UserController struct {
-	srv     service.ServiceManager
-	options *options.Options
+	srv      service.ServiceManager
+	options  *options.Options
+	Producer interface{}
 }
 
 // NewUserController creates a user handler.
@@ -25,7 +27,7 @@ func NewUserController(store interfaces.Factory,
 	redis *storage.RedisCluster,
 	options *options.Options,
 	bloomFilter *bloom.BloomFilter,
-	bloomMutex *sync.RWMutex) (*UserController, error) {
+	bloomMutex *sync.RWMutex, producer producer.MessageProducer) (*UserController, error) {
 
 	s, err := service.NewService(store,
 		redis, options,
@@ -34,8 +36,9 @@ func NewUserController(store interfaces.Factory,
 		return nil, err
 	}
 	return &UserController{
-		srv:     s,
-		options: options,
+		srv:      s,
+		options:  options,
+		Producer: producer,
 	}, nil
 }
 

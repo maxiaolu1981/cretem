@@ -9,6 +9,7 @@ import (
 	policyaudit "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/policy_audit"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/secret"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/user"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/logger"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
@@ -60,9 +61,9 @@ func (ds *Datastore) PolicyAudits() interfaces.PolicyAuditStore {
 	return newPolicyAudit(ds)
 }
 
-func GetMySQLFactoryOr(opts *options.MySQLOptions) (interfaces.Factory, error) {
+func GetMySQLFactoryOr(opts *options.MySQLOptions) (interfaces.Factory, *gorm.DB, error) {
 	if opts == nil && mysqlFactory == nil {
-		return nil, fmt.Errorf("获取mysql store factory失败")
+		return nil, nil, fmt.Errorf("获取mysql store factory失败")
 	}
 	var err error
 	var dbIns *gorm.DB
@@ -84,9 +85,9 @@ func GetMySQLFactoryOr(opts *options.MySQLOptions) (interfaces.Factory, error) {
 		mysqlFactory = &Datastore{dbIns}
 	})
 	if mysqlFactory == nil || err != nil {
-		return nil, fmt.Errorf("failed to get mysql store fatory, mysqlFactory: %+v, error: %w", mysqlFactory, err)
+		return nil, nil, fmt.Errorf("failed to get mysql store fatory, mysqlFactory: %+v, error: %w", mysqlFactory, err)
 	}
-	return mysqlFactory, nil
+	return mysqlFactory, dbIns, nil
 }
 
 func (ds *Datastore) Close() error {

@@ -33,8 +33,8 @@ const (
 	RespCodeValidation = 100400
 	RespCodeConflict   = 100409
 
-	ConcurrentUsers = 20                    // 增加并发用户数
-	RequestsPerUser = 20                    // 每个用户的请求数
+	ConcurrentUsers = 100                   // 增加并发用户数
+	RequestsPerUser = 50                    // 每个用户的请求数
 	RequestInterval = 50 * time.Millisecond // 请求间隔
 )
 

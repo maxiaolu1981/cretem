@@ -58,28 +58,19 @@ func (u *Users) Create(ctx context.Context, user *v1.User, opts metav1.CreateOpt
 // createWithOptimizedTransaction 优化的事务创建
 func (u *Users) createWithOptimizedTransaction(ctx context.Context, user *v1.User, logger log.Logger, attempt int) error {
 	return u.executeInTransaction(ctx, logger, func(tx *gorm.DB) error {
-		// 设置事务隔离级别（如果支持）
-		if attempt > 1 {
-			// 重试时使用更宽松的隔离级别
-			if err := tx.Exec("SET TRANSACTION ISOLATION LEVEL READ COMMITTED").Error; err != nil {
-				logger.Debug("设置事务隔离级别失败，继续执行", log.String("error", err.Error()))
-			}
-		}
+		// 对于高并发场景，可以考虑先尝试快速插入
+		// 如果遇到重复键错误再检查是否存在
 
-		// 检查是否存在
-		var count int64
-		if err := tx.Model(&v1.User{}).
-			Where("name = ?", user.Name).
-			Count(&count).Error; err != nil {
+		// 直接执行创建（依赖唯一索引来防止重复）
+		if err := tx.Create(user).Error; err != nil {
+			// 如果是重复键错误，明确返回用户已存在
+			if u.isMySQLDuplicateError(err) {
+				return errors.WithCode(code.ErrUserAlreadyExist, "用户已存在")
+			}
 			return err
 		}
 
-		if count > 0 {
-			return errors.WithCode(code.ErrUserAlreadyExist, "用户已存在")
-		}
-
-		// 执行创建
-		return tx.Create(user).Error
+		return nil
 	})
 }
 
@@ -89,31 +80,38 @@ func (u *Users) getCreateRetryConfig() db.RetryConfig {
 		MaxAttempts:       5,                      // 最大重试次数
 		InitialBackoff:    100 * time.Millisecond, //初次退避时间
 		MaxBackoff:        2 * time.Second,        //最大退避时间
-		BackoffMultiplier: 1.5,                    // 减小退避倍数
+		BackoffMultiplier: 2,                      // 减小退避倍数
 		IsRetryable:       u.isCreateRetryable,    //重试判断函数
+		// 添加随机抖动避免同时重试
+		Jitter: 0.2,
 	}
 }
 
 // isCreateRetryable 创建操作的重试判断
 func (u *Users) isCreateRetryable(err error) bool {
-	// 死锁错误重试
+	// 死锁错误优先处理
 	if u.isMySQLDeadlockError(err) {
 		return true
 	}
 
-	// 超时错误重试
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
-
-	// 连接错误重试
+	// 锁超时错误
 	var mysqlErr *mysql.MySQLError
 	if errors.As(err, &mysqlErr) {
-		// 连接相关的错误码重试
 		switch mysqlErr.Number {
-		case 1205, 1213, 2002, 2003, 2006, 2013: // 锁超时、死锁、连接错误
+		case 1205: // Lock wait timeout
+			return true
+		case 1213: // Deadlock found
+			return true
+		case 2002, 2003, 2006, 2013: // 连接错误
+			return true
+		case 2016: // 只读错误（主从同步延迟）
 			return true
 		}
+	}
+
+	// 超时错误
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
 	}
 
 	// 重复键错误不重试
@@ -265,8 +263,10 @@ func (u *Users) executeInTransaction(ctx context.Context, logger log.Logger, fn 
 	}
 
 	var completed bool
+	completedPtr := &completed
+
 	defer func() {
-		if !completed {
+		if !*completedPtr {
 			if rollbackErr := tx.Rollback().Error; rollbackErr != nil {
 				logger.Errorw("回滚事务失败", "error", rollbackErr)
 			} else {
@@ -281,7 +281,7 @@ func (u *Users) executeInTransaction(ctx context.Context, logger log.Logger, fn 
 		fnDuration := time.Since(fnStart)
 		logger.Debugw("事务操作执行失败", "error", err, "fn_duration_ms", fnDuration.Milliseconds())
 		// ✅ 修复：设置completed为false，让defer回滚
-		completed = false // 确保defer中的回滚会执行
+		*completedPtr = false // 确保defer中的回滚会执行
 		return err
 	}
 
@@ -292,7 +292,7 @@ func (u *Users) executeInTransaction(ctx context.Context, logger log.Logger, fn 
 		return errors.WithCode(code.ErrDatabase, "提交事务失败")
 	}
 
-	completed = true // 提交成功，不需要回滚
+	*completedPtr = true // 提交成功，不需要回滚
 	logger.Debugw("事务提交成功")
 	return nil
 }

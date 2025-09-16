@@ -205,12 +205,4 @@ func (u *UserService) processSingleUserWithTimeout(ctx context.Context, user *v1
 	}, nil
 }
 
-// 批量处理版本（如果存储支持批量查询）
-func (u *UserService) processUsersBatch(ctx context.Context, users []*v1.User) ([]*v1.User, error) {
-	// 这里可以实现批量查询逻辑，减少数据库请求次数
-	// 例如：SELECT * FROM policies WHERE user_name IN (...)
 
-	result := make([]*v1.User, len(users))
-	// 批量处理逻辑...
-	return result, nil
-}
