@@ -48,6 +48,8 @@ type GenericAPIServer struct {
 	producer       *Producer
 	consumerCtx    context.Context
 	consumerCancel context.CancelFunc
+	mainConsumer   *Consumer      // 新增：主消费者
+	retryConsumer  *RetryConsumer // 新增：重试消费者
 }
 
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
@@ -93,17 +95,27 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 	log.Info("初始化boolm服务成功")
 
-	// 初始化Kafka生产者和消费者（同时启动！）
-	producer, consumer := g.initKafkaComponents(g.options.KafkaOptions.Brokers,
-		"user-create-topic", "user-group", dbIns)
+	// 初始化Kafka生产者和消费者
+	producer, mainConsumer, retryConsumer := g.initKafkaComponents(
+		g.options.KafkaOptions.Brokers,
+		"user-create-topic",
+		"user-group",
+		dbIns,
+	)
+
 	g.producer = producer
+	g.mainConsumer = mainConsumer
+	g.retryConsumer = retryConsumer
 
 	// 4. 启动Kafka消费者（后台运行）
 	ctx, cancel := context.WithCancel(context.Background())
 	g.consumerCtx = ctx
 	g.consumerCancel = cancel
-	go startKafkaConsumer(ctx, consumer, 5) // 启动5个消费者worker
 
+	// 启动主消费者
+	go startKafkaConsumer(ctx, mainConsumer, 5)
+	// 启动重试消费者
+	go startRetryKafkaConsumer(ctx, retryConsumer, g.redis, 2)
 	//安装中间件
 	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
 		return nil, err
@@ -119,7 +131,12 @@ func startKafkaConsumer(ctx context.Context, consumer *Consumer, workerCount int
 	log.Infof("开始运行kafka消费者%d workers...", workerCount)
 	// 这里会阻塞运行，直到context被取消
 	consumer.StartConsuming(ctx, workerCount)
+}
 
+// 新增重试消费者启动函数
+func startRetryKafkaConsumer(ctx context.Context, consumer *RetryConsumer, redis *storage.RedisCluster, workerCount int) {
+	log.Infof("开始运行重试Kafka消费者 %d workers...", workerCount)
+	consumer.StartConsuming(ctx, redis, workerCount)
 }
 
 func (g *GenericAPIServer) initBloomFiliter() error {
@@ -281,16 +298,22 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 }
 
 // 初始化Kafka组件
-func (g *GenericAPIServer) initKafkaComponents(brokers []string, topic, groupID string, db *gorm.DB) (*Producer, *Consumer) {
-	// 初始化生产者
-	producer := g.NewKafkaProducer(brokers, topic)
-	log.Infof("初始化kafka生产者: %s", topic)
+// 修改 initKafkaComponents 方法
+func (g *GenericAPIServer) initKafkaComponents(brokers []string, topic, groupID string, db *gorm.DB) (*Producer, *Consumer, *RetryConsumer) {
+	// 初始化主Topic生产者
+	mainTopicProducer := g.NewKafkaProducer(brokers, topic, 3)
+	log.Infof("初始化Kafka主生产者: %s", topic)
 
-	// 初始化消费者（注入数据库连接）
-	consumer := NewKafkaConsumer(brokers, topic, groupID, db)
-	log.Infof("初始化kafka消费者: %s, group: %s", topic, groupID)
+	// 初始化主消费者（消费主Topic）
+	mainConsumer := NewKafkaConsumer(brokers, topic, groupID, db, g.redis)
+	mainConsumer.SetProducer(mainTopicProducer)
+	log.Infof("初始化Kafka主消费者: %s, group: %s", topic, groupID)
 
-	return producer, consumer
+	// 初始化重试消费者（消费重试Topic）
+	retryConsumer := NewRetryConsumer(brokers, topic, groupID+"-retry", db, g.redis, mainTopicProducer, 3)
+	log.Infof("初始化Kafka重试消费者: %s, group: %s", topic+RetryTopicSuffix, groupID+"-retry")
+
+	return mainTopicProducer, mainConsumer, retryConsumer
 }
 
 // initRedisStore 初始化Redis存储，根据分布式锁开关状态调整初始化策略

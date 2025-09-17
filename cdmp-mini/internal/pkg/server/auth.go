@@ -19,7 +19,6 @@ import (
 	gojwt "github.com/golang-jwt/jwt/v4"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/core"
@@ -85,7 +84,7 @@ func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 			return false
 		}
 		//找到了
-		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{}, &options.Options{})
+		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{}, g.options)
 		if err != nil {
 			elapsed := time.Since(start)
 			targetDelay := 150 * time.Millisecond

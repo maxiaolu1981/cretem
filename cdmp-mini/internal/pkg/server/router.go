@@ -207,7 +207,7 @@ func (g *GenericAPIServer) installApiRoutes() error {
 			if err != nil {
 				return err
 			}
-			userv1.Use(auto.AuthFunc(), middleware.Validation())
+			userv1.Use(auto.AuthFunc(), middleware.Validation(g.options))
 			userv1.DELETE(":name", userController.Delete)
 			userv1.DELETE(":name/force", userController.ForceDelete)
 			userv1.POST("", userController.Create)

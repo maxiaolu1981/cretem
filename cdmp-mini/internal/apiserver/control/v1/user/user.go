@@ -20,7 +20,7 @@ import (
 type UserController struct {
 	srv      service.ServiceManager
 	options  *options.Options
-	Producer interface{}
+	Producer producer.MessageProducer
 }
 
 // NewUserController creates a user handler.
@@ -32,7 +32,7 @@ func NewUserController(store interfaces.Factory,
 
 	s, err := service.NewService(store,
 		redis, options,
-		bloomFilter, bloomMutex)
+		bloomFilter, bloomMutex, producer)
 	if err != nil {
 		return nil, err
 	}

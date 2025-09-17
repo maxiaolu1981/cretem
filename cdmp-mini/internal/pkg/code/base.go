@@ -106,3 +106,11 @@ const (
 	// ErrDecodingYaml - 500: Yaml解码失败
 	ErrDecodingYaml // 100308
 )
+
+
+// kafka（1004xx）：服务10 + 模块04 + 序号
+const (
+	// ErrEncodingFailed - 500: 数据编码失败
+	ErrKafkaSendFailed int = iota + 100401 // 100401
+
+)

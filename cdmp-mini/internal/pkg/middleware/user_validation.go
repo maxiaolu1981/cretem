@@ -28,10 +28,10 @@ const (
 )
 
 // Validation 权限校验中间件：确保用户有对应资源的操作权限
-func Validation() gin.HandlerFunc {
+func Validation(opt *options.Options) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 调用 isAdmin 检查当前用户是否为管理员
-		err := isAdmin(c)
+		err := isAdmin(c, opt)
 
 		// 区分错误类型处理
 		if err != nil {
@@ -70,7 +70,7 @@ func Validation() gin.HandlerFunc {
 				log.String("username", getUsernameFromCtx(c)),
 			)
 			// 管理员特殊限制（如禁止删除超级管理员）
-			if c.Request.Method == http.MethodDelete && isSuperAdmin(c) {
+			if c.Request.Method == http.MethodDelete && isSuperAdmin(c,opt) {
 				core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "超级管理员不允许删除自己"), nil)
 				c.Abort()
 				return
@@ -138,7 +138,7 @@ func checkNormalUserPermission(c *gin.Context) bool {
 }
 
 // isAdmin 判断当前用户是否为管理员（纯判断逻辑，不处理响应）
-func isAdmin(c *gin.Context) error {
+func isAdmin(c *gin.Context, opt *options.Options) error {
 	// 获取当前用户名
 	usernameVal, exists := c.Get(common.UsernameKey)
 	if !exists {
@@ -148,9 +148,10 @@ func isAdmin(c *gin.Context) error {
 	if !ok || username == "" {
 		return errors.WithCode(code.ErrUnauthorized, "判断管理员失败：用户名类型非法或为空")
 	}
-
 	// 查询用户信息
-	user, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{}, &options.Options{})
+	user, err := interfaces.Client().Users().
+		Get(c, username, metav1.GetOptions{},
+			opt)
 	if err != nil {
 		return err
 	}
@@ -181,13 +182,13 @@ func getUsernameFromCtx(c *gin.Context) string {
 }
 
 // isSuperAdmin 判断当前用户是否为超级管理员（示例实现）
-func isSuperAdmin(c *gin.Context) bool {
+func isSuperAdmin(c *gin.Context, opt *options.Options) bool {
 	username := getUsernameFromCtx(c)
 	if username == "root" { // 假设 root 为超级管理员
 		return true
 	}
 	// 实际场景可从数据库查询 is_super 字段
-	_, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{},&options.Options{})
+	_, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{}, opt)
 	if err != nil {
 		return false
 	}

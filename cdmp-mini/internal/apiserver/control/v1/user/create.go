@@ -13,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
@@ -104,22 +103,10 @@ func (u *UserController) Create(ctx *gin.Context) {
 	r.Status = 1
 	r.LoginedAt = time.Now()
 
-	// if err := u.srv.Users().Create(ctx, &r,
-	// 	metav1.CreateOptions{}); err != nil {
-	// 	core.WriteResponse(ctx, err, nil)
-	// 	return
-	// }
-	//发送到Kafka（快）
-	p, ok := u.Producer.(producer.MessageProducer)
-	if !ok {
-		core.WriteResponse(ctx, errors.WithCode(code.ErrUnknown, "生产者转换错误"), nil)
-		return
-	}
-
-	err := p.SendUserCreateMessage(ctx, &r)
-	if err != nil {
-		log.Errorf("生产者消息发送失败%v", err)
-		core.WriteResponse(ctx, errors.WithCode(code.ErrUnknown, "生产者消息发送失败"), nil)
+	c := ctx.Request.Context()
+	if err := u.srv.Users().Create(c, &r,
+		metav1.CreateOptions{}, u.options); err != nil {
+		core.WriteResponse(ctx, err, nil)
 		return
 	}
 

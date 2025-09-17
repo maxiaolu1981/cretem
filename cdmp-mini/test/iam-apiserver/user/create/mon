@@ -1,0 +1,184 @@
+#!/bin/bash
+
+# MySQL动态监控脚本
+# 配置参数
+HOST="127.0.0.1"
+PORT="3306"
+USERNAME="root"
+PASSWORD="iam59!z$"
+DATABASE="iam"
+INTERVAL=5  # 监控间隔（秒）
+LOG_FILE="/tmp/mysql_monitor.log"
+
+# 颜色定义
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+# 执行MySQL查询的函数
+mysql_query() {
+    mysql -h $HOST -P $PORT -u $USERNAME -p"$PASSWORD" -D $DATABASE -s -N -e "$1" 2>/dev/null
+}
+
+# 检查MySQL连接是否正常
+check_mysql_connection() {
+    if mysql_query "SELECT 1" >/dev/null 2>&1; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+# 显示带颜色的状态信息
+show_status() {
+    local metric=$1
+    local value=$2
+    local threshold=$3
+    local good_threshold=$4
+    
+    if [ -z "$value" ]; then
+        echo -e "${RED}N/A${NC}"
+    elif [ $(echo "$value > $threshold" | bc -l 2>/dev/null) -eq 1 ]; then
+        echo -e "${RED}$value${NC} ⚠️"
+    elif [ -n "$good_threshold" ] && [ $(echo "$value < $good_threshold" | bc -l 2>/dev/null) -eq 1 ]; then
+        echo -e "${GREEN}$value${NC} ✅"
+    else
+        echo -e "${YELLOW}$value${NC}"
+    fi
+}
+
+# 清理屏幕并显示监控信息
+display_monitor() {
+    clear
+    echo -e "${BLUE}=== MySQL动态监控 - 刷新间隔: ${INTERVAL}s - $(date) ===${NC}"
+    echo
+    
+    # 检查MySQL连接
+    if ! check_mysql_connection; then
+        echo -e "${RED}❌ MySQL连接失败！请检查服务状态和连接参数${NC}"
+        echo
+        return 1
+    fi
+    
+    # 获取监控数据
+    threads_connected=$(mysql_query "SHOW STATUS LIKE 'Threads_connected'" | awk '{print $2}')
+    threads_running=$(mysql_query "SHOW STATUS LIKE 'Threads_running'" | awk '{print $2}')
+    slow_queries=$(mysql_query "SHOW STATUS LIKE 'Slow_queries'" | awk '{print $2}')
+    questions=$(mysql_query "SHOW STATUS LIKE 'Questions'" | awk '{print $2}')
+    uptime=$(mysql_query "SHOW STATUS LIKE 'Uptime'" | awk '{print $2}')
+    
+    # InnoDB状态
+    innodb_row_lock_waits=$(mysql_query "SHOW STATUS LIKE 'Innodb_row_lock_waits'" | awk '{print $2}')
+    innodb_row_lock_time_avg=$(mysql_query "SHOW STATUS LIKE 'Innodb_row_lock_time_avg'" | awk '{print $2}')
+    
+    # 缓冲池命中率
+    read_requests=$(mysql_query "SHOW STATUS LIKE 'Innodb_buffer_pool_read_requests'" | awk '{print $2}')
+    reads=$(mysql_query "SHOW STATUS LIKE 'Innodb_buffer_pool_reads'" | awk '{print $2}')
+    if [ $read_requests -gt 0 ]; then
+        hit_ratio=$(echo "scale=2; (1 - $reads / $read_requests) * 100" | bc)
+    else
+        hit_ratio=100
+    fi
+    
+    # 表锁情况
+    table_locks_waited=$(mysql_query "SHOW STATUS LIKE 'Table_locks_waited'" | awk '{print $2}')
+    table_locks_immediate=$(mysql_query "SHOW STATUS LIKE 'Table_locks_immediate'" | awk '{print $2}')
+    if [ $((table_locks_waited + table_locks_immediate)) -gt 0 ]; then
+        lock_wait_ratio=$(echo "scale=2; $table_locks_waited * 100 / ($table_locks_waited + $table_locks_immediate)" | bc)
+    else
+        lock_wait_ratio=0
+    fi
+    
+    # 显示基本信息
+    echo -e "${BLUE}📊 基本状态:${NC}"
+    echo -e "运行时间: $(show_status uptime $uptime 0) 秒"
+    echo -e "总查询数: $(show_status questions $questions 0)"
+    echo -e "连接数: $(show_status threads_connected $threads_connected 80 50)"
+    echo -e "活跃线程: $(show_status threads_running $threads_running 10 5)"
+    echo -e "慢查询: $(show_status slow_queries $slow_queries 1 0)"
+    echo
+    
+    # 显示性能指标
+    echo -e "${BLUE}⚡ 性能指标:${NC}"
+    echo -e "缓冲池命中率: $(show_status hit_ratio $hit_ratio 95 98)%"
+    echo -e "行锁等待: $(show_status innodb_row_lock_waits $innodb_row_lock_waits 10 5)"
+    echo -e "平均锁等待时间: $(show_status innodb_row_lock_time_avg $innodb_row_lock_time_avg 100 50)ms"
+    echo -e "表锁等待比率: $(show_status lock_wait_ratio $lock_wait_ratio 1 0.5)%"
+    echo
+    
+    # 显示当前进程
+    echo -e "${BLUE}🔍 当前活动进程:${NC}"
+    long_running=$(mysql_query "SELECT ID, USER, TIME, DB, COMMAND, LEFT(INFO, 50) as QUERY FROM INFORMATION_SCHEMA.PROCESSLIST WHERE TIME > 2 AND COMMAND != 'Sleep' AND INFO IS NOT NULL ORDER BY TIME DESC LIMIT 5")
+    if [ -n "$long_running" ]; then
+        echo "$long_running" | while read line; do
+            echo -e "  ${YELLOW}$line${NC}"
+        done
+    else
+        echo -e "  ${GREEN}没有长时间运行的进程${NC}"
+    fi
+    
+    # 显示系统负载
+    echo
+    echo -e "${BLUE}📈 系统负载:${NC}"
+    loadavg=$(cat /proc/loadavg | cut -d' ' -f1-3)
+    echo -e "CPU负载: $loadavg"
+    
+    # 记录到日志文件
+    echo "$(date): Conn=$threads_connected, Running=$threads_running, Slow=$slow_queries, HitRatio=$hit_ratio%" >> "$LOG_FILE"
+    
+    return 0
+}
+
+# 显示使用说明
+show_usage() {
+    echo "使用方法: $0 [选项]"
+    echo "选项:"
+    echo "  -i <秒数>   设置监控间隔（默认: 5秒）"
+    echo "  -h          显示帮助信息"
+    echo "  -l          显示日志文件"
+    echo "  -s          单次运行模式（不持续监控）"
+}
+
+# 主函数
+main() {
+    local single_run=false
+    
+    # 解析参数
+    while getopts "i:hls" opt; do
+        case $opt in
+            i) INTERVAL=$OPTARG ;;
+            h) show_usage; exit 0 ;;
+            l) tail -f "$LOG_FILE"; exit 0 ;;
+            s) single_run=true ;;
+            *) show_usage; exit 1 ;;
+        esac
+    done
+    
+    # 创建日志文件
+    touch "$LOG_FILE"
+    echo "MySQL监控开始于: $(date)" >> "$LOG_FILE"
+    
+    # 监控循环
+    while true; do
+        display_monitor
+        
+        if $single_run; then
+            break
+        fi
+        
+        # 显示倒计时
+        for i in $(seq $INTERVAL -1 1); do
+            echo -ne "\r${BLUE}下次刷新: ${i}s (按 Ctrl+C 退出)${NC}"
+            sleep 1
+        done
+        echo -ne "\r"
+    done
+}
+
+# 捕获Ctrl+C信号
+trap 'echo -e "\n${GREEN}监控已停止${NC}"; echo "MySQL监控结束于: $(date)" >> "$LOG_FILE"; exit 0' INT
+
+# 运行主函数
+main "$@"

@@ -1,16 +1,19 @@
 package v1
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 
 	policy "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/policy"
 	secret "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/secret"
 	user "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/user"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 )
 
@@ -20,6 +23,7 @@ type ServiceSrv struct {
 	Options     *options.Options
 	BloomFilter *bloom.BloomFilter
 	BloomMutex  *sync.RWMutex
+	producer    producer.MessageProducer
 }
 
 type ServiceManager interface {
@@ -47,6 +51,7 @@ func NewUsers(s *ServiceSrv) *user.UserService {
 		Options:     s.Options,
 		BloomFilter: s.BloomFilter,
 		BloomMutex:  s.BloomMutex,
+		Producer:    s.producer,
 	}
 }
 func NewSecrets(s *ServiceSrv) *secret.SecretService {
@@ -69,7 +74,7 @@ func NewService(store interfaces.Factory,
 	redis *storage.RedisCluster,
 	options *options.Options,
 	bloomFilter *bloom.BloomFilter,
-	bloomMutex *sync.RWMutex) (ServiceManager, error) {
+	bloomMutex *sync.RWMutex, producer producer.MessageProducer) (ServiceManager, error) {
 	// 初始化布隆过滤器（根据预期用户数量配置）
 	s := &ServiceSrv{
 		Store:       store,
@@ -77,7 +82,12 @@ func NewService(store interfaces.Factory,
 		Options:     options,
 		BloomFilter: bloomFilter,
 		BloomMutex:  bloomMutex,
+		producer:    producer,
 	}
-
+	// 添加调试信息
+	log.Debugw("service:Producer类型信息",
+		"producerType", fmt.Sprintf("%T", producer),
+		"producerValue", fmt.Sprintf("%+v", producer),
+	)
 	return s, nil
 }

@@ -241,6 +241,9 @@ var codeConstNames = map[int]string{
 	100307: "ErrEncodingYaml",
 	100308: "ErrDecodingYaml",
 
+	//kafka（1004xx）：服务10 + 模块04 + 序号 404
+	100401: "ErrKafkaSendFailed",
+
 	// iam-apiserver 用户模块
 	110001: "ErrUserNotFound",
 	110002: "ErrUserAlreadyExist",

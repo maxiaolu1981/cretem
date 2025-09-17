@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
+	"github.com/bytedance/gopkg/util/logger"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/db"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -14,13 +14,7 @@ import (
 // Get 查询用户（按用户名）- 生产级大并发版本
 func (u *Users) Get(ctx context.Context, username string,
 	opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
-
-	logger := log.FromContext(ctx).WithValues(
-		"layer", "store",
-		"operation", "GetUser",
-		"username", username,
-	)
-
+    
 	start := time.Now()
 
 	// 设置包含重试时间预算的超时上下文

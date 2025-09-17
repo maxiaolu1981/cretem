@@ -205,3 +205,7 @@ func (u *UserService) processSingleUserWithTimeout(ctx context.Context, user *v1
 		LoginedAt: user.LoginedAt,
 	}, nil
 }
+
+func (u *UserService) ListWithBadPerformance(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
+	return nil, nil
+}

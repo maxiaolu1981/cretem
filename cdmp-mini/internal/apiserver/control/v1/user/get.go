@@ -15,12 +15,12 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-func (u *UserController) Get(c *gin.Context) {
+func (u *UserController) Get(ctx *gin.Context) {
 
-	username := c.Param("name")
+	username := ctx.Param("name")
 	var r metav1.GetOptions
-	if err := c.ShouldBindQuery(&r); err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrBind, "传入的GetOptions参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
+	if err := ctx.ShouldBindQuery(&r); err != nil {
+		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "传入的GetOptions参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
 		return
 	}
 	if r.Kind == "" {
@@ -30,16 +30,16 @@ func (u *UserController) Get(c *gin.Context) {
 		r.APIVersion = u.options.MetaOptions.GetOptions.APIVersion
 	}
 
-	logger := log.L(c).WithValues(
+	logger := log.L(ctx).WithValues(
 		"controller", "UserController", // 标识当前控制器
 		"action", "Get", // 标识当前操作
-		"client_ip", c.ClientIP(), // 客户端IP
-		"method", c.Request.Method, // 请求方法
+		"client_ip", ctx.ClientIP(), // 客户端IP
+		"method", ctx.Request.Method, // 请求方法
 		"kind", r.Kind,
 		"apiVersion", r.APIVersion,
-		"path", c.FullPath(), // 请求路径
+		"path", ctx.FullPath(), // 请求路径
 		"resource_id", username,
-		"user_agent", c.Request.UserAgent(),
+		"user_agent", ctx.Request.UserAgent(),
 	)
 	logger.Debugf("开始处理用户查询请求(单资源)")
 	errs := u.validateGetOptions(&r)
@@ -50,26 +50,27 @@ func (u *UserController) Get(c *gin.Context) {
 		}
 		detailStr := fmt.Sprintf("参数错误:%+v", errDetails)
 		err := errors.WrapC(nil, code.ErrInvalidParameter, "%s", detailStr)
-		core.WriteResponse(c, err, nil)
+		core.WriteResponse(ctx, err, nil)
 		return
 	}
 
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errMsg := strings.Join(errs, ":")
 		log.Warnw("用户名参数校验失败:", "error", errMsg)
-		core.WriteResponse(c, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errMsg), nil)
+		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errMsg), nil)
 		return
 	}
 
+	c := ctx.Request.Context()
 	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{}, u.options)
 	if err != nil {
 		log.Debugw("查询用户失败", "username:", username, "error:", err.Error())
 		coder := errors.ParseCoderByErr(err)
 		log.Debugf("cotrol:返回的业务码%v", coder.Code())
-		core.WriteResponse(c, err, nil)
+		core.WriteResponse(ctx, err, nil)
 		return
 	}
 	publicUser := v1.ConvertToPublicUser(user)
 	log.Info("用户查询成功")
-	core.WriteSuccessResponse(c, "查询用户详情成功", publicUser)
+	core.WriteSuccessResponse(ctx, "查询用户详情成功", publicUser)
 }

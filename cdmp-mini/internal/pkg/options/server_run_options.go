@@ -82,8 +82,8 @@ type ServerRunOptions struct {
 	Mode            string   `json:"mode"        mapstructure:"mode"`
 	Healthz         bool     `json:"healthz"     mapstructure:"healthz"`
 	Middlewares     []string `json:"middlewares" mapstructure:"middlewares"`
-	EnableProfiling bool
-	EnableMetrics   bool
+	EnableProfiling bool     `json:"enableProfiling" mapstructure:"enableProfiling"`
+	EnableMetrics   bool     `json:"enableMetrics" mapstructure:"enableMetrics"`
 	// 新增：Cookie相关配置
 	CookieDomain string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
 	CookieSecure bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
@@ -105,13 +105,59 @@ func NewServerRunOptions() *ServerRunOptions {
 }
 
 func (s *ServerRunOptions) Complete() {
+	// 如果字段为零值，设置默认值；否则保持配置的值
 
-	s.Mode = s.completeString(s.Mode, s.Mode, []string{gin.DebugMode, gin.ReleaseMode, gin.TestMode})
-	s.Healthz = true
-	s.Middlewares = s.completeSlice(s.Middlewares, s.Middlewares)
-	s.EnableMetrics = true
-	s.CookieDomain = ""
-	s.CookieSecure = false
+	// Mode: 如果为空，设置默认值
+	if s.Mode == "" {
+		s.Mode = gin.ReleaseMode
+	} else {
+		// 验证Mode是否有效，如果无效则使用默认值
+		validModes := []string{gin.DebugMode, gin.ReleaseMode, gin.TestMode}
+		isValid := false
+		for _, mode := range validModes {
+			if s.Mode == mode {
+				isValid = true
+				break
+			}
+		}
+		if !isValid {
+			s.Mode = gin.ReleaseMode
+		}
+	}
+
+	// Healthz: 如果为零值，设置默认值
+	if !s.Healthz {
+		s.Healthz = true
+	}
+
+	// Middlewares: 如果为nil或空，设置默认空切片
+	if s.Middlewares == nil {
+		s.Middlewares = []string{}
+	}
+
+	// EnableProfiling: 如果为零值，设置默认值
+	if !s.EnableProfiling {
+		s.EnableProfiling = true
+	}
+
+	// EnableMetrics: 如果为零值，设置默认值
+	if !s.EnableMetrics {
+		s.EnableMetrics = true
+	}
+
+	// CookieDomain: 如果为空，设置默认值
+	if s.CookieDomain == "" {
+		s.CookieDomain = ""
+	}
+
+	// CookieSecure: 设置默认值（如果需要）
+	// 注意：bool类型的零值是false，所以这里根据业务需求决定
+	// 如果希望默认是false，可以不做处理
+
+	// CtxTimeout: 如果为零值，设置默认值
+	if s.CtxTimeout <= 0 {
+		s.CtxTimeout = 5 * time.Second
+	}
 }
 
 func (s *ServerRunOptions) Validate() []error {
