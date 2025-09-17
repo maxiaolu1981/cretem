@@ -1,3 +1,4 @@
+// internal/pkg/server/producer.go
 package server
 
 import (
@@ -13,83 +14,95 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-var _ producer.MessageProducer = (*Producer)(nil)
+var _ producer.MessageProducer = (*UserProducer)(nil)
 
-// 常量定义：重试和死信Topic的命名后缀
-const (
-	RetryTopicSuffix      = ".retry"
-	DeadLetterTopicSuffix = ".deadletter"
-)
-
-// 生产者
-type Producer struct {
-	writer          *kafka.Writer // 主Topic生产者
-	retryWriter     *kafka.Writer // 重试/死信Topic生产者（注重可靠性）
-	mainTopic       string
-	retryTopic      string
-	deadLetterTopic string
-	maxRetries      int // 最大重试次数
+type UserProducer struct {
+	writer      *kafka.Writer
+	retryWriter *kafka.Writer
+	maxRetries  int
 }
 
-// 创建生产者
-func (g *GenericAPIServer) NewKafkaProducer(brokers []string, mainTopic string, maxRetries int) *Producer {
-	// 根据主Topic名称生成重试和死信Topic名称
-	retryTopic := mainTopic + RetryTopicSuffix
-	deadLetterTopic := mainTopic + DeadLetterTopicSuffix
-
-	// 1. 主Topic Writer (高性能配置)
+func NewUserProducer(brokers []string, batchSize int, batchTimeout time.Duration) *UserProducer {
+	// 主Writer（高性能配置）
 	mainWriter := &kafka.Writer{
 		Addr:            kafka.TCP(brokers...),
-		Topic:           mainTopic,
 		MaxAttempts:     3,
 		WriteBackoffMin: 100 * time.Millisecond,
 		WriteBackoffMax: 1 * time.Second,
-		BatchBytes:      1048576, // 1MB
-		BatchSize:       g.options.KafkaOptions.BatchSize,
-		BatchTimeout:    g.options.KafkaOptions.BatchTimeout,
+		BatchBytes:      1048576,
+		BatchSize:       batchSize,
+		BatchTimeout:    batchTimeout,
 		WriteTimeout:    30 * time.Second,
 		Balancer:        &kafka.LeastBytes{},
 		Compression:     kafka.Snappy,
-		RequiredAcks:    kafka.RequireOne, // 主Topic可以追求速度
+		RequiredAcks:    kafka.RequireOne,
 		Async:           true,
 		Completion: func(messages []kafka.Message, err error) {
 			if err != nil {
 				for _, msg := range messages {
-					log.Errorf("主消息发送失败! Topic: %s, Key: %s, Error: %v", mainTopic, string(msg.Key), err)
+					log.Errorf("消息发送失败! Key: %s, Error: %v", string(msg.Key), err)
 				}
 			}
 		},
 	}
 
-	// 2. 重试/死信Topic Writer (高可靠性配置)
+	// 重试Writer（高可靠配置）
 	reliableWriter := &kafka.Writer{
 		Addr:            kafka.TCP(brokers...),
 		MaxAttempts:     10,
 		WriteBackoffMin: 500 * time.Millisecond,
 		WriteBackoffMax: 5 * time.Second,
 		BatchSize:       1,
-		BatchTimeout:    0,
 		WriteTimeout:    60 * time.Second,
 		RequiredAcks:    kafka.RequireAll,
 		Async:           false,
 		Compression:     kafka.Snappy,
 	}
 
-	return &Producer{
-		writer:          mainWriter,
-		retryWriter:     reliableWriter,
-		mainTopic:       mainTopic,
-		retryTopic:      retryTopic,
-		deadLetterTopic: deadLetterTopic,
-		maxRetries:      maxRetries,
+	return &UserProducer{
+		writer:      mainWriter,
+		retryWriter: reliableWriter,
+		maxRetries:  MaxRetryCount,
 	}
 }
 
-func (p *Producer) SendUserCreateMessage(ctx context.Context, user *v1.User) error {
+func (p *UserProducer) SendUserCreateMessage(ctx context.Context, user *v1.User) error {
+	return p.sendUserMessage(ctx, user, OperationCreate, UserCreateTopic)
+}
+
+func (p *UserProducer) SendUserUpdateMessage(ctx context.Context, user *v1.User) error {
+	return p.sendUserMessage(ctx, user, OperationUpdate, UserUpdateTopic)
+}
+
+func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username string) error {
+	deleteData := map[string]interface{}{
+		"username":   username,
+		"deleted_at": time.Now().Format(time.RFC3339),
+	}
+
+	data, err := json.Marshal(deleteData)
+	if err != nil {
+		return errors.WithCode(code.ErrEncodingJSON, "删除消息序列化失败")
+	}
+
+	msg := kafka.Message{
+		Key:   []byte(username),
+		Value: data,
+		Time:  time.Now(),
+		Headers: []kafka.Header{
+			{Key: HeaderOperation, Value: []byte(OperationDelete)},
+			{Key: HeaderOriginalTimestamp, Value: []byte(time.Now().Format(time.RFC3339))},
+			{Key: HeaderRetryCount, Value: []byte("0")},
+		},
+	}
+
+	return p.sendWithRetry(ctx, msg, UserDeleteTopic)
+}
+
+func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, operation, topic string) error {
 	userData, err := json.Marshal(user)
 	if err != nil {
-		log.Errorf("消息序列化失败: User: %+v, Error: %v", user, err)
-		return errors.WithCode(code.ErrEncodingJSON, "消息序列化失败: %v", err)
+		return errors.WithCode(code.ErrEncodingJSON, "用户消息序列化失败")
 	}
 
 	msg := kafka.Message{
@@ -97,92 +110,81 @@ func (p *Producer) SendUserCreateMessage(ctx context.Context, user *v1.User) err
 		Value: userData,
 		Time:  time.Now(),
 		Headers: []kafka.Header{
-			{Key: "original-timestamp", Value: []byte(time.Now().Format(time.RFC3339))},
-			{Key: "retry-count", Value: []byte("0")},
+			{Key: HeaderOperation, Value: []byte(operation)},
+			{Key: HeaderOriginalTimestamp, Value: []byte(time.Now().Format(time.RFC3339))},
+			{Key: HeaderRetryCount, Value: []byte("0")},
 		},
 	}
 
-	log.Infof("准备发送用户消息到主Topic: topic=%s, user=%s", p.mainTopic, user.Name)
+	return p.sendWithRetry(ctx, msg, topic)
+}
 
-	err = p.writer.WriteMessages(ctx, msg)
+func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
+	p.writer.Topic = topic
+	defer func() { p.writer.Topic = "" }()
+
+	err := p.writer.WriteMessages(ctx, msg)
 	if err != nil {
-		log.Errorf("主Topic发送失败，尝试发送到重试Topic. Error: %v, User: %s", err, user.Name)
-
-		retryMsg := msg
-		retryMsg.Headers = append(retryMsg.Headers, kafka.Header{
-			Key:   "first-error",
-			Value: []byte(err.Error()),
-		})
-
-		retryErr := p.sendToRetryTopic(ctx, retryMsg)
-		if retryErr != nil {
-			log.Errorf("严重错误：无法发送到重试Topic！主消息已丢失！ User: %s, Error: %v", user.Name, retryErr)
-			return errors.WithCode(code.ErrKafkaSendFailed, "无法发送消息到主Topic或重试Topic: %v", retryErr)
-		}
-		return nil
+		log.Errorf("Topic %s 发送失败，尝试重试Topic. Key: %s", topic, string(msg.Key))
+		return p.sendToRetryTopic(ctx, msg, err.Error())
 	}
 
-	log.Infof("用户消息成功发送到主Topic: user=%s", user.Name)
+	log.Infof("消息成功发送到Topic %s: key=%s", topic, string(msg.Key))
 	return nil
 }
 
-// sendToRetryTopic 发送消息到重试Topic
-func (p *Producer) sendToRetryTopic(ctx context.Context, msg kafka.Message) error {
-	p.retryWriter.Topic = p.retryTopic
-	defer func() {
-		p.retryWriter.Topic = ""
-	}()
+func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
+	p.retryWriter.Topic = UserRetryTopic
+	defer func() { p.retryWriter.Topic = "" }()
 
-	log.Infof("发送消息到重试Topic: topic=%s, key=%s", p.retryTopic, string(msg.Key))
+	retryMsg := msg
+	retryMsg.Headers = append(retryMsg.Headers, kafka.Header{
+		Key:   HeaderRetryError,
+		Value: []byte(errorInfo),
+	})
 
-	err := p.retryWriter.WriteMessages(ctx, msg)
+	err := p.retryWriter.WriteMessages(ctx, retryMsg)
 	if err != nil {
 		log.Errorf("发送到重试Topic失败: %v", err)
 		return err
 	}
 
-	log.Infof("成功发送消息到重试Topic: key=%s", string(msg.Key))
+	log.Infof("消息发送到重试Topic: key=%s", string(msg.Key))
 	return nil
 }
 
-// SendToRetryTopic 供消费者调用的方法
-func (p *Producer) SendToRetryTopic(ctx context.Context, msg kafka.Message) error {
-	return p.sendToRetryTopic(ctx, msg)
-}
+func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, reason string) error {
+	p.retryWriter.Topic = UserDeadLetterTopic
+	defer func() { p.retryWriter.Topic = "" }()
 
-// SendToDeadLetterTopic 发送消息到死信Topic
-func (p *Producer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, reason string) error {
 	deadLetterMsg := msg
-	deadLetterMsg.Headers = append(deadLetterMsg.Headers, kafka.Header{
-		Key:   "deadletter-reason",
-		Value: []byte(reason),
-	}, kafka.Header{
-		Key:   "deadletter-timestamp",
-		Value: []byte(time.Now().Format(time.RFC3339)),
-	})
-
-	p.retryWriter.Topic = p.deadLetterTopic
-	defer func() {
-		p.retryWriter.Topic = ""
-	}()
-
-	log.Warnf("发送消息到死信Topic: topic=%s, key=%s, reason=%s", p.deadLetterTopic, string(msg.Key), reason)
+	deadLetterMsg.Headers = append(deadLetterMsg.Headers,
+		kafka.Header{Key: HeaderDeadLetterReason, Value: []byte(reason)},
+		kafka.Header{Key: HeaderDeadLetterTS, Value: []byte(time.Now().Format(time.RFC3339))},
+	)
 
 	err := p.retryWriter.WriteMessages(ctx, deadLetterMsg)
 	if err != nil {
-		log.Errorf("严重错误：无法发送到死信Topic！消息将永久丢失！ Key: %s, Error: %v", string(msg.Key), err)
+		log.Errorf("发送到死信Topic失败: %v", err)
 		return err
 	}
 
-	log.Warnf("成功发送消息到死信Topic: key=%s", string(msg.Key))
+	log.Warnf("消息发送到死信Topic: key=%s, reason=%s", string(msg.Key), reason)
 	return nil
 }
 
-func (p *Producer) Close() error {
-	err1 := p.writer.Close()
-	err2 := p.retryWriter.Close()
-	if err1 != nil {
-		return err1
+func (p *UserProducer) Close() error {
+	if p.writer != nil {
+		if err := p.writer.Close(); err != nil {
+			return err
+		}
 	}
-	return err2
+
+	if p.retryWriter != nil {
+		if err := p.retryWriter.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

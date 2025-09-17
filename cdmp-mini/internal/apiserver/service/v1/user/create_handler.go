@@ -44,6 +44,7 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		return errors.WithCode(code.ErrUnknown, "生产者转换错误")
 	}
 
+	// 发送到Kafka（异步化）
 	err := u.Producer.SendUserCreateMessage(ctx, user)
 	if err != nil {
 		log.Errorf("生产者消息发送失败%v", err)

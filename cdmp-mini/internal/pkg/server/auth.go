@@ -37,34 +37,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Redis键名常量（统一前缀避免冲突）
-const (
-	redisGenericapiserverPrefix = "genericapiserver:"
-	redisRefreshTokenPrefix     = "auth:refresh_token:"
-	redisLoginFailPrefix        = "auth:login_fail:"
-	redisBlacklistPrefix        = "auth:blacklist:"
-	redisUserSessionsPrefix     = "auth:user_sessions:"
-	redisAtSessionIDPrefix      = "auth:atsession_id:"
-	redisRtSessionIDPrefix      = "auth:rtsession_id:"
-)
-
-// 登录失败限制配置
-const (
-	maxLoginFails   = 5
-	loginFailExpire = 15 * time.Minute
-)
-
-// 系统常量
-const (
-	// APIServerAudience defines the value of jwt audience field.
-	APIServerAudience = "https://github.com/maxiaolu1981/cretem"
-
-	// Issuer - 标识令牌的"签发系统"（系统视角）
-	APIServerIssuer = "https://github.com/maxiaolu1981/cretem"
-	// Realm - 标识受保护的"资源领域"（用户视角）
-	APIServerRealm = "github.com/maxiaolu1981/cretem"
-)
-
 type loginInfo struct {
 	Username string `form:"username" json:"username" ` // 仅校验非空
 	Password string `form:"password" json:"password" ` // 仅校验非空
