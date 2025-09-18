@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
@@ -12,10 +11,10 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/control/v1/user"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
@@ -65,6 +64,48 @@ func (g *GenericAPIServer) installSystemRoutes() error {
 				"status": "ok"})
 		})
 	}
+
+	g.GET("/test-all-metrics", func(c *gin.Context) {
+		// 测试所有业务指标
+		metrics.BusinessSuccess.WithLabelValues("test_create").Inc()
+		metrics.BusinessSuccess.WithLabelValues("test_update").Inc()
+		metrics.BusinessFailures.WithLabelValues("test_create", "timeout").Inc()
+		metrics.BusinessProcessingTime.WithLabelValues("test_create").Observe(0.15)
+		metrics.BusinessProcessingTime.WithLabelValues("test_update").Observe(0.08)
+
+		// 测试所有生产者指标
+		metrics.ProducerAttempts.WithLabelValues("user.create.v1", "create").Inc()
+		metrics.ProducerAttempts.WithLabelValues("user.update.v1", "update").Inc()
+		metrics.ProducerSuccess.WithLabelValues("user.create.v1", "create").Inc()
+		metrics.ProducerFailures.WithLabelValues("user.create.v1", "create", "network_error").Inc()
+		metrics.ProducerRetries.WithLabelValues("user.create.v1", "create").Inc()
+		metrics.DeadLetterMessages.WithLabelValues("user.create.v1", "create").Inc()
+		metrics.MessageProcessingTime.WithLabelValues("user.create.v1", "create", "success").Observe(0.2)
+
+		// 测试消费者指标（如果有消费者的话）
+		metrics.ConsumerMessagesReceived.WithLabelValues("user.create.v1", "user-service").Inc()
+		metrics.ConsumerMessagesProcessed.WithLabelValues("user.create.v1", "user-service").Inc()
+		metrics.ConsumerProcessingErrors.WithLabelValues("user.create.v1", "user-service", "decode_error").Inc()
+
+		c.JSON(200, gin.H{
+			"message": "所有指标已触发",
+			"metrics": []string{
+				"business_operations_success_total",
+				"business_operations_failures_total",
+				"business_processing_seconds",
+				"kafka_producer_attempts_total",
+				"kafka_producer_success_total",
+				"kafka_producer_failures_total",
+				"kafka_producer_retries_total",
+				"kafka_dead_letter_messages_total",
+				"kafka_message_processing_seconds",
+				"kafka_consumer_messages_received_total",
+				"kafka_consumer_messages_processed_total",
+				"kafka_consumer_processing_errors_total",
+			},
+		})
+	})
+
 	if g.options.ServerRunOptions.EnableMetrics {
 		prometheus := ginprometheus.NewPrometheus("gin")
 		prometheus.Use(g.Engine)
@@ -88,13 +129,17 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 		return fmt.Errorf("转换jwtStrategy错误")
 	}
 
-	loginLimiter := common.LoginRateLimiter(g.redis, 200, time.Second)
+	//loginLimiter := common.LoginRateLimiter(g.redis, 200, time.Second)
 	// 登录：使用 gin-jwt 的 LoginHandler（需要认证中间件）
 	g.Handle(http.MethodPost, "/login",
-		loginLimiter,       // 限流放在最前面
 		createAutHandler(), // 然后是认证相关的中间件
 		jwt.LoginHandler,   // 最后是实际的登录处理函数
 	)
+	// g.Handle(http.MethodPost, "/login",
+	// 	loginLimiter,       // 限流放在最前面
+	// 	createAutHandler(), // 然后是认证相关的中间件
+	// 	jwt.LoginHandler,   // 最后是实际的登录处理函数
+	// )
 
 	g.POST("logout", createAutHandler(), g.logoutRespons)
 	// 刷新：使用 gin-jwt 的 RefreshHandler（需要认证中间件

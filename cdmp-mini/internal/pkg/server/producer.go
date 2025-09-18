@@ -4,9 +4,14 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -15,17 +20,24 @@ import (
 )
 
 var _ producer.MessageProducer = (*UserProducer)(nil)
+var KafkaBrokers = []string{"127.0.0.1:9092"}
+
+// 在全局变量区域添加 Prometheus 指标
 
 type UserProducer struct {
-	writer      *kafka.Writer
-	retryWriter *kafka.Writer
-	maxRetries  int
+	writer           *kafka.Writer
+	retryWriter      *kafka.Writer
+	maxRetries       int
+	deadLetterWriter *kafka.Writer
 }
+
+// internal/pkg/server/producer.go
 
 func NewUserProducer(brokers []string, batchSize int, batchTimeout time.Duration) *UserProducer {
 	// 主Writer（高性能配置）
 	mainWriter := &kafka.Writer{
-		Addr:            kafka.TCP(brokers...),
+		Addr: kafka.TCP(brokers...),
+		// 注意：这里不设置 Topic，在发送时动态设置
 		MaxAttempts:     3,
 		WriteBackoffMin: 100 * time.Millisecond,
 		WriteBackoffMax: 1 * time.Second,
@@ -36,19 +48,13 @@ func NewUserProducer(brokers []string, batchSize int, batchTimeout time.Duration
 		Balancer:        &kafka.LeastBytes{},
 		Compression:     kafka.Snappy,
 		RequiredAcks:    kafka.RequireOne,
-		Async:           true,
-		Completion: func(messages []kafka.Message, err error) {
-			if err != nil {
-				for _, msg := range messages {
-					log.Errorf("消息发送失败! Key: %s, Error: %v", string(msg.Key), err)
-				}
-			}
-		},
+		Async:           false,
 	}
 
-	// 重试Writer（高可靠配置）
+	// 重试Writer（高可靠配置）- 不设置 Topic
 	reliableWriter := &kafka.Writer{
-		Addr:            kafka.TCP(brokers...),
+		Addr: kafka.TCP(brokers...),
+		// 注意：这里不设置 Topic，在发送时动态设置
 		MaxAttempts:     10,
 		WriteBackoffMin: 500 * time.Millisecond,
 		WriteBackoffMax: 5 * time.Second,
@@ -119,58 +125,198 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 	return p.sendWithRetry(ctx, msg, topic)
 }
 
-func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
-	p.writer.Topic = topic
-	defer func() { p.writer.Topic = "" }()
+// 添加验证方法
+func (p *UserProducer) validateMessage(msg kafka.Message) error {
+	// 检查消息是否包含Topic字段（不应该包含）
+	if msg.Topic != "" {
+		return fmt.Errorf("message should not have Topic field set")
+	}
+	return nil
+}
 
-	err := p.writer.WriteMessages(ctx, msg)
-	if err != nil {
-		log.Errorf("Topic %s 发送失败，尝试重试Topic. Key: %s", topic, string(msg.Key))
-		return p.sendToRetryTopic(ctx, msg, err.Error())
+// sendWithRetry 带重试的发送逻辑
+func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
+	startTime := time.Now()
+	operation := p.getOperationFromHeaders(msg.Headers)
+
+	// 记录发送尝试
+	metrics.ProducerAttempts.WithLabelValues(topic, operation).Inc()
+
+	// 创建新的消息
+	sendMsg := kafka.Message{
+		Key:     msg.Key,
+		Value:   msg.Value,
+		Time:    time.Now(),
+		Topic:   topic,
+		Headers: make([]kafka.Header, len(msg.Headers)),
+	}
+	copy(sendMsg.Headers, msg.Headers)
+
+	if err := p.validateMessage(msg); err != nil {
+		return fmt.Errorf("invalid message: %v", err)
 	}
 
-	log.Infof("消息成功发送到Topic %s: key=%s", topic, string(msg.Key))
+	err := p.writer.WriteMessages(ctx, sendMsg)
+	if err != nil {
+		log.Errorf("Topic %s 发送失败，尝试重试Topic. Key: %s", topic, string(msg.Key))
+		// 记录失败
+		metrics.ProducerFailures.WithLabelValues(topic, operation, "initial_send").Inc()
+
+		retryErr := p.sendToRetryTopic(ctx, msg, err.Error())
+		if retryErr != nil {
+			// 记录重试失败的总时间
+			metrics.MessageProcessingTime.WithLabelValues(topic, operation, "failure").Observe(time.Since(startTime).Seconds())
+			return retryErr
+		}
+		// 记录重试成功
+		metrics.ProducerRetries.WithLabelValues(topic, operation).Inc()
+		metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc() // ✅ 重试成功也要记录成功！
+		metrics.MessageProcessingTime.WithLabelValues(topic, operation, "retry_success").Observe(time.Since(startTime).Seconds())
+		return nil
+	}
+
+	// ✅ 修复：直接成功时记录成功指标
+	metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
+	metrics.MessageProcessingTime.WithLabelValues(topic, operation, "success").Observe(time.Since(startTime).Seconds())
+	log.Infow("消息成功发送到Topic", "topic", topic, "key", string(msg.Key))
 	return nil
+}
+
+func (p *UserProducer) getOperationFromHeaders(headers []kafka.Header) string {
+	for _, h := range headers {
+		if h.Key == HeaderOperation {
+			return string(h.Value)
+		}
+	}
+	return "unknown"
 }
 
 func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
-	p.retryWriter.Topic = UserRetryTopic
-	defer func() { p.retryWriter.Topic = "" }()
+	// 1. 读取原始消息的重试次数
+	log.Errorf("📨 进入sendToRetryTopic: key=%s", string(msg.Key))
 
-	retryMsg := msg
-	retryMsg.Headers = append(retryMsg.Headers, kafka.Header{
-		Key:   HeaderRetryError,
-		Value: []byte(errorInfo),
-	})
+	for i, header := range msg.Headers {
+		log.Errorf("  输入消息Header[%d]: %s=%s", i, header.Key, string(header.Value))
+	}
+	currentRetryCount := 0
+	for _, h := range msg.Headers {
+		if h.Key == HeaderRetryCount {
+			if cnt, err := strconv.Atoi(string(h.Value)); err == nil {
+				currentRetryCount = cnt
+			}
+			break
+		}
+	}
+	currentRetryCount++
 
-	err := p.retryWriter.WriteMessages(ctx, retryMsg)
-	if err != nil {
-		log.Errorf("发送到重试Topic失败: %v", err)
-		return err
+	// 2. 检查最大重试次数
+	if currentRetryCount > p.maxRetries {
+		errMsg := fmt.Sprintf("已达最大重试次数（%d次）", p.maxRetries)
+		log.Warnf("key=%s: %s", string(msg.Key), errMsg)
+		return p.SendToDeadLetterTopic(ctx, msg, errMsg+": "+errorInfo)
 	}
 
-	log.Infof("消息发送到重试Topic: key=%s", string(msg.Key))
+	// 3. 创建重试消息
+	retryMsg := kafka.Message{
+		Key:   msg.Key,
+		Value: msg.Value,
+		Time:  time.Now(),
+	}
+
+	// 复制并更新headers（修复重复问题）
+	retryMsg.Headers = make([]kafka.Header, len(msg.Headers))
+	copy(retryMsg.Headers, msg.Headers)
+	retryMsg.Headers = p.updateOrAddHeader(retryMsg.Headers, HeaderRetryCount, strconv.Itoa(currentRetryCount))
+	retryMsg.Headers = p.updateOrAddHeader(retryMsg.Headers, HeaderRetryError, errorInfo)
+	retryMsg.Headers = p.updateOrAddHeader(retryMsg.Headers, HeaderNextRetryTS, p.calcNextRetryTS(currentRetryCount).Format(time.RFC3339))
+
+	// 4. 使用增强的同步发送（不改变原有函数名）
+	retryCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := p.sendMessageWithRetry(retryCtx, retryMsg, UserRetryTopic, currentRetryCount)
+	if err != nil {
+		log.Errorf("重试发送失败（key=%s, 第%d次）: %v", string(msg.Key), currentRetryCount, err)
+		// 进入死信队列
+		return p.SendToDeadLetterTopic(ctx, msg, "重试发送失败: "+err.Error())
+	}
+
+	log.Infow("成功发送到重试Topic",
+		"key", string(msg.Key),
+		"retry_count", currentRetryCount,
+		"next_retry", p.calcNextRetryTS(currentRetryCount).Format(time.RFC3339))
 	return nil
 }
 
-func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, reason string) error {
-	p.retryWriter.Topic = UserDeadLetterTopic
-	defer func() { p.retryWriter.Topic = "" }()
+// 新增：计算下次重试时间（指数退避策略）
+func (p *UserProducer) calcNextRetryTS(retryCount int) time.Time {
+	// 基础延迟 * 2^(重试次数-1)，避免短期内频繁重试
+	delay := BaseRetryDelay * time.Duration(1<<(retryCount-1))
+	// 限制最大延迟，避免重试间隔过长
+	if delay > MaxRetryDelay {
+		delay = MaxRetryDelay
+	}
+	return time.Now().Add(delay)
+}
 
-	deadLetterMsg := msg
-	deadLetterMsg.Headers = append(deadLetterMsg.Headers,
-		kafka.Header{Key: HeaderDeadLetterReason, Value: []byte(reason)},
-		kafka.Header{Key: HeaderDeadLetterTS, Value: []byte(time.Now().Format(time.RFC3339))},
-	)
-
-	err := p.retryWriter.WriteMessages(ctx, deadLetterMsg)
-	if err != nil {
-		log.Errorf("发送到死信Topic失败: %v", err)
-		return err
+// 新增：将失败消息写入本地兜底日志
+func (p *UserProducer) writeFailoverLog(msg kafka.Message, err error) error {
+	// 确保日志目录存在
+	logDir := "/var/log/iam/kafka_retry_failover"
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		return fmt.Errorf("创建日志目录失败: %w", err)
 	}
 
-	log.Warnf("消息发送到死信Topic: key=%s, reason=%s", string(msg.Key), reason)
+	// 按日期分文件，避免单文件过大
+	filename := fmt.Sprintf("%s/retry_%s.log", logDir, time.Now().Format("20060102"))
+	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("打开日志文件失败: %w", err)
+	}
+	defer f.Close()
+
+	// 记录关键信息：时间、key、重试次数、错误原因等
+	logContent := fmt.Sprintf(
+		"[时间] %s\n[Key] %s\n[重试次数] %s\n[错误原因] %v\n[消息内容] %s\n%s\n",
+		time.Now().Format(time.RFC3339),
+		string(msg.Key),
+		p.getHeaderValue(msg.Headers, HeaderRetryCount),
+		err,
+		string(msg.Value),
+		strings.Repeat("-", 100), // 分隔线
+	)
+
+	if _, err := f.WriteString(logContent); err != nil {
+		return fmt.Errorf("写入日志内容失败: %w", err)
+	}
 	return nil
+}
+
+// 新增：辅助函数，从headers中获取指定key的值
+func (p *UserProducer) getHeaderValue(headers []kafka.Header, key string) string {
+	for _, h := range headers {
+		if h.Key == key {
+			return string(h.Value)
+		}
+	}
+	return "0"
+}
+
+func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
+	operation := p.getOperationFromHeaders(msg.Headers)
+	metrics.DeadLetterMessages.WithLabelValues(UserDeadLetterTopic, operation).Inc()
+	// 创建死信消息
+	deadLetterMsg := kafka.Message{
+		Key:     msg.Key,
+		Value:   msg.Value,
+		Time:    time.Now(),
+		Headers: p.updateOrAddHeader(msg.Headers, "deadletter-reason", errorInfo),
+	}
+	deadLetterMsg.Headers = p.updateOrAddHeader(deadLetterMsg.Headers, "deadletter-timestamp", time.Now().Format(time.RFC3339))
+
+	log.Warnf("发送到死信队列: key=%s, reason=%s", string(msg.Key), errorInfo)
+
+	// 使用增强的同步发送
+	return p.sendMessageWithRetry(ctx, deadLetterMsg, UserDeadLetterTopic, 0)
 }
 
 func (p *UserProducer) Close() error {
@@ -187,4 +333,103 @@ func (p *UserProducer) Close() error {
 	}
 
 	return nil
+}
+
+func (p *UserProducer) updateOrAddHeader(headers []kafka.Header, key, value string) []kafka.Header {
+	// 1. 基础校验：阻断空Key输入（避免无效头）
+	if key == "" {
+		panic("kafka header key cannot be empty string")
+	}
+
+	// 2. 统一目标Key为小写（用于忽略大小写匹配，不改变原始Key的展示）
+	targetKeyLower := strings.ToLower(key)
+
+	// 3. 初始化新切片+标记：newHeaders存最终结果，found标记是否已保留一个目标头
+	var newHeaders []kafka.Header
+	foundTargetHeader := false
+
+	// 4. 遍历原始切片：逐个处理每个头，筛选重复目标头
+	for _, header := range headers {
+		// 4.1 判断当前头是否为目标头（忽略大小写）
+		currentHeaderKeyLower := strings.ToLower(header.Key)
+		if currentHeaderKeyLower == targetKeyLower {
+			// 4.2 若未保留过目标头：更新其Value，加入新切片，标记已保留
+			if !foundTargetHeader {
+				// 保留原始Key的大小写（仅更新Value），避免修改用户输入的Key格式
+				updatedHeader := kafka.Header{
+					Key:   header.Key,    // 如原Key是"Retry-Error"，仍保留该格式
+					Value: []byte(value), // 写入最新Value
+				}
+				newHeaders = append(newHeaders, updatedHeader)
+				foundTargetHeader = true // 标记已保留，后续重复头不再处理
+			}
+			// 4.3 若已保留过目标头：直接跳过，不加入新切片（删除重复）
+			continue
+		}
+
+		// 4.4 非目标头：直接加入新切片（保持原有逻辑不变）
+		newHeaders = append(newHeaders, header)
+	}
+
+	// 5. 若遍历完未找到任何目标头：新增一个（保留用户输入的原始Key大小写）
+	if !foundTargetHeader {
+		newHeaders = append(newHeaders, kafka.Header{
+			Key:   key, // 如用户传"Retry-Error"，新增时就用该Key，不强制小写
+			Value: []byte(value),
+		})
+	}
+
+	return newHeaders
+}
+
+// sendMessageWithRetry 增强的同步发送方法（新增）
+// sendMessageWithRetry 增强的同步发送方法
+func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Message, topic string, attempt int) error {
+	const maxSendRetries = 3
+	var lastErr error
+
+	for i := 0; i < maxSendRetries; i++ {
+		// 使用临时writer，避免长期占用连接
+		writer := &kafka.Writer{
+			Addr:                   kafka.TCP(KafkaBrokers...),
+			Topic:                  topic,
+			Balancer:               &kafka.LeastBytes{},
+			BatchSize:              1, // 同步发送，每批次1条
+			BatchTimeout:           100 * time.Millisecond,
+			Async:                  false,            // 同步模式
+			RequiredAcks:           kafka.RequireOne, // 只需要leader确认
+			AllowAutoTopicCreation: true,             // 允许自动创建主题
+		}
+
+		// 设置发送超时
+		sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		err := writer.WriteMessages(sendCtx, msg)
+
+		// 无论成功失败都立即关闭writer
+		if closeErr := writer.Close(); closeErr != nil {
+			log.Warnf("关闭writer失败: %v", closeErr)
+		}
+		if err == nil {
+			return nil
+		}
+
+		lastErr = err
+		log.Warnf("发送失败（key=%s, topic=%s, 尝试%d/%d）: %v",
+			string(msg.Key), topic, i+1, maxSendRetries, err)
+
+		// 等待后重试（指数退避）
+		if i < maxSendRetries-1 {
+			waitTime := time.Duration(1<<uint(i)) * time.Second
+			select {
+			case <-time.After(waitTime):
+				continue
+				//case <-ctx.Done():
+				//	return ctx.Err()
+			}
+		}
+	}
+
+	return fmt.Errorf("发送到主题%s重试%d次均失败: %v", topic, maxSendRetries, lastErr)
 }

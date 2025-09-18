@@ -58,8 +58,8 @@ func Do(ctx context.Context, config RetryConfig, operation func(ctx context.Cont
 
 		// 等待延迟时间或上下文取消
 		select {
-		case <-ctx.Done():
-			return ctx.Err() // 父上下文已取消
+		//case <-ctx.Done():
+		//	return ctx.Err() // 父上下文已取消
 		case <-time.After(delay):
 			// 继续下一次尝试
 		}

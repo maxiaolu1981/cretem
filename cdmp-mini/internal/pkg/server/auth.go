@@ -207,9 +207,7 @@ func (g *GenericAPIServer) identityHandler(c *gin.Context) interface{} {
 func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	var login loginInfo
 	var err error
-	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
-	// 1. 解析认证信息（Header/Body）：透传解析错误（已携带正确错误码）
-
+	
 	if authHeader := c.Request.Header.Get("Authorization"); authHeader != "" {
 		login, err = parseWithHeader(c) // 之前已修复：返回 Basic 认证相关错误码（如 ErrInvalidAuthHeader）
 	} else {

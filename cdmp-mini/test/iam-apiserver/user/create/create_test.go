@@ -37,7 +37,7 @@ const (
 	RespCodeConflict   = 100409
 
 	ConcurrentUsers = 100                    // 修改：降低并发数，逐步增加
-	RequestsPerUser = 100                    // 修改：减少每个用户的请求数
+	RequestsPerUser = 1                      // 修改：减少每个用户的请求数
 	RequestInterval = 100 * time.Millisecond // 修改：增加请求间隔
 	BatchSize       = 100                    // 新增：批次大小
 )

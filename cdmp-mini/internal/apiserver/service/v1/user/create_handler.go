@@ -2,12 +2,12 @@ package user
 
 import (
 	"context"
-	"fmt"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
-
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -15,12 +15,17 @@ import (
 )
 
 func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
-
+	startTime := time.Now()
 	logger := log.L(ctx).WithValues(
 		"service", "UserService",
 		"method", "Create",
 	)
 	logger.Debug("使用布隆过滤器检查用户名是否存在")
+	defer func() {
+		// 记录业务处理时间
+		duration := time.Since(startTime).Seconds()
+		metrics.BusinessProcessingTime.WithLabelValues("user_create").Observe(duration)
+	}()
 
 	if u.BloomFilter.TestString(user.Name) {
 		// 布隆过滤器说可能存在，需要进一步数据库确认
@@ -30,26 +35,20 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 			return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在%s", user.Name)
 		}
 	}
-
-	logger = log.L(ctx).WithValues("service", "UserService", "method", "Create")
-
-	// 添加调试信息
-	logger.Debugw("service:Producer类型信息",
-		"producerType", fmt.Sprintf("%T", u.Producer),
-		"producerValue", fmt.Sprintf("%+v", u.Producer),
-	)
-	//发送到Kafka（快）
 	if u.Producer == nil {
 		log.Errorf("生产者转换错误")
 		return errors.WithCode(code.ErrUnknown, "生产者转换错误")
 	}
 
-	// 发送到Kafka（异步化）
+	// 发送到Kafka
 	err := u.Producer.SendUserCreateMessage(ctx, user)
 	if err != nil {
-		log.Errorf("生产者消息发送失败%v", err)
+		log.Errorf("requestID=%s: 生产者消息发送失败 username=%s, err=%v", ctx.Value("requestID"), user.Name, err)
+		metrics.BusinessFailures.WithLabelValues("user_create", "kafka_send_failed").Inc()
 		return errors.WithCode(code.ErrUnknown, "生产者消息发送失败")
 	}
+	// 记录业务成功
+	metrics.BusinessSuccess.WithLabelValues("user_create").Inc()
 	logger.Infow("用户创建请求已发送到Kafka", "username", user.Name)
 	return nil
 }

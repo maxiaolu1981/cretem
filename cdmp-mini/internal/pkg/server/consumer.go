@@ -75,21 +75,22 @@ func (c *UserConsumer) worker(ctx context.Context, workerID int) {
 
 	for {
 		select {
-		case <-ctx.Done():
-			log.Infof("Worker %d: 停止消费", workerID)
-			return
+		//case <-ctx.Done():
+		//	log.Infof("Worker %d: 停止消费", workerID)
+		//	return
 		default:
+			// 1. 从Kafka拉取消息
 			msg, err := c.reader.FetchMessage(ctx)
 			if err != nil {
 				log.Errorf("Worker %d: 获取消息失败: %v", workerID, err)
 				continue
 			}
-
+			// 2. 处理消息
 			if err := c.processMessage(ctx, msg); err != nil {
 				log.Errorf("Worker %d: 处理消息失败: %v", workerID, err)
 				continue
 			}
-
+			// 3. 提交偏移量（确认消费）
 			if err := c.reader.CommitMessages(ctx, msg); err != nil {
 				log.Errorf("Worker %d: 提交偏移量失败: %v", workerID, err)
 			}
@@ -133,6 +134,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 
 	log.Debugf("处理用户创建: username=%s", user.Name)
 
+	// 2. 幂等性检查
 	exists, err := c.checkUserExists(ctx, user.Name)
 	if err != nil {
 		return c.sendToRetry(ctx, msg, "检查用户存在性失败: "+err.Error())
@@ -287,11 +289,20 @@ func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) err
 }
 
 func (c *UserConsumer) sendToRetry(ctx context.Context, msg kafka.Message, errorInfo string) error {
+	log.Errorf("🔄 准备发送到重试主题: key=%s, error=%s", string(msg.Key), errorInfo)
+	log.Errorf("  原始消息Headers: %+v", msg.Headers)
 	if c.producer == nil {
 		return fmt.Errorf("producer未初始化")
 	}
 
-	retryMsg := msg
+	// ✅ 确保这里传递原始消息的Headers
+	retryMsg := kafka.Message{
+		Key:     msg.Key,
+		Value:   msg.Value,
+		Headers: msg.Headers, // 直接使用原始Headers
+		Time:    time.Now(),
+	}
+
 	retryMsg.Headers = append(retryMsg.Headers, kafka.Header{
 		Key:   HeaderRetryError,
 		Value: []byte(errorInfo),

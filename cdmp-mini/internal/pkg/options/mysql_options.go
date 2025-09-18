@@ -109,7 +109,7 @@ func NewMySQLOptions() *MySQLOptions {
 		Username:              "",
 		Password:              "",
 		MaxIdleConnections:    100,
-		MaxOpenConnections:    500,
+		MaxOpenConnections:    900,
 		MaxConnectionLifeTime: 10 * time.Minute,
 		LogLevel:              0,
 		//ReadTimeout:           10 * time.Second,
@@ -314,7 +314,7 @@ func (m *MySQLOptions) Validate() []error {
 	// 验证 MaxOpenConnections
 	if m.MaxOpenConnections <= 0 {
 		errs = append(errs, field.Invalid(path.Child("max-open-connections"), m.MaxOpenConnections, "最大打开连接数必须大于0"))
-	} else if m.MaxOpenConnections > 500 {
+	} else if m.MaxOpenConnections > 2000 {
 		errs = append(errs, field.Invalid(path.Child("max-open-connections"), m.MaxOpenConnections, "最大打开连接数不能超过500"))
 	}
 

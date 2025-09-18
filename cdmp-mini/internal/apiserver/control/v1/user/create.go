@@ -5,6 +5,7 @@
 package user
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -103,8 +104,10 @@ func (u *UserController) Create(ctx *gin.Context) {
 	r.Status = 1
 	r.LoginedAt = time.Now()
 
-	c := ctx.Request.Context()
-	if err := u.srv.Users().Create(c, &r,
+	// 设置更长的超时时间
+	newCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	if err := u.srv.Users().Create(newCtx, &r,
 		metav1.CreateOptions{}, u.options); err != nil {
 		core.WriteResponse(ctx, err, nil)
 		return

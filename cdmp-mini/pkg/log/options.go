@@ -58,7 +58,7 @@ type Options struct {
 // NewOptions creates an Options object with default parameters.
 func NewOptions() *Options {
 	return &Options{
-		Level:             zapcore.InfoLevel.String(),
+		Level:             zapcore.DebugLevel.String(),
 		DisableCaller:     false,
 		DisableStacktrace: false,
 		Format:            consoleFormat,
