@@ -63,7 +63,7 @@ func (us *UserService) UsernameMightExist(username string) bool {
 func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.User, error) {
 	data, err := u.Redis.GetKey(ctx, cacheKey)
 	if err != nil {
-		return nil, errors.WithCode(code.ErrUnknown, "查询缓存失败")
+		return nil, errors.WithCode(code.ErrRedisFailed, "查询缓存失败")
 	}
 	// 检查是否是空值标记
 	if data == "" {

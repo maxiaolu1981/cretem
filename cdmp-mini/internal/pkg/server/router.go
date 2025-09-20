@@ -64,7 +64,7 @@ func (g *GenericAPIServer) installSystemRoutes() error {
 				"status": "ok"})
 		})
 	}
-
+   
 	g.GET("/test-all-metrics", func(c *gin.Context) {
 		// 测试所有业务指标
 		metrics.BusinessSuccess.WithLabelValues("test_create").Inc()
@@ -82,26 +82,58 @@ func (g *GenericAPIServer) installSystemRoutes() error {
 		metrics.DeadLetterMessages.WithLabelValues("user.create.v1", "create").Inc()
 		metrics.MessageProcessingTime.WithLabelValues("user.create.v1", "create", "success").Observe(0.2)
 
-		// 测试消费者指标（如果有消费者的话）
-		metrics.ConsumerMessagesReceived.WithLabelValues("user.create.v1", "user-service").Inc()
-		metrics.ConsumerMessagesProcessed.WithLabelValues("user.create.v1", "user-service").Inc()
-		metrics.ConsumerProcessingErrors.WithLabelValues("user.create.v1", "user-service", "decode_error").Inc()
+		// 测试所有消费者指标
+		metrics.ConsumerMessagesReceived.WithLabelValues("user.create.v1", "user-service", "create").Inc()
+		metrics.ConsumerMessagesReceived.WithLabelValues("user.create.v1", "user-service", "update").Inc()
+		metrics.ConsumerMessagesProcessed.WithLabelValues("user.create.v1", "user-service", "create").Inc()
+		metrics.ConsumerMessagesProcessed.WithLabelValues("user.create.v1", "user-service", "update").Inc()
+		metrics.ConsumerProcessingErrors.WithLabelValues("user.create.v1", "user-service", "create", "database_error").Inc()
+		metrics.ConsumerProcessingErrors.WithLabelValues("user.create.v1", "user-service", "update", "timeout").Inc()
+		metrics.ConsumerProcessingTime.WithLabelValues("user.create.v1", "user-service", "create", "success").Observe(0.1)
+		metrics.ConsumerProcessingTime.WithLabelValues("user.create.v1", "user-service", "update", "error").Observe(2.5)
+		metrics.ConsumerRetryMessages.WithLabelValues("user.create.v1", "user-service", "create", "database_error").Inc()
+		metrics.ConsumerRetryMessages.WithLabelValues("user.create.v1", "user-service", "delete", "unmarshal_error").Inc()
+		metrics.ConsumerDeadLetterMessages.WithLabelValues("user.create.v1", "user-service", "create", "permanent_error").Inc()
+
+		// 测试消费者延迟指标（设置一个模拟值）
+		metrics.ConsumerLag.WithLabelValues("user.create.v1", "user-service").Set(42.0)
+		metrics.ConsumerLag.WithLabelValues("user.update.v1", "user-service").Set(15.0)
+
+		// 测试数据库指标
+		metrics.DatabaseQueryDuration.WithLabelValues("select", "users").Observe(0.05)
+		metrics.DatabaseQueryDuration.WithLabelValues("insert", "users").Observe(0.12)
+		metrics.DatabaseQueryDuration.WithLabelValues("update", "users").Observe(0.08)
+		metrics.DatabaseQueryErrors.WithLabelValues("select", "users", "timeout").Inc()
+		metrics.DatabaseQueryErrors.WithLabelValues("insert", "users", "constraint_violation").Inc()
 
 		c.JSON(200, gin.H{
 			"message": "所有指标已触发",
 			"metrics": []string{
+				// 业务指标
 				"business_operations_success_total",
 				"business_operations_failures_total",
 				"business_processing_seconds",
+
+				// 生产者指标
 				"kafka_producer_attempts_total",
 				"kafka_producer_success_total",
 				"kafka_producer_failures_total",
 				"kafka_producer_retries_total",
 				"kafka_dead_letter_messages_total",
 				"kafka_message_processing_seconds",
+
+				// 消费者指标
 				"kafka_consumer_messages_received_total",
 				"kafka_consumer_messages_processed_total",
 				"kafka_consumer_processing_errors_total",
+				"kafka_consumer_processing_seconds",
+				"kafka_consumer_retry_messages_total",
+				"kafka_consumer_dead_letter_messages_total",
+				"kafka_consumer_lag",
+
+				// 数据库指标
+				"database_query_duration_seconds",
+				"database_query_errors_total",
 			},
 		})
 	})

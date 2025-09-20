@@ -1,0 +1,35 @@
+groups:
+- name: kafka-alerts
+  rules:
+  
+  - alert: HighProducerErrorRate
+    expr: |
+      sum(rate(kafka_producer_failures_total[5m])) by (topic, operation) / 
+      sum(rate(kafka_producer_attempts_total[5m])) by (topic, operation) > 0.1
+    for: 5m
+    labels:
+      severity: 'warning'
+      service: 'user-service'
+    annotations:
+      summary: "Kafka生产者高错误率"
+      description: "主题 {{ $labels.topic }} 的操作 {{ $labels.operation }} 错误率超过10%"
+  
+  - alert: HighConsumerLag
+    expr: kafka_consumer_lag > 1000
+    for: 10m
+    labels:
+      severity: 'critical'
+      service: 'user-service'
+    annotations:
+      summary: "高消费者延迟"
+      description: "消费者延迟超过1000条消息"
+  
+  - alert: ServiceDown
+    expr: up{job="user-service"} == 0
+    for: 1m
+    labels:
+      severity: 'critical'
+      service: 'user-service'
+    annotations:
+      summary: "服务宕机"
+      description: "用户服务已宕机超过1分钟"

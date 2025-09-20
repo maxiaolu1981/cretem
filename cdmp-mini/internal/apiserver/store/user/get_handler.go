@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/bytedance/gopkg/util/logger"
@@ -14,9 +15,9 @@ import (
 // Get 查询用户（按用户名）- 生产级大并发版本
 func (u *Users) Get(ctx context.Context, username string,
 	opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
-    
-	start := time.Now()
 
+	start := time.Now()
+	logger.Debugf("开始查询用户", "username", username)
 	// 设置包含重试时间预算的超时上下文
 	totalCtx, cancel := u.createTimeoutContext(ctx, opt.ServerRunOptions.CtxTimeout, 3)
 	defer cancel()
@@ -55,8 +56,10 @@ func (u *Users) Get(ctx context.Context, username string,
 
 	if err != nil {
 		logger.Warnf("用户查询失败",
+			"username", username,
 			"total_cost_ms", totalCost.Milliseconds(),
-			"error", err.Error())
+			"error", err.Error(),
+			"error_type", fmt.Sprintf("%T", err)) // 记录错误类型
 		return nil, u.handleGetError(err, totalCost)
 	}
 

@@ -193,10 +193,10 @@ func (p *UserProducer) getOperationFromHeaders(headers []kafka.Header) string {
 
 func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
 	// 1. 读取原始消息的重试次数
-	log.Errorf("📨 进入sendToRetryTopic: key=%s", string(msg.Key))
+	log.Debugf("📨 进入sendToRetryTopic: key=%s", string(msg.Key))
 
 	for i, header := range msg.Headers {
-		log.Errorf("  输入消息Header[%d]: %s=%s", i, header.Key, string(header.Value))
+		log.Debugf("  输入消息Header[%d]: %s=%s", i, header.Key, string(header.Value))
 	}
 	currentRetryCount := 0
 	for _, h := range msg.Headers {
@@ -425,8 +425,8 @@ func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Messa
 			select {
 			case <-time.After(waitTime):
 				continue
-				//case <-ctx.Done():
-				//	return ctx.Err()
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 		}
 	}

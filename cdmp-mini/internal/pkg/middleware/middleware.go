@@ -10,7 +10,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 )
 
-func InstallMiddlewares(engine *gin.Engine, opts *options.Options) error {
+func InstallMiddlewares(engine *gin.Engine, opt *options.Options) error {
 	var stack []gin.HandlerFunc
 
 	// 🔴 最前端日志：在所有中间件执行前打印原始头
@@ -23,7 +23,7 @@ func InstallMiddlewares(engine *gin.Engine, opts *options.Options) error {
 	})
 
 	// 安装通用中间件
-	commonMiddlewares := common.GetMiddlewareStack()
+	commonMiddlewares := common.GetMiddlewareStack(opt)
 	for _, mw := range commonMiddlewares {
 		engine.Use(mw)
 	}

@@ -5,10 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/bits-and-blooms/bloom/v3"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -24,10 +26,13 @@ type UserConsumer struct {
 	redis       *storage.RedisCluster
 	producer    *UserProducer
 	topic       string
+	groupID     string
 }
 
 func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
-	return &UserConsumer{
+	// 启动延迟监控
+
+	consumer := &UserConsumer{
 		reader: kafka.NewReader(kafka.ReaderConfig{
 			Brokers:        brokers,
 			Topic:          topic,
@@ -37,10 +42,14 @@ func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis
 			CommitInterval: time.Second,
 			StartOffset:    kafka.FirstOffset,
 		}),
-		db:    db,
-		redis: redis,
-		topic: topic,
+		db:      db,
+		redis:   redis,
+		topic:   topic,
+		groupID: groupID,
 	}
+	go consumer.startLagMonitor(context.Background())
+	return consumer
+
 }
 
 func (c *UserConsumer) SetProducer(producer *UserProducer) {
@@ -75,26 +84,65 @@ func (c *UserConsumer) worker(ctx context.Context, workerID int) {
 
 	for {
 		select {
-		//case <-ctx.Done():
-		//	log.Infof("Worker %d: 停止消费", workerID)
-		//	return
+		case <-ctx.Done():
+			log.Infof("Worker %d: 停止消费", workerID)
+			return
 		default:
-			// 1. 从Kafka拉取消息
+			// 记录消息接收
+			startTime := time.Now()
+			//从Kafka拉取消息
 			msg, err := c.reader.FetchMessage(ctx)
 			if err != nil {
 				log.Errorf("Worker %d: 获取消息失败: %v", workerID, err)
 				continue
 			}
-			// 2. 处理消息
-			if err := c.processMessage(ctx, msg); err != nil {
-				log.Errorf("Worker %d: 处理消息失败: %v", workerID, err)
+			operation := c.getOperationFromHeaders(msg.Headers)
+			metrics.ConsumerMessagesReceived.WithLabelValues(c.topic, c.groupID, operation).Inc()
+
+			//处理消息
+			processingStart := time.Now()
+			processingErr := c.processMessage(ctx, msg)
+			processingDuration := time.Since(processingStart).Seconds()
+			if processingErr != nil {
+				errorType := getErrorType(processingErr)
+				metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, operation, errorType).Inc()
+				metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "error").Observe(processingDuration)
+				log.Errorf("Worker %d: 处理消息失败: %v", workerID, processingErr)
 				continue
 			}
-			// 3. 提交偏移量（确认消费）
+			// 记录成功处理
+			metrics.ConsumerMessagesProcessed.WithLabelValues(c.topic, c.groupID, operation).Inc()
+			metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "success").Observe(processingDuration)
+
+			//提交偏移量（确认消费）
 			if err := c.reader.CommitMessages(ctx, msg); err != nil {
 				log.Errorf("Worker %d: 提交偏移量失败: %v", workerID, err)
+				metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, "commit", "commit_error").Inc()
 			}
+			totalDuration := time.Since(startTime).Seconds()
+			log.Debugf("消息处理完成: topic=%s, key=%s, operation=%s, 总耗时=%.3fs, 处理耗时=%.3fs",
+				c.topic, string(msg.Key), operation, totalDuration, processingDuration)
 		}
+	}
+}
+
+// 添加错误类型提取函数
+func getErrorType(err error) string {
+	if err == nil {
+		return "none"
+	}
+	errStr := err.Error()
+	switch {
+	case strings.Contains(errStr, "UNMARSHAL_ERROR"):
+		return "unmarshal_error"
+	case strings.Contains(errStr, "数据库"):
+		return "database_error"
+	case strings.Contains(errStr, "缓存"):
+		return "cache_error"
+	case strings.Contains(errStr, "context deadline exceeded"):
+		return "timeout"
+	default:
+		return "unknown_error"
 	}
 }
 
@@ -127,8 +175,15 @@ func (c *UserConsumer) getOperationFromHeaders(headers []kafka.Header) string {
 }
 
 func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Message) error {
+	startTime := time.Now()
+	defer func() {
+		duration := time.Since(startTime).Seconds()
+		metrics.DatabaseQueryDuration.WithLabelValues("create", "users").Observe(duration)
+	}()
+
 	var user v1.User
 	if err := json.Unmarshal(msg.Value, &user); err != nil {
+		metrics.DatabaseQueryErrors.WithLabelValues("unmarshal", "users", "unmarshal_error").Inc()
 		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
 	}
 
@@ -137,6 +192,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	// 2. 幂等性检查
 	exists, err := c.checkUserExists(ctx, user.Name)
 	if err != nil {
+		metrics.DatabaseQueryErrors.WithLabelValues("check_exists", "users", "query_error").Inc()
 		return c.sendToRetry(ctx, msg, "检查用户存在性失败: "+err.Error())
 	}
 	if exists {
@@ -145,6 +201,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	}
 
 	if err := c.createUserInDB(ctx, &user); err != nil {
+		metrics.DatabaseQueryErrors.WithLabelValues("create", "users", "insert_error").Inc()
 		return c.sendToRetry(ctx, msg, "创建用户失败: "+err.Error())
 	}
 
@@ -229,13 +286,40 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 	return nil
 }
 
+// 数据库操作监控示例
+func (c *UserConsumer) checkUserExists(ctx context.Context, username string) (bool, error) {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start).Seconds()
+		metrics.DatabaseQueryDuration.WithLabelValues("check_exists", "users").Observe(duration)
+	}()
+
+	var count int64
+	err := c.db.WithContext(ctx).Model(&v1.User{}).
+		Where("name = ?", username).
+		Count(&count).Error
+
+	if err != nil {
+		metrics.DatabaseQueryErrors.WithLabelValues("check_exists", "users", getErrorType(err)).Inc()
+	}
+
+	return count > 0, err
+}
+
 func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error {
+	start := time.Now()
+	defer func() {
+		duration := time.Since(start).Seconds()
+		metrics.DatabaseQueryDuration.WithLabelValues("create", "users").Observe(duration)
+	}()
+
 	now := time.Now()
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
 	if err := c.db.WithContext(ctx).Create(user).Error; err != nil {
-		return fmt.Errorf("数据库创建失败: %v", err)
+		metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
+		return fmt.Errorf("数据创建失败: %v", err)
 	}
 	return nil
 }
@@ -265,14 +349,6 @@ func (c *UserConsumer) deleteUserFromDB(ctx context.Context, username string) er
 	return nil
 }
 
-func (c *UserConsumer) checkUserExists(ctx context.Context, username string) (bool, error) {
-	var count int64
-	err := c.db.WithContext(ctx).Model(&v1.User{}).
-		Where("name = ?", username).
-		Count(&count).Error
-	return count > 0, err
-}
-
 func (c *UserConsumer) setUserCache(ctx context.Context, user *v1.User) error {
 	cacheKey := fmt.Sprintf("user:%s", user.Name)
 	data, err := json.Marshal(user)
@@ -289,8 +365,13 @@ func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) err
 }
 
 func (c *UserConsumer) sendToRetry(ctx context.Context, msg kafka.Message, errorInfo string) error {
-	log.Errorf("🔄 准备发送到重试主题: key=%s, error=%s", string(msg.Key), errorInfo)
-	log.Errorf("  原始消息Headers: %+v", msg.Headers)
+	operation := c.getOperationFromHeaders(msg.Headers)
+	errorType := getErrorType(fmt.Errorf(errorInfo))
+	// 记录重试指标
+	metrics.ConsumerRetryMessages.WithLabelValues(c.topic, c.groupID, operation, errorType).Inc()
+
+	log.Debugf("🔄 准备发送到重试主题: key=%s, error=%s", string(msg.Key), errorInfo)
+	log.Debugf("  原始消息Headers: %+v", msg.Headers)
 	if c.producer == nil {
 		return fmt.Errorf("producer未初始化")
 	}
@@ -312,8 +393,35 @@ func (c *UserConsumer) sendToRetry(ctx context.Context, msg kafka.Message, error
 }
 
 func (c *UserConsumer) sendToDeadLetter(ctx context.Context, msg kafka.Message, reason string) error {
+	operation := c.getOperationFromHeaders(msg.Headers)
+	errorType := getErrorType(fmt.Errorf(reason))
+	// 记录死信指标
+	metrics.ConsumerDeadLetterMessages.WithLabelValues(c.topic, c.groupID, operation, errorType).Inc()
 	if c.producer == nil {
 		return fmt.Errorf("producer未初始化")
 	}
 	return c.producer.SendToDeadLetterTopic(ctx, msg, reason)
+}
+
+// 修改 startLagMonitor 方法
+func (c *UserConsumer) startLagMonitor(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				// 直接获取统计信息，不需要检查 nil
+				stats := c.reader.Stats()
+				metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(float64(stats.Lag))
+				// 可选：记录调试日志
+				if stats.Lag > 0 {
+					log.Debugf("消费者延迟: topic=%s, group=%s, lag=%d", c.topic, c.groupID, stats.Lag)
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }

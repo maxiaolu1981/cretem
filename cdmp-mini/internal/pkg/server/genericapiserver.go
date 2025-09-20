@@ -97,6 +97,14 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 	log.Info("初始化boolm服务成功")
 
+	//安装中间件
+	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
+		return nil, err
+	}
+
+	//. 安装路由
+	g.installRoutes()
+
 	// 初始化Kafka生产者和消费者
 	if err := g.initKafkaComponents(dbIns); err != nil {
 		return nil, err
@@ -113,13 +121,6 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 
 	log.Info("所有Kafka消费者已启动")
 
-	//安装中间件
-	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
-		return nil, err
-	}
-	//. 安装路由
-	g.installRoutes()
-
 	return g, nil
 }
 
@@ -132,7 +133,7 @@ func (g *GenericAPIServer) initBloomFiliter() error {
 		// 从数据库加载所有用户名
 		users, err := interfaces.Client().Users().ListAllUsernames(context.TODO())
 		if err != nil {
-			g.initErr = errors.WithCode(code.ErrUnknown, "创建Bloom错误%v", err)
+			g.initErr = errors.WithCode(code.ErrDatabase, "从数据库加载用户名失败:加载boom失效 %v", err)
 			return
 		}
 		if len(users) == 0 {

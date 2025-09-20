@@ -243,6 +243,7 @@ var codeConstNames = map[int]string{
 
 	//kafka（1004xx）：服务10 + 模块04 + 序号 404
 	100401: "ErrKafkaSendFailed",
+	100402: "ErrRedisFailed",
 
 	// iam-apiserver 用户模块
 	110001: "ErrUserNotFound",

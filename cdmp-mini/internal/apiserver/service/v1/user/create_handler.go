@@ -37,7 +37,7 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	}
 	if u.Producer == nil {
 		log.Errorf("生产者转换错误")
-		return errors.WithCode(code.ErrUnknown, "生产者转换错误")
+		return errors.WithCode(code.ErrKafkaFailed, "Kafka生产者未初始化")
 	}
 
 	// 发送到Kafka
@@ -45,7 +45,7 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	if err != nil {
 		log.Errorf("requestID=%s: 生产者消息发送失败 username=%s, err=%v", ctx.Value("requestID"), user.Name, err)
 		metrics.BusinessFailures.WithLabelValues("user_create", "kafka_send_failed").Inc()
-		return errors.WithCode(code.ErrUnknown, "生产者消息发送失败")
+		return errors.WithCode(code.ErrKafkaFailed, "kafka生产者消息发送失败")
 	}
 	// 记录业务成功
 	metrics.BusinessSuccess.WithLabelValues("user_create").Inc()

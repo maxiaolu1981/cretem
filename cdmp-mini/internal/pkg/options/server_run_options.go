@@ -88,6 +88,7 @@ type ServerRunOptions struct {
 	CookieDomain string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
 	CookieSecure bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
 	CtxTimeout   time.Duration `json:"ctxtimeout"    mapstructure:"ctxtimeout"`
+	Env          string        `json:"env"    mapstructure:"env"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -101,6 +102,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		CookieDomain:    "",
 		CookieSecure:    false,
 		CtxTimeout:      5 * time.Second,
+		Env:             "development",
 	}
 }
 
@@ -158,6 +160,9 @@ func (s *ServerRunOptions) Complete() {
 	if s.CtxTimeout <= 0 {
 		s.CtxTimeout = 5 * time.Second
 	}
+	if s.Env == "" {
+		s.Env = "Env"
+	}
 }
 
 func (s *ServerRunOptions) Validate() []error {
@@ -170,6 +175,13 @@ func (s *ServerRunOptions) Validate() []error {
 			errs = append(errs, field.Invalid(path.Child("mode"), s.Mode, "无效的mode模式"))
 		}
 	}
+	if s.Env != "" {
+		set := sets.NewString("development", "release", "test")
+		if !set.Has(s.Env) {
+			errs = append(errs, field.Invalid(path.Child("env"), s.Env, "无效的env模式"))
+		}
+	}
+
 	// 2. 验证CookieDomain
 	if s.CookieDomain != "" {
 		domainToValidate := s.CookieDomain
@@ -225,27 +237,6 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 		"指定cookie对域的限制.空字符串表示任何域都可以绑定cookie")
 	fs.StringSliceVarP(&s.Middlewares, "server.middlewares", "w", s.Middlewares, ""+
 		"服务器允许的中间件列表，逗号分隔。如果列表为空，将使用默认中间件。")
-
-}
-
-func (s *ServerRunOptions) completeString(value, defaultValue string, validValues []string) string {
-	if value == "" {
-		return defaultValue
-	}
-	if len(validValues) > 0 {
-		for _, validValue := range validValues {
-			if validValue == value {
-				return value
-			}
-		}
-		return defaultValue
-	}
-	return value
-}
-
-func (s *ServerRunOptions) completeSlice(value, defaultValue []string) []string {
-	if value == nil {
-		return defaultValue
-	}
-	return value
+	fs.StringVar(&s.Env, "server.env", s.Env, ""+
+		"环境模式包括:development,release,test")
 }

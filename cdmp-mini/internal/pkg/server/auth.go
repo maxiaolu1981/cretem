@@ -21,7 +21,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/core"
+
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
@@ -30,6 +30,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator/jwtvalidator"
 
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
@@ -207,7 +208,7 @@ func (g *GenericAPIServer) identityHandler(c *gin.Context) interface{} {
 func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	var login loginInfo
 	var err error
-	
+
 	if authHeader := c.Request.Header.Get("Authorization"); authHeader != "" {
 		login, err = parseWithHeader(c) // 之前已修复：返回 Basic 认证相关错误码（如 ErrInvalidAuthHeader）
 	} else {
@@ -712,7 +713,7 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 	rtKey := redisRefreshTokenPrefix + r.RefreshToken
 	userid, err := g.redis.GetKey(c, rtKey)
 	if err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrUnknown, "系查询刷新令牌的Redis键"), nil)
+		core.WriteResponse(c, errors.WithCode(code.ErrTokenInvalid, "刷新令牌无效或已过期"), nil)
 		return
 	}
 	if userid == "" {
@@ -1012,7 +1013,7 @@ func isTokenInBlacklist(g *GenericAPIServer, c *gin.Context, jti string) (bool, 
 	key := g.options.JwtOptions.Blacklist_key_prefix + jti
 	exists, err := g.redis.Exists(c, key)
 	if err != nil {
-		return false, errors.WithCode(code.ErrUnknown, "查询黑名单失效")
+		return false, errors.WithCode(code.ErrDatabase, "redis:查询令牌黑名单失败: %v", err)
 	}
 	return exists, nil
 }

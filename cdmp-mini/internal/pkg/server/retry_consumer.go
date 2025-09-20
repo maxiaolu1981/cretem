@@ -178,7 +178,7 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 		select {
 		case <-time.After(remaining):
 		case <-ctx.Done():
-			//return ctx.Err()
+			return ctx.Err()
 		}
 	}
 

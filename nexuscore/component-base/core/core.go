@@ -45,8 +45,17 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 
 		// 2. 将错误解析为自定义错误编码结构（包含业务码、HTTP状态码等）
 		coder := errors.ParseCoderByErr(err)
-
 		log.Debugf("core:返回的业务码%v", coder.Code())
+
+		// 设置错误码到上下文（供Prometheus中间件使用）
+		c.Set("error_code", coder.Code())
+		c.Set("http_status", coder.HTTPStatus())
+
+		// 记录500错误详情
+		if coder.HTTPStatus() == 500 {
+			log.Errorf("500业务错误 - 路径: %s, 方法: %s, 错误码: %d, 错误: %v",
+				c.Request.URL.Path, c.Request.Method, coder.Code(), err)
+		}
 
 		// 3. 构建错误响应并返回（使用错误编码中定义的 HTTP 状态码）
 		c.JSON(coder.HTTPStatus(), ErrResponse{
@@ -54,11 +63,11 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 			Message:   coder.String(),    // 用户可见的错误消息
 			Reference: coder.Reference(), // 参考文档（可选）
 		})
-
 		return
 	}
 
 	// 4. 无错误时，返回 200 OK 和业务数据
+	c.Set("http_status", http.StatusOK) // 设置成功状态码
 	c.JSON(http.StatusOK, data)
 }
 
@@ -85,7 +94,7 @@ type SuccessResponse struct {
 func WriteSuccessResponse(c *gin.Context, message string, data interface{}) {
 	// 成功响应HTTP状态码固定为200 OK（符合RESTful规范）
 	c.JSON(http.StatusOK, SuccessResponse{
-		Code:    0,       // 成功码固定为0，区别于错误码（如100004）
+		Code:    100001,  // 成功码固定为0，区别于错误码（如100004）
 		Message: message, // 自定义成功提示（语义化）
 		Data:    data,    // 单资源数据（如过滤后的用户对象）
 	})

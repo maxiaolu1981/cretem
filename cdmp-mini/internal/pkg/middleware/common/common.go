@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	gindump "github.com/tpkeeper/gin-dump"
 )
@@ -70,9 +71,10 @@ var testMiddlewares = map[string]gin.HandlerFunc{
 
 // 生产环境特定中间件
 var prodMiddlewares = map[string]gin.HandlerFunc{
-	"logger": productionLogger(),
-	"cors":   ProductionCors(),
-	"dump":   EmptyMiddleware(), // 生产环境使用空中间件
+	"logger":  productionLogger(),
+	"cors":    ProductionCors(),
+	"dump":    EmptyMiddleware(),      // 生产环境使用空中间件
+	"metrics": PrometheusMiddleware(), // 直接引用已经定义好的中间件
 }
 
 // devLogger 开发环境日志（彩色输出）
@@ -126,31 +128,20 @@ func productionLogger() gin.HandlerFunc {
 	})
 }
 
-// getEnv 获取当前环境
-func getEnv() string {
-	if env := os.Getenv("APP_ENV"); env != "" {
-		return env
-	}
-	if env := os.Getenv("GO_ENV"); env != "" {
-		return env
-	}
-	return "development"
-}
-
 // GetMiddlewares 获取当前环境的中间件
-func GetMiddlewares() map[string]gin.HandlerFunc {
+func GetMiddlewares(opt *options.Options) map[string]gin.HandlerFunc {
 	middlewares := make(map[string]gin.HandlerFunc)
 	for k, v := range baseMiddlewares {
 		middlewares[k] = v
 	}
 
-	env := getEnv()
+	log.Warnf("目前环境是%s")
 	var envSpecific map[string]gin.HandlerFunc
 
-	switch env {
+	switch opt.ServerRunOptions.Env {
 	case "test":
 		envSpecific = testMiddlewares
-	case "production":
+	case "release":
 		envSpecific = prodMiddlewares
 	default:
 		envSpecific = devMiddlewares
@@ -164,27 +155,26 @@ func GetMiddlewares() map[string]gin.HandlerFunc {
 }
 
 // GetMiddlewareStack 获取排序后的中间件切片
-func GetMiddlewareStack() []gin.HandlerFunc {
-	allMiddlewares := GetMiddlewares()
+func GetMiddlewareStack(opt *options.Options) []gin.HandlerFunc {
+	allMiddlewares := GetMiddlewares(opt)
 
 	// 统一的执行顺序
 	executionOrder := []string{
-		"recovery", "secure", "cors", "requestid", "context", "logger", "nocache", "dump",
+		"recovery", "secure", "cors", "metrics", "requestid", "context", "logger", "nocache", "dump",
 	}
 
 	var stack []gin.HandlerFunc
 	for _, key := range executionOrder {
 		if middleware, exists := allMiddlewares[key]; exists {
-			env := getEnv()
-			if env == "development" {
-				log.Debugf("安装中间件: %s (%T)", key, middleware)
+
+			if opt.ServerRunOptions.Env == "development" {
+				log.Infof("安装中间件: %s (%T)", key, middleware)
 			} else {
 				log.Infof("安装中间件: %s", key)
 			}
 			stack = append(stack, middleware)
 		}
 	}
-
-	log.Infof("环境: %s, 共安装 %d 个中间件", getEnv(), len(stack))
+	log.Infof("环境: %s, 共安装 %d 个中间件", opt.ServerRunOptions.Env, len(stack))
 	return stack
 }

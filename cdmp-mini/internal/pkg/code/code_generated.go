@@ -82,6 +82,9 @@ func init() {
 	register(ErrPolicyNotFound, 404, "策略不存在") // 404：策略资源不存在
 
 	//8. kafka（1004xx）：服务10 + 模块04 + 序号 404
-	register(ErrKafkaSendFailed, 404, "严重错误：无法发送到重试Topic！主消息已丢失") // 404：密钥资源不存在
+	register(ErrKafkaFailed, 404, "严重错误：无法发送到重试Topic！主消息已丢失") // 404：密钥资源不存在
+
+	//9. redis（1004xx）：服务10 + 模块04 + 序号 404
+	register(ErrRedisFailed, 404, "严重错误：无法发送到重试Topic！主消息已丢失") // 404：密钥资源不存在
 
 }
