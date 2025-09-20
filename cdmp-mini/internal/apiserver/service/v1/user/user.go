@@ -12,6 +12,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -92,6 +93,7 @@ func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, ca
 
 	//1.处理用户不存在的情况（防缓存穿透）
 	if user == nil {
+		metrics.DBQueries.WithLabelValues("not_found").Inc()
 		// 缓存空值，短暂过期时间
 		logger.Debugw("用户不存在，缓存空值", "username", username)
 		u.cacheNullValue(ctx, cacheKey)

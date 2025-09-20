@@ -5,6 +5,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -32,11 +33,14 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 	cachedUser, err := u.getFromCache(ctx, cacheKey)
 	if err != nil {
 		logger.Warnw("缓存查询失败，降级到数据库查询", "error", err.Error())
+		metrics.CacheHits.WithLabelValues("miss").Inc()
 	} else {
 		// 缓存命中
 		if cachedUser != nil {
+			metrics.CacheHits.WithLabelValues("hit").Inc()
 			return cachedUser, nil
 		}
+		metrics.CacheHits.WithLabelValues("null_hit").Inc()
 		// 缓存中是空值（用户不存在）
 		return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在%s", username)
 	}

@@ -2,12 +2,14 @@ package user
 
 import (
 	"context"
+
 	"strings"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
@@ -36,6 +38,7 @@ func (u *Users) executeSingleGet(ctx context.Context, username string) (*v1.User
 	if err != nil {
 		return nil, err
 	}
+	metrics.DBQueries.WithLabelValues("found").Inc()
 	// 检查用户状态
 	if user.Status == 0 { // status = 0 表示失效
 		return nil, errors.WithCode(code.ErrUserDisabled, "用户已失效")
