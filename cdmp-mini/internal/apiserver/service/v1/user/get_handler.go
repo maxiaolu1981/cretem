@@ -17,31 +17,38 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 		"service", "UserService",
 		"operation", "Get",
 	)
+	// 1. 生成缓存key
+	cacheKey := u.generateUserCacheKey(username)
 
-	//1.布隆过滤器检查（快速路径）
-	if !u.BloomFilter.TestString(username) {
+	// 2. 布隆过滤器检查（快速路径）
+	if u.BloomFilter != nil && !u.BloomFilter.TestString(username) {
+		// 缓存空值，防止后续请求
+		u.cacheNullValue(ctx, cacheKey)
 		err := errors.WithCode(code.ErrUserNotFound, "用户不存在%s", username)
 		return nil, err
 	}
 
-	cacheKey := u.generateUserCacheKey(username)
-
-	//2.生产缓存key
+	// 3. 查询缓存
 	cachedUser, err := u.getFromCache(ctx, cacheKey)
 	if err != nil {
 		logger.Warnw("缓存查询失败，降级到数据库查询", "error", err.Error())
-	} else if cachedUser != nil {
-		return cachedUser, nil
+	} else {
+		// 缓存命中
+		if cachedUser != nil {
+			return cachedUser, nil
+		}
+		// 缓存中是空值（用户不存在）
+		return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在%s", username)
 	}
 
 	//3.使用singleflight防止缓存击穿
 	result, err, _ := u.group.Do(cacheKey, func() (interface{}, error) {
 		ctx, cancel := context.WithTimeout(ctx, u.Options.ServerRunOptions.CtxTimeout)
 		defer cancel()
-		return u.getUserWithCache(ctx, username, cacheKey, opts, opt)
+		return u.getUserFromDBAndSetCache(ctx, username, cacheKey, opts, opt)
 	})
 	if err != nil {
-		logger.Error(err.Error())
+		logger.Errorw("数据库查询失败", "username", username, "error", err.Error())
 		return nil, err
 	}
 

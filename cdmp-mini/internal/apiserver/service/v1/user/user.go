@@ -79,8 +79,8 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 	return &user, nil
 }
 
-// getUserWithCache 带缓存的用户查询核心逻辑
-func (u *UserService) getUserWithCache(ctx context.Context, username, cacheKey string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
+// getUserFromDBAndSetCache 带缓存的用户查询核心逻辑
+func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, cacheKey string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
 	logger := log.L(ctx).WithValues("operation", "getUserWithCache")
 
 	// 1. 查询数据库
@@ -93,11 +93,13 @@ func (u *UserService) getUserWithCache(ctx context.Context, username, cacheKey s
 	//1.处理用户不存在的情况（防缓存穿透）
 	if user == nil {
 		// 缓存空值，短暂过期时间
+		logger.Debugw("用户不存在，缓存空值", "username", username)
 		u.cacheNullValue(ctx, cacheKey)
 		return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在%s", username)
 	}
 
 	//2.写入缓存（带随机过期时间防雪崩）
+	logger.Debugw("用户存在，设置缓存", "username", username)
 	if err := u.setUserCache(ctx, cacheKey, user); err != nil {
 		logger.Warnw("写入缓存失败", "error", err.Error())
 		// 不返回错误，继续返回数据
@@ -133,8 +135,8 @@ func (u *UserService) setUserCache(ctx context.Context, cacheKey string, user *v
 // cacheNullValue 缓存空值（防穿透）
 func (u *UserService) cacheNullValue(ctx context.Context, cacheKey string) {
 	// 短暂缓存空值，防止穿透
-	expireTime := 5 * time.Minute
-	u.Redis.SetKey(ctx, cacheKey, "null", expireTime)
+	expiration := time.Duration(2+rand.Intn(3)) * time.Minute
+	u.Redis.SetKey(ctx, cacheKey, "null", expiration)
 }
 
 func (u *UserService) generateUserCacheKey(username string) string {
