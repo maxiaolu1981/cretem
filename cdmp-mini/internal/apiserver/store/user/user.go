@@ -28,19 +28,24 @@ func NewUsers(db *gorm.DB, policyStore interfaces.PolicyStore) *Users {
 // executeSingleGet 执行单次查询
 func (u *Users) executeSingleGet(ctx context.Context, username string) (*v1.User, error) {
 	user := &v1.User{}
+	// 先查询用户是否存在（不管状态）
 	err := u.db.WithContext(ctx).
-		Where("name = ? and status = 1", username).
+		Where("name = ?", username).
 		First(user).Error
 
 	if err != nil {
 		return nil, err
+	}
+	// 检查用户状态
+	if user.Status == 0 { // status = 0 表示失效
+		return nil, errors.WithCode(code.ErrUserDisabled, "用户已失效")
 	}
 
 	return user, nil
 }
 
 // handleGetError 处理查询错误
-func (u *Users) handleGetError(err error, cost time.Duration) error {
+func (u *Users) handleGetError(err error) error {
 	// 使用错误码框架解析错误
 	coder := errors.ParseCoderByErr(err)
 	if coder != nil {
@@ -126,6 +131,8 @@ func (u *Users) isNonRetryableBusinessError(errorCode int) bool {
 		code.ErrPageNotFound:         true, // 100005 页面不存在
 		code.ErrMethodNotAllowed:     true, // 100006 方法不允许
 		code.ErrUnsupportedMediaType: true, // 100007 不支持的Content-Type
+		code.ErrNotAdministrator:     true,
+		code.ErrUserDisabled:         true,
 	}
 
 	return nonRetryableCodes[errorCode]

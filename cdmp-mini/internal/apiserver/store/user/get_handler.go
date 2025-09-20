@@ -60,7 +60,7 @@ func (u *Users) Get(ctx context.Context, username string,
 			"total_cost_ms", totalCost.Milliseconds(),
 			"error", err.Error(),
 			"error_type", fmt.Sprintf("%T", err)) // 记录错误类型
-		return nil, u.handleGetError(err, totalCost)
+		return nil, u.handleGetError(err)
 	}
 
 	logger.Infof("用户查询成功",

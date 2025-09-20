@@ -13,7 +13,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -36,17 +35,17 @@ func Validation(opt *options.Options) gin.HandlerFunc {
 		// 区分错误类型处理
 		if err != nil {
 			errCode := errors.GetCode(err)
-			log.Errorf("errcode%+v", errCode)
 			switch errCode {
 			// 非管理员错误（允许进入后续路径权限判断）
-			case code.ErrPermissionDenied:
-				log.Debug("当前用户为非管理员，进入路径权限校验",
-					log.String("username", getUsernameFromCtx(c)),
-				)
+			case code.ErrNotAdministrator, code.ErrPermissionDenied:
 				// 执行非管理员权限校验逻辑
 				if !checkNormalUserPermission(c) {
+					c.Abort()
 					return // 校验失败，已通过 core.WriteResponse 响应
 				}
+				// 权限通过，继续执行
+				c.Next()
+				return
 
 			// 其他错误（未登录、用户不存在、数据库错误等，直接阻断）
 			case code.ErrUnauthorized, code.ErrUserNotFound, code.ErrDatabase, code.ErrDatabaseTimeout:
@@ -56,21 +55,14 @@ func Validation(opt *options.Options) gin.HandlerFunc {
 
 			// 未知错误
 			default:
-				log.Error("权限校验时发生未知错误",
-					log.String("username", getUsernameFromCtx(c)),
-					log.Int("error_code", errCode),
-				)
 				core.WriteResponse(c, errors.WithCode(code.ErrInternalServer, "权限校验异常"), nil)
 				c.Abort()
 				return
 			}
 		} else {
 			// 管理员：执行管理员特殊限制后放行
-			log.Debug("当前用户为管理员，执行特殊限制检查",
-				log.String("username", getUsernameFromCtx(c)),
-			)
 			// 管理员特殊限制（如禁止删除超级管理员）
-			if c.Request.Method == http.MethodDelete && isSuperAdmin(c,opt) {
+			if c.Request.Method == http.MethodDelete && isSuperAdmin(c, opt) {
 				core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "超级管理员不允许删除自己"), nil)
 				c.Abort()
 				return
@@ -79,9 +71,6 @@ func Validation(opt *options.Options) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-
-		// 所有权限校验通过，继续执行后续处理
-		c.Next()
 	}
 }
 
@@ -158,11 +147,7 @@ func isAdmin(c *gin.Context, opt *options.Options) error {
 
 	// 判断是否为管理员
 	if user.IsAdmin != 1 {
-		log.Warn("当前用户非管理员",
-			log.String("username", username),
-			log.Int("is_admin", user.IsAdmin),
-		)
-		return errors.WithCode(code.ErrPermissionDenied, "当前用户（%s）非管理员", username)
+		return errors.WithCode(code.ErrNotAdministrator, "当前用户（%s）非管理员", username)
 	}
 
 	return nil

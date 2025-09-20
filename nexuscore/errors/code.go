@@ -253,6 +253,8 @@ var codeConstNames = map[int]string{
 	110005: "ErrInternal",
 	110006: "ErrResourceConflict",
 	110007: "ErrInternalServer",
+	110008: "ErrNotAdministrator",
+	110009: "ErrUserDisabled",
 
 	// iam-apiserver 密钥模块
 	110101: "ErrReachMaxCount",

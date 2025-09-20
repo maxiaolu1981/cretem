@@ -136,6 +136,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"golang.org/x/term"
 )
 
@@ -150,15 +151,15 @@ const (
 	TestUsername  = "admin"
 	ValidPassword = "Admin@2021"
 
-	RespCodeSuccess    = 0
+	RespCodeSuccess    = 100001
 	RespCodeNotFound   = 110001 // 根据实际系统调整为110001
-	RespCodeForbidden  = 100403
+	RespCodeForbidden  = 110009 //无权访问
 	RespCodeValidation = 100400
 
-	ConcurrentUsers       = 1
-	RequestsPerUser       = 1
+	ConcurrentUsers       = 1000
+	RequestsPerUser       = 1000
 	RequestInterval       = 50 * time.Millisecond
-	BatchSize             = 1
+	BatchSize             = 1000
 	HotUserRequestPercent = 50 // 热点用户请求百分比
 	InvalidRequestPercent = 20 //无效请求百分比
 
@@ -232,7 +233,6 @@ var (
 		"retry_test_user",
 		"retry_test_user1",
 		"retry_test_user2",
-		"test_user_123",
 		"user_0_1001_372873",
 		"user_0_1004_729522",
 		"user_0_1008_40490",
@@ -261,10 +261,8 @@ var (
 		"user_0_105_563522",
 		"user_0_105_854544",
 		"user_0_1060_18629",
-		"user_0_极速用户_1055_170812",
 		"user_0_1060_82786",
 		"user_0_1060_853609",
-		"user_0_极速用户_1064_214329",
 		"user_0_1066_569808",
 		"user_0_1066_629549",
 		"user_0_1067_997672",
@@ -273,7 +271,6 @@ var (
 		"user_0_1072_324189",
 		"user_0_1073_283199",
 		"user_0_1073_391458",
-		"极速用户_0_1076_621366",
 		"user_0_1076_764703",
 		"user_0_1078_365884",
 		"user_0_1078_653618",
@@ -284,7 +281,7 @@ var (
 	predefinedHotUser = "admin"
 
 	// 预定义的无权限用户
-	predefinedUnauthorizedUser = "guest_user"
+	predefinedUnauthorizedUser = "test_user_123"
 
 	// 预定义的无效用户列表
 	predefinedInvalidUsers = []string{
@@ -655,14 +652,13 @@ func TestSingleUserGetConcurrent(t *testing.T) {
 	})
 }
 
-// testSingleUserGetRequest 执行单个用户查询请求
 func testSingleUserGetRequest(t *testing.T, userID int, ctx *TestContext) (bool, bool, *APIResponse, int, int) {
 	var targetUserID string
 	var expectedHTTP int
 	var expectedBiz int
 	isExpectedFailure := false
 
-	// 随机决定请求类型（保持不变）
+	// 随机决定请求类型
 	randNum := rand.IntN(100)
 	switch {
 	case randNum < HotUserRequestPercent:
@@ -673,12 +669,12 @@ func testSingleUserGetRequest(t *testing.T, userID int, ctx *TestContext) (bool,
 		targetUserID = invalidUserIDs[rand.IntN(len(invalidUserIDs))]
 		expectedHTTP = http.StatusNotFound
 		expectedBiz = RespCodeNotFound
-		isExpectedFailure = true // 标记为预期失败
+		isExpectedFailure = true
 	case randNum < HotUserRequestPercent+InvalidRequestPercent+10:
 		targetUserID = unauthorizedUser
 		expectedHTTP = http.StatusForbidden
 		expectedBiz = RespCodeForbidden
-		isExpectedFailure = true // 标记为预期失败
+		isExpectedFailure = true
 	default:
 		targetUserID = validUserIDs[rand.IntN(len(validUserIDs))]
 		expectedHTTP = http.StatusOK
@@ -686,45 +682,52 @@ func testSingleUserGetRequest(t *testing.T, userID int, ctx *TestContext) (bool,
 	}
 
 	apiPath := fmt.Sprintf(SingleUserPath, targetUserID)
-	startTime := time.Now()
+
 	resp, err := sendTokenRequest(ctx, http.MethodGet, apiPath, nil)
-	duration := time.Since(startTime)
 
 	if err != nil {
 		t.Logf("请求失败: %v", err)
 		return false, false, nil, expectedHTTP, expectedBiz
 	}
 
-	// ========== 修正的验证逻辑 ==========
-	success := true
+	// ========== 正确的验证逻辑 ==========
+	success := (resp.HTTPStatus == expectedHTTP) && (resp.Code == expectedBiz)
 
-	// 1. 首先检查HTTP状态码
-	if resp.HTTPStatus != expectedHTTP {
-		success = false
-		t.Logf("HTTP状态码不符: 期望 %d, 实际 %d", expectedHTTP, resp.HTTPStatus)
-	}
-
-	// 2. 检查业务码（只有在HTTP状态码正确时才检查）
-	if success && resp.Code != expectedBiz {
-		success = false
-		t.Logf("业务码不符: 期望 %d, 实际 %d", expectedBiz, resp.Code)
-	}
-
-	// 3. 对于预期失败的请求（如404），即使验证失败也不算意外
-	if !success && isExpectedFailure {
-		// HTTP状态码或业务码不符合预期，但这是预期会失败的请求
-		// 仍然标记为预期失败，不算意外错误
-		isExpectedFailure = true
-	} else if !success {
-		// 非预期失败的请求验证失败，算意外错误
+	// 关键修正：如果验证失败，就不是预期失败
+	if !success {
 		isExpectedFailure = false
 	}
 	// ===================================
 
-	logRequestDetail(t, targetUserID, expectedHTTP, resp.HTTPStatus,
-		expectedBiz, resp.Code, duration, success, isExpectedFailure)
-
+	// 使用更简洁但完整的日志格式
+	log.Warnf("调试: 用户=%-15s 类型=%-4s 期望HTTP=%-3d 实际HTTP=%-3d 成功=%-5v",
+		truncateString(targetUserID, 15),
+		getShortRequestType(randNum),
+		expectedHTTP, resp.HTTPStatus,
+		success)
 	return success, isExpectedFailure, resp, expectedHTTP, expectedBiz
+}
+
+// 辅助函数：截断字符串
+func truncateString(s string, length int) string {
+	if len(s) <= length {
+		return s
+	}
+	return s[:length]
+}
+
+// 辅助函数：简化的请求类型
+func getShortRequestType(randNum int) string {
+	switch {
+	case randNum < HotUserRequestPercent:
+		return "热点"
+	case randNum < HotUserRequestPercent+InvalidRequestPercent:
+		return "无效"
+	case randNum < HotUserRequestPercent+InvalidRequestPercent+10:
+		return "权限"
+	default:
+		return "随机"
+	}
 }
 
 // ==================== 并发测试框架 ====================
@@ -1025,20 +1028,6 @@ func printPerformanceReport(stats *PerformanceStats, testName string) {
 }
 
 // ==================== 其他测试函数 ====================
-func logRequestDetail(t *testing.T, userID string, expectedHTTP, actualHTTP int, expectedBiz, actualBiz int, duration time.Duration, success, isExpectedFailure bool) {
-	status := "✅"
-	if !success {
-		if isExpectedFailure {
-			status = "🟡"
-		} else {
-			status = "🔴"
-		}
-	}
-
-	t.Logf("%s 请求用户: %s, 期望HTTP: %d, 实际HTTP: %d, 期望业务码: %d, 实际业务码: %d, 耗时: %v, 预期失败: %v",
-		status, userID, expectedHTTP, actualHTTP, expectedBiz, actualBiz, duration, isExpectedFailure)
-
-}
 
 // TestSingleUserGetCachePenetration 缓存击穿测试
 func TestSingleUserGetCachePenetration(t *testing.T) {

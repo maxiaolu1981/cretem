@@ -20,8 +20,8 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 
 	//1.布隆过滤器检查（快速路径）
 	if !u.BloomFilter.TestString(username) {
-		logger.Debug("用户名经布隆过滤器验证肯定不存在，直接返回")
-		return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在%s", username)
+		err := errors.WithCode(code.ErrUserNotFound, "用户不存在%s", username)
+		return nil, err
 	}
 
 	cacheKey := u.generateUserCacheKey(username)
@@ -31,23 +31,18 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 	if err != nil {
 		logger.Warnw("缓存查询失败，降级到数据库查询", "error", err.Error())
 	} else if cachedUser != nil {
-		logger.Debug("从缓存命中用户数据")
 		return cachedUser, nil
 	}
 
 	//3.使用singleflight防止缓存击穿
-	result, err, shared := u.group.Do(cacheKey, func() (interface{}, error) {
+	result, err, _ := u.group.Do(cacheKey, func() (interface{}, error) {
 		ctx, cancel := context.WithTimeout(ctx, u.Options.ServerRunOptions.CtxTimeout)
 		defer cancel()
 		return u.getUserWithCache(ctx, username, cacheKey, opts, opt)
 	})
-
 	if err != nil {
+		logger.Error(err.Error())
 		return nil, err
-	}
-
-	if shared {
-		logger.Debug("singleflight合并了并发请求")
 	}
 
 	return result.(*v1.User), nil

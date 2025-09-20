@@ -73,6 +73,8 @@ func init() {
 	register(ErrInternal, 500, "用户模块内部逻辑错误")             // 500：服务端用户模块错误
 	register(ErrResourceConflict, 409, "用户资源冲突（如角色已绑定）") // 409：用户相关资源冲突
 	register(ErrInternalServer, 500, "用户模块服务器内部错误")      // 500：服务端底层错误
+	register(ErrNotAdministrator, 403, "当前用户非管理员")       // 500：服务端底层错误
+	register(ErrUserDisabled, 403, "用户已经失效")
 
 	// 6. iam-apiserver 密钥模块（1101xx）
 	register(ErrReachMaxCount, 400, "密钥数量达到上限（最多支持 10 个）") // 400：客户端请求超出限制

@@ -45,7 +45,7 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 
 		// 2. 将错误解析为自定义错误编码结构（包含业务码、HTTP状态码等）
 		coder := errors.ParseCoderByErr(err)
-		log.Debugf("core:返回的业务码%v", coder.Code())
+		//log.Debugf("core:返回的业务码%v", coder.Code())
 
 		// 设置错误码到上下文（供Prometheus中间件使用）
 		c.Set("error_code", coder.Code())

@@ -26,8 +26,12 @@ const (
 	// ErrResourceConflict - 409: 用户资源冲突
 	ErrResourceConflict // 110006
 
-	// ErrInternalServer - 500: 用户模块服务器内部错误
-	ErrInternalServer // 110007
+	//ErrInternalServer - 500: 用户模块服务器内部错误
+	ErrInternalServer   // 110007
+	//ErrNotAdministrator - 403 
+	ErrNotAdministrator // 110008 //不是管理员
+	//ErrNotAdministrator - 403   
+	ErrUserDisabled     //110009 //用户已经失效
 )
 
 // iam-apiserver密钥模块错误（1101xx）：服务11 + 模块01 + 序号

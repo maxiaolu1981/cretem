@@ -135,7 +135,6 @@ func GetMiddlewares(opt *options.Options) map[string]gin.HandlerFunc {
 		middlewares[k] = v
 	}
 
-	log.Warnf("目前环境是%s")
 	var envSpecific map[string]gin.HandlerFunc
 
 	switch opt.ServerRunOptions.Env {

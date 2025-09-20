@@ -41,7 +41,7 @@ func (u *UserController) Get(ctx *gin.Context) {
 		"resource_id", username,
 		"user_agent", ctx.Request.UserAgent(),
 	)
-	logger.Debugf("开始处理用户查询请求(单资源)")
+	//logger.Debugf("开始处理用户查询请求(单资源)")
 	errs := u.validateGetOptions(&r)
 	if len(errs) > 0 {
 		errDetails := make(map[string]string, len(errs))
@@ -50,13 +50,14 @@ func (u *UserController) Get(ctx *gin.Context) {
 		}
 		detailStr := fmt.Sprintf("参数错误:%+v", errDetails)
 		err := errors.WrapC(nil, code.ErrInvalidParameter, "%s", detailStr)
+		logger.Errorf("%v", err.Error())
 		core.WriteResponse(ctx, err, nil)
 		return
 	}
 
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errMsg := strings.Join(errs, ":")
-		log.Warnw("用户名参数校验失败:", "error", errMsg)
+		log.Errorf("用户名参数校验失败:", "error", errMsg)
 		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errMsg), nil)
 		return
 	}
@@ -64,9 +65,7 @@ func (u *UserController) Get(ctx *gin.Context) {
 	c := ctx.Request.Context()
 	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{}, u.options)
 	if err != nil {
-		log.Debugw("查询用户失败", "username:", username, "error:", err.Error())
-		coder := errors.ParseCoderByErr(err)
-		log.Debugf("cotrol:返回的业务码%v", coder.Code())
+		log.Errorf("查询用户%s失败,错误:%v", username, err.Error())
 		core.WriteResponse(ctx, err, nil)
 		return
 	}
