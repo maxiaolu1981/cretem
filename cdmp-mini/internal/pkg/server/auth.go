@@ -21,6 +21,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
 
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
@@ -48,13 +49,20 @@ func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 	return auth.NewBasicStrategy(func(username string, password string) bool {
 		start := time.Now()
 		// 防止用户枚举无效登录
-		if !g.BloomFilter.TestString(username) {
-			elapsed := time.Since(start)
-			targetDelay := 150 * time.Millisecond
-			if elapsed < targetDelay {
-				time.Sleep(targetDelay - elapsed)
+		bloom, err := bloomfilter.GetFilter()
+		if err != nil {
+			log.Errorf("加载bloom服务失败%v", err)
+		}
+
+		if bloom != nil {
+			if !bloom.Test("username", username) {
+				elapsed := time.Since(start)
+				targetDelay := 150 * time.Millisecond
+				if elapsed < targetDelay {
+					time.Sleep(targetDelay - elapsed)
+				}
+				return false
 			}
-			return false
 		}
 		//找到了
 		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{}, g.options)
@@ -221,12 +229,18 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	}
 
 	// 新增：使用布隆过滤器快速检查用户名是否存在
-	if !g.BloomFilter.TestString(login.Username) {
-		// 布隆过滤器确认用户名肯定不存在
-		log.Warnf("登录失败：用户名不存在（布隆过滤器验证）: username=%s", login.Username)
-		err := errors.WithCode(code.ErrUserNotFound, "用户不存在")
-		recordErrorToContext(c, err)
-		return nil, err
+	bloom, err := bloomfilter.GetFilter()
+	if err != nil {
+		log.Errorf("加载bloom服务失败%v", err)
+	}
+	if bloom != nil {
+		if !bloom.Test("username", login.Username) {
+			// 布隆过滤器确认用户名肯定不存在
+			log.Warnf("登录失败：用户名不存在（布隆过滤器验证）: username=%s", login.Username)
+			err := errors.WithCode(code.ErrUserNotFound, "用户不存在")
+			recordErrorToContext(c, err)
+			return nil, err
+		}
 	}
 
 	//检查登录异常
@@ -569,7 +583,13 @@ func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context)
 
 		start := time.Now()
 		path := c.Request.URL.Path
-		if !g.BloomFilter.TestString(u) {
+
+		bloom, err := bloomfilter.GetFilter()
+		if err != nil {
+			log.Errorf("加载bloom服务失败%v", err)
+		}
+        if bloom != nil{
+		if !bloom.Test("username", u) {
 			// 布隆过滤器判定用户不存在，模拟一个数据库查询的耗时
 			elapsed := time.Since(start)
 			targetDelay := 150 * time.Millisecond // 模拟的耗时
@@ -578,6 +598,7 @@ func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context)
 			}
 			return false
 		}
+	}
 		user, err := interfaces.Client().Users().Get(c, u, metav1.GetOptions{}, g.options)
 		if err != nil {
 			elapsed := time.Since(start)
@@ -654,13 +675,23 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire 
 	}
 
 	//加日志：记录当前响应函数被调用
-	core.WriteResponse(c, nil, map[string]string{
-		"access_token":  atToken,
-		"refresh_token": refreshToken,
-		"expire":        expire.Format(time.RFC3339),
-		"token_type":    "Bearer",
+	// core.WriteResponse(c, nil, map[string]string{
+	// 	"access_token":  atToken,
+	// 	"refresh_token": refreshToken,
+	// 	"expire":        expire.Format(time.RFC3339),
+	// 	"token_type":    "Bearer",
+	// })
+	core.WriteResponse(c, nil, gin.H{
+		"code":    0,
+		"message": "登录成功",
+		"data": map[string]string{
+			"access_token":  atToken,
+			"refresh_token": refreshToken,
+			"expire":        expire.Format(time.RFC3339),
+			"token_type":    "Bearer",
+		},
 	})
-	log.Debugf("正确退出调用方法:%s", c.HandlerName())
+
 }
 
 func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {

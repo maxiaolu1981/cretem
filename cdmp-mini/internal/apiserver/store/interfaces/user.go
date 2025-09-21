@@ -17,4 +17,5 @@ type UserStore interface {
 	Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error)
 	List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error)
 	ListAllUsernames(ctx context.Context) ([]string, error)
+	ListAll(ctx context.Context, username string) (*v1.UserList, error)
 }

@@ -13,20 +13,19 @@ import (
 	"strings"
 	"time"
 
-	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
-	"gorm.io/gorm"
-
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	mysql "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
+	bloomOptions "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"golang.org/x/sync/errgroup"
+	"gorm.io/gorm"
 )
 
 // 全局变量存储Redis客户端（用于监控）
@@ -41,10 +40,7 @@ type GenericAPIServer struct {
 	options        *options.Options
 	redis          *storage.RedisCluster
 	redisCancel    context.CancelFunc
-	BloomFilter    *bloom.BloomFilter
-	BloomMutex     sync.RWMutex
 	initOnce       sync.Once
-	initErr        error
 	producer       *UserProducer
 	consumerCtx    context.Context
 	consumerCancel context.CancelFunc
@@ -60,11 +56,9 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 
 	//创建服务器实例
 	g := &GenericAPIServer{
-		Engine:      gin.New(),
-		options:     opts,
-		BloomFilter: bloom.NewWithEstimates(1000000, 0.001),
-		BloomMutex:  sync.RWMutex{},
-		initOnce:    sync.Once{},
+		Engine:   gin.New(),
+		options:  opts,
+		initOnce: sync.Once{},
 	}
 
 	//设置gin运行模式
@@ -89,21 +83,21 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 	log.Info("redis服务器初始化成功")
 
-	//初始化boolm
-	log.Info("正在初始化boolm服务")
-	g.initBloomFiliter()
-	if g.initErr != nil {
-		log.Warnf("初始化boolm失败%v", g.initErr)
-	}
-	log.Info("初始化boolm服务成功")
-
-	//安装中间件
-	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
-		return nil, err
+	// 使用默认配置懒初始化
+	config := map[string]*bloomOptions.BloomFilterOptions{
+		"user_id":  {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
+		"username": {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
+		"email":    {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
+		"phone":    {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
 	}
 
-	//. 安装路由
-	g.installRoutes()
+	log.Info("开始初始化bloom服务")
+	bloomErr := bloomfilter.Init(config) // 或者传入配置
+	if bloomErr != nil {
+		log.Warnf("初始化bloom失败: %v", bloomErr)
+		return nil, bloomErr
+	}
+	log.Info("初始化bloom服务成功")
 
 	// 初始化Kafka生产者和消费者
 	if err := g.initKafkaComponents(dbIns); err != nil {
@@ -121,33 +115,15 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 
 	log.Info("所有Kafka消费者已启动")
 
+	//安装中间件
+	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
+		return nil, err
+	}
+
+	//. 安装路由
+	g.installRoutes()
+
 	return g, nil
-}
-
-func (g *GenericAPIServer) initBloomFiliter() error {
-	// 使用sync.Once确保只执行一次初始化
-
-	g.initOnce.Do(func() {
-		g.BloomMutex.Lock()
-		defer g.BloomMutex.Unlock()
-		// 从数据库加载所有用户名
-		users, err := interfaces.Client().Users().ListAllUsernames(context.TODO())
-		if err != nil {
-			g.initErr = errors.WithCode(code.ErrDatabase, "从数据库加载用户名失败:加载boom失效 %v", err)
-			return
-		}
-		if len(users) == 0 {
-			log.Debug("目前没有任何用户记录,未初始化布隆过滤器")
-			return
-		}
-
-		for _, name := range users {
-			g.BloomFilter.AddString(name)
-		}
-
-		log.Debugf("Bloom filter initialized with %d usernames", len(users))
-	})
-	return nil
 }
 
 func (g *GenericAPIServer) configureGin() error {
@@ -295,17 +271,17 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	log.Info("初始化创建消费者...")
 	createConsumer := NewUserConsumer(brokers, UserCreateTopic, "user-create-group", db, g.redis)
 	createConsumer.SetProducer(userProducer)
-	createConsumer.SetBloomFilter(g.BloomFilter)
+
 
 	log.Info("初始化更新消费者...")
 	updateConsumer := NewUserConsumer(brokers, UserUpdateTopic, "user-update-group", db, g.redis)
 	updateConsumer.SetProducer(userProducer)
-	updateConsumer.SetBloomFilter(g.BloomFilter)
+
 
 	log.Info("初始化删除消费者...")
 	deleteConsumer := NewUserConsumer(brokers, UserDeleteTopic, "user-delete-group", db, g.redis)
 	deleteConsumer.SetProducer(userProducer)
-	deleteConsumer.SetBloomFilter(g.BloomFilter)
+	
 
 	log.Info("初始化重试消费者...")
 	retryConsumer := NewRetryConsumer(brokers, db, g.redis, userProducer)

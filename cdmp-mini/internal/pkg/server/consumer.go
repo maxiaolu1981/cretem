@@ -9,8 +9,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -19,14 +19,12 @@ import (
 )
 
 type UserConsumer struct {
-	reader      *kafka.Reader
-	db          *gorm.DB
-	BloomFilter *bloom.BloomFilter
-	BloomMutex  sync.RWMutex
-	redis       *storage.RedisCluster
-	producer    *UserProducer
-	topic       string
-	groupID     string
+	reader   *kafka.Reader
+	db       *gorm.DB
+	redis    *storage.RedisCluster
+	producer *UserProducer
+	topic    string
+	groupID  string
 }
 
 func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
@@ -54,10 +52,6 @@ func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis
 
 func (c *UserConsumer) SetProducer(producer *UserProducer) {
 	c.producer = producer
-}
-
-func (c *UserConsumer) SetBloomFilter(bloomFilter *bloom.BloomFilter) {
-	c.BloomFilter = bloomFilter
 }
 
 func (c *UserConsumer) Close() error {
@@ -209,8 +203,13 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		log.Errorw("缓存写入失败", "username", user.Name, "error", err)
 	}
 
-	if c.BloomFilter != nil {
-		c.BloomFilter.AddString(user.Name)
+	bloom, err := bloomfilter.GetFilter()
+	if err != nil {
+		log.Warnf("初始化boolm失败%v", err)
+	}
+
+	if bloom != nil {
+		bloom.Add("username", user.Name)
 		log.Debugf("用户添加到布隆过滤器: username=%s", user.Name)
 	}
 

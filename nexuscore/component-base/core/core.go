@@ -93,7 +93,7 @@ type SuccessResponse struct {
 //   - data: 业务数据（如单条用户记录）
 func WriteSuccessResponse(c *gin.Context, message string, data interface{}) {
 	// 成功响应HTTP状态码固定为200 OK（符合RESTful规范）
-	c.JSON(http.StatusOK, SuccessResponse{
+	c.JSON(http.StatusCreated, SuccessResponse{
 		Code:    100001,  // 成功码固定为0，区别于错误码（如100004）
 		Message: message, // 自定义成功提示（语义化）
 		Data:    data,    // 单资源数据（如过滤后的用户对象）

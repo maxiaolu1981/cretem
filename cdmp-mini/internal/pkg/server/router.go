@@ -64,7 +64,7 @@ func (g *GenericAPIServer) installSystemRoutes() error {
 				"status": "ok"})
 		})
 	}
-   
+
 	g.GET("/test-all-metrics", func(c *gin.Context) {
 		// 测试所有业务指标
 		metrics.BusinessSuccess.WithLabelValues("test_create").Inc()
@@ -200,10 +200,7 @@ func (g *GenericAPIServer) installApiRoutes() error {
 		{
 			userController, err := user.NewUserController(storeIns,
 				g.redis, g.options,
-				g.BloomFilter,
-				&g.BloomMutex,
-				g.producer,
-			)
+				g.producer)
 			if err != nil {
 				return err
 			}

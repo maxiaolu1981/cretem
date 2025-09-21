@@ -1,8 +1,10 @@
 package user
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
@@ -63,12 +65,31 @@ func (u *UserController) Get(ctx *gin.Context) {
 	}
 
 	c := ctx.Request.Context()
+	// 如果没有设置超时，添加默认超时
+	// 使用HTTP请求的超时配置，而不是Redis超时
+	if _, hasDeadline := c.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		// 使用ServerRunOptions中的请求超时时间
+		requestTimeout := u.options.ServerRunOptions.CtxTimeout
+		if requestTimeout == 0 {
+			requestTimeout = 30 * time.Second // 默认30秒
+		}
+		c, cancel = context.WithTimeout(c, requestTimeout)
+		defer cancel()
+	}
+
 	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{}, u.options)
 	if err != nil {
-		log.Errorf("查询用户%s失败,错误:%v", username, err.Error())
+		//log.Errorf("查询用户%s失败,错误:%v", username, err.Error())
 		core.WriteResponse(ctx, err, nil)
 		return
 	}
+	if user == nil {
+		// 用户不存在（业务正常状态）
+		core.WriteResponse(ctx, errors.WithCode(code.ErrUserNotFound, "用户不存在"), nil)
+		return
+	}
+
 	publicUser := v1.ConvertToPublicUser(user)
 	log.Info("用户查询成功")
 	core.WriteSuccessResponse(ctx, "查询用户详情成功", publicUser)

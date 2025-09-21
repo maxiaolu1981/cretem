@@ -5,14 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 
-	"github.com/bits-and-blooms/bloom/v3"
+	"github.com/go-redis/redis/v8"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -24,13 +24,11 @@ import (
 )
 
 type UserService struct {
-	Store       interfaces.Factory
-	Redis       *storage.RedisCluster
-	Options     *options.Options
-	BloomFilter *bloom.BloomFilter
-	BloomMutex  *sync.RWMutex
-	Producer    producer.MessageProducer
-	group       singleflight.Group
+	Store    interfaces.Factory
+	Redis    *storage.RedisCluster
+	Options  *options.Options
+	Producer producer.MessageProducer
+	group    singleflight.Group
 }
 
 // NewUserService 创建用户服务实例
@@ -57,27 +55,45 @@ type UserSrv interface {
 // 业务方法：检查用户名是否可能存在
 func (us *UserService) UsernameMightExist(username string) bool {
 	// 使用字符串专用的便捷方法
-	return us.BloomFilter.TestString(username)
+	bloom, err := bloomfilter.GetFilter()
+	if err != nil {
+		log.Errorf("加载bloom服务失败%v", err)
+	}
+	if bloom != nil {
+		return bloom.Test("username", username)
+	}
+	return false
 }
 
 // getFromCache 从Redis获取缓存数据
-func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.User, error) {
+func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.User, bool, error) {
+	log.Errorf("缓存查询开始: key=%s", cacheKey)
+
 	data, err := u.Redis.GetKey(ctx, cacheKey)
+	log.Errorf("缓存查询结果: key=%s, data='%s', err=%v", cacheKey, data, err)
+
 	if err != nil {
-		return nil, errors.WithCode(code.ErrRedisFailed, "查询缓存失败")
-	}
-	// 检查是否是空值标记
-	if data == "" {
-		return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在")
+		if errors.Is(err, redis.Nil) {
+			log.Errorf("缓存键不存在: key=%s", cacheKey)
+			return nil, false, nil
+		}
+		log.Errorf("缓存查询失败: key=%s, err=%v", cacheKey, err)
+		return nil, false, err
 	}
 
+	if data == "" {
+		log.Errorf("空值缓存命中: key=%s", cacheKey)
+		return nil, true, nil
+	}
+
+	log.Errorf("用户数据缓存命中: key=%s, data=%s", cacheKey, data)
 	// 反序列化用户数据
 	var user v1.User
 	if err := json.Unmarshal([]byte(data), &user); err != nil {
-		return nil, errors.WithCode(code.ErrDecodingFailed, "数据解码失败")
+		return nil, false, errors.WithCode(code.ErrDecodingFailed, "数据解码失败")
 	}
 
-	return &user, nil
+	return &user, true, nil
 }
 
 // getUserFromDBAndSetCache 带缓存的用户查询核心逻辑
@@ -87,24 +103,21 @@ func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, ca
 	// 1. 查询数据库
 	user, err := u.Store.Users().Get(ctx, username, opts, u.Options)
 	if err != nil {
-		logger.Debugw("数据库查询失败", "username", username, "error", err.Error())
+		if errors.IsCode(err, code.ErrUserNotFound) {
+			metrics.DBQueries.WithLabelValues("not_found").Inc()
+			// 用户不存在，缓存空值（防止缓存击穿）
+			if err := u.cacheNullValue(ctx, cacheKey); err != nil {
+				logger.Warnw("缓存空值失败", "error", err.Error())
+			}
+			return nil, err
+		}
 		return nil, err
 	}
 
-	//1.处理用户不存在的情况（防缓存穿透）
-	if user == nil {
-		metrics.DBQueries.WithLabelValues("not_found").Inc()
-		// 缓存空值，短暂过期时间
-		logger.Debugw("用户不存在，缓存空值", "username", username)
-		u.cacheNullValue(ctx, cacheKey)
-		return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在%s", username)
-	}
-
-	//2.写入缓存（带随机过期时间防雪崩）
+	//写入缓存（带随机过期时间防雪崩）
 	logger.Debugw("用户存在，设置缓存", "username", username)
 	if err := u.setUserCache(ctx, cacheKey, user); err != nil {
 		logger.Warnw("写入缓存失败", "error", err.Error())
-		// 不返回错误，继续返回数据
 	}
 
 	return user, nil
@@ -129,16 +142,17 @@ func (u *UserService) setUserCache(ctx context.Context, cacheKey string, user *v
 	expireTime := baseExpire + randomExpire
 
 	if err := u.Redis.SetKey(ctx, cacheKey, string(data), expireTime); err != nil {
-		log.L(ctx).Warnw("缓存写入失败", "error", err.Error())
+		log.L(ctx).Errorf("缓存写入失败", "error", err.Error())
 	}
 	return nil
 }
 
 // cacheNullValue 缓存空值（防穿透）
-func (u *UserService) cacheNullValue(ctx context.Context, cacheKey string) {
+func (u *UserService) cacheNullValue(ctx context.Context, cacheKey string) error {
 	// 短暂缓存空值，防止穿透
-	expiration := time.Duration(2+rand.Intn(3)) * time.Minute
-	u.Redis.SetKey(ctx, cacheKey, "null", expiration)
+	cacheKey = "genericapiserver:" + cacheKey
+	_, err := u.Redis.SetNX(ctx, cacheKey, "", 24*time.Hour) // 24小时过期
+	return err
 }
 
 func (u *UserService) generateUserCacheKey(username string) string {

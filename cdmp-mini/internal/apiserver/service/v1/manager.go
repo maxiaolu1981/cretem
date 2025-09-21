@@ -46,12 +46,10 @@ func (s *ServiceSrv) Policies() policy.PolicySrv {
 
 func NewUsers(s *ServiceSrv) *user.UserService {
 	return &user.UserService{
-		Store:       s.Store,
-		Redis:       s.Redis,
-		Options:     s.Options,
-		BloomFilter: s.BloomFilter,
-		BloomMutex:  s.BloomMutex,
-		Producer:    s.producer,
+		Store:    s.Store,
+		Redis:    s.Redis,
+		Options:  s.Options,
+		Producer: s.producer,
 	}
 }
 func NewSecrets(s *ServiceSrv) *secret.SecretService {
@@ -73,16 +71,13 @@ func NewPolicies(s *ServiceSrv) *policy.PolicService {
 func NewService(store interfaces.Factory,
 	redis *storage.RedisCluster,
 	options *options.Options,
-	bloomFilter *bloom.BloomFilter,
-	bloomMutex *sync.RWMutex, producer producer.MessageProducer) (ServiceManager, error) {
+	producer producer.MessageProducer) (ServiceManager, error) {
 	// 初始化布隆过滤器（根据预期用户数量配置）
 	s := &ServiceSrv{
-		Store:       store,
-		Redis:       redis,
-		Options:     options,
-		BloomFilter: bloomFilter,
-		BloomMutex:  bloomMutex,
-		producer:    producer,
+		Store:    store,
+		Redis:    redis,
+		Options:  options,
+		producer: producer,
 	}
 	// 添加调试信息
 	log.Debugw("service:Producer类型信息",

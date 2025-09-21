@@ -17,6 +17,8 @@ import (
 	"time"
 
 	redisV8 "github.com/go-redis/redis/v8"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
+
 	"golang.org/x/term"
 )
 
@@ -36,10 +38,10 @@ const (
 	RespCodeValidation = 100400
 	RespCodeConflict   = 100409
 
-	ConcurrentUsers = 1                      // 修改：降低并发数，逐步增加
-	RequestsPerUser = 1                      // 修改：减少每个用户的请求数
+	ConcurrentUsers = 100                    // 修改：降低并发数，逐步增加
+	RequestsPerUser = 100                    // 修改：减少每个用户的请求数
 	RequestInterval = 100 * time.Millisecond // 修改：增加请求间隔
-	BatchSize       = 500                    // 新增：批次大小
+	BatchSize       = 20                     // 新增：批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -192,7 +194,12 @@ func TestCase_CreateUserSuccess_Concurrent(t *testing.T) {
 
 		// 验证响应
 		success := createResp.HTTPStatus == http.StatusCreated && createResp.Code == RespCodeSuccess
-
+		log.Errorf("调试: 用户=%v  期望HTTP=%v 期望业务码=%v 实际HTTP=%v  实际业务码=%v",
+			userID,
+			http.StatusCreated,
+			RespCodeSuccess,
+			createResp.HTTPStatus,
+			createResp.Code)
 		duration := time.Since(start)
 		if !success {
 			t.Logf("用户请求 %d 创建失败: HTTP=%d, Code=%d, Message=%s, 耗时: %v",
@@ -261,9 +268,10 @@ func login(username, password string) (*TestContext, *APIResponse, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, &apiResp, fmt.Errorf("登录失败: HTTP %d", resp.StatusCode)
 	}
-
+	//log.Errorf("响应格式错误%+v", apiResp)
 	tokenData, ok := apiResp.Data.(map[string]interface{})
 	if !ok {
+
 		return nil, &apiResp, fmt.Errorf("响应格式错误")
 	}
 
@@ -314,13 +322,6 @@ func sendTokenRequest(ctx *TestContext, method, path string, body io.Reader) (*A
 func generateValidUserName(userID int) string {
 	timestamp := time.Now().UnixNano() % 10000
 	return fmt.Sprintf("user_%d_%d_%d", userID, timestamp, rand.IntN(1000000))
-}
-
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
 }
 
 func min(a, b int) int {

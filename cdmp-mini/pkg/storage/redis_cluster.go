@@ -14,7 +14,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
-	uuid "github.com/satori/go.uuid"
 	"github.com/spf13/viper"
 )
 
@@ -91,23 +90,42 @@ type RedisCluster struct {
 }
 
 func clusterConnectionIsOpen(cluster RedisCluster) bool {
+	// c := singleton(cluster.IsCache)
+	// if c == nil {
+	// 	log.Warn("clusterConnectionIsOpen: client instance is nil")
+	// 	return false
+	// }
+
+	// ctx := context.Background()
+	// testKey := "redis-test-" + uuid.Must(uuid.NewV4()).String()
+	// if err := c.Set(ctx, testKey, "test", time.Second).Err(); err != nil {
+	// 	log.Warnf("Error trying to set test key: %s", err.Error())
+	// 	return false
+	// }
+	// if _, err := c.Get(ctx, testKey).Result(); err != nil {
+	// 	log.Warnf("Error trying to get test key: %s", err.Error())
+	// 	return false
+	// }
+	//return true
 	c := singleton(cluster.IsCache)
 	if c == nil {
 		log.Warn("clusterConnectionIsOpen: client instance is nil")
 		return false
 	}
 
-	ctx := context.Background()
-	testKey := "redis-test-" + uuid.Must(uuid.NewV4()).String()
-	if err := c.Set(ctx, testKey, "test", time.Second).Err(); err != nil {
-		log.Warnf("Error trying to set test key: %s", err.Error())
-		return false
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	// 尝试多次Ping
+	for i := 0; i < 3; i++ {
+		if err := c.Ping(ctx).Err(); err == nil {
+			return true // 成功
+		}
+		time.Sleep(100 * time.Millisecond) // 短暂延迟后重试
 	}
-	if _, err := c.Get(ctx, testKey).Result(); err != nil {
-		log.Warnf("Error trying to get test key: %s", err.Error())
-		return false
-	}
-	return true
+
+	log.Warn("Redis cluster health check failed after 3 attempts")
+	return false
 }
 
 // ConnectToRedis starts a go routine that periodically tries to connect to redis.
@@ -364,22 +382,19 @@ func (r *RedisCluster) GetKey(ctx context.Context, keyName string) (string, erro
 	if err := r.Up(); err != nil {
 		return "", err
 	}
-
 	cluster := r.singleton()
 	fixedKey := r.fixKey(keyName)
-	log.Debugf("Redis GetKey: 原始键名=%s, fixKey后键名=%s", keyName, r.fixKey(keyName)) // 新增日志
 
-	value, err := cluster.Get(ctx, r.fixKey(keyName)).Result()
+	value, err := cluster.Get(ctx, fixedKey).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			// Key不存在是正常情况，返回空字符串而不是错误
-			log.Debugf("Key不存在: %s", fixedKey)
-			return "", nil
+			return "", redis.Nil // ✅ 明确返回redis.Nil表示key不存在
 		}
-		log.Debugf("无法从reids获取相关值,redis错误 %s", err.Error())
-		return "", err // 真正的错误才返回
+		return "", err
 	}
+
 	return value, nil
+
 }
 
 // GetMultiKey gets multiple keys from the database
@@ -490,8 +505,8 @@ func (r *RedisCluster) SetExp(ctx context.Context, keyName string, timeout time.
 
 // SetKey creates or updates a key-value pair
 func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, timeout time.Duration) error {
-	log.Debugf("[STORE] SET Raw key is: %s", keyName)
-	log.Debugf("[STORE] Setting key: %s", r.fixKey(keyName))
+	//log.Debugf("[STORE] SET Raw key is: %s", keyName)
+	//log.Debugf("[STORE] Setting key: %s", r.fixKey(keyName))
 
 	if err := r.Up(); err != nil {
 		return err
@@ -501,6 +516,7 @@ func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, time
 		log.Errorf("Error trying to set value: %s", err.Error())
 		return err
 	}
+	//log.Errorf("存储成功:key=%v", r.fixKey(keyName))
 	return nil
 }
 

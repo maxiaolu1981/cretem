@@ -101,7 +101,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		EnableMetrics:   true,
 		CookieDomain:    "",
 		CookieSecure:    false,
-		CtxTimeout:      5 * time.Second,
+		CtxTimeout:      30 * time.Second,
 		Env:             "development",
 	}
 }

@@ -155,8 +155,9 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 	if err := p.validateMessage(msg); err != nil {
 		return fmt.Errorf("invalid message: %v", err)
 	}
-
+	
 	err := p.writer.WriteMessages(ctx, sendMsg)
+
 	if err != nil {
 		log.Errorf("Topic %s 发送失败，尝试重试Topic. Key: %s", topic, string(msg.Key))
 		// 记录失败
