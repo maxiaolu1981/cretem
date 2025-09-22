@@ -18,8 +18,8 @@ import (
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/auth"           // 自定义库：密码加密与验证工具
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1" // 自定义库：元数据（如对象元信息、列表元信息）
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"    // 自定义库：实例ID生成工具
-	"gorm.io/gorm"                                                           // 第三方库：GORM ORM 框架
+	// 自定义库：实例ID生成工具
+	// 第三方库：GORM ORM 框架
 )
 
 // User 表示用户资源，同时作为 GORM 数据库模型（映射到数据库表）。
@@ -32,7 +32,6 @@ type User struct {
 
 	Status int `json:"status" gorm:"column:status" validate:"omitempty"` // 用户状态（如启用/禁用）
 
-	
 	Nickname string `json:"nickname" gorm:"column:nickname" validate:"omitempty,min=1,max=30"` // 用户昵称（1-30字符）
 
 	// Required: true（必填项）
@@ -45,7 +44,7 @@ type User struct {
 
 	IsAdmin int `json:"isAdmin,omitempty" gorm:"column:isAdmin" validate:"omitempty"` // 是否为管理员（0：否，1：是）
 
-	TotalPolicy int64 `json:"totalPolicy" gorm:"-" validate:"omitempty"` // 关联的策略总数（不映射到数据库字段）
+	TotalPolicy int64  `json:"totalPolicy" gorm:"-" validate:"omitempty"` // 关联的策略总数（不映射到数据库字段）
 	Role        string `json:"role" gorm:"-"`                             // 关联的策略总数（不映射到数据库字段）
 
 	LoginedAt time.Time `json:"loginedAt,omitempty" gorm:"column:loginedAt"` // 最后登录时间
@@ -80,13 +79,13 @@ func (u *User) Compare(pwd string) error {
 
 // AfterCreate 是 GORM 的钩子函数，在用户记录创建后执行。
 // 作用：生成并更新用户的实例 ID（InstanceID）。
-func (u *User) AfterCreate(tx *gorm.DB) error {
-	// 基于用户 ID 生成实例 ID（格式如 "user-xxx"）
-	u.InstanceID = idutil.GetInstanceID(u.ID, "user-")
+// func (u *User) AfterCreate(tx *gorm.DB) error {
+// 	// 基于用户 ID 生成实例 ID（格式如 "user-xxx"）
+// 	u.InstanceID = idutil.GetInstanceID(u.ID, "user-")
 
-	// 保存更新后的实例 ID 到数据库
-	return tx.Save(u).Error
-}
+// 	// 保存更新后的实例 ID 到数据库
+// 	return tx.Save(u).Error
+// }
 
 // 辅助函数：过滤敏感字段，返回前端可展示的用户信息
 func ConvertToPublicUser(rawUser *User) *PublicUser {

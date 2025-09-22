@@ -202,8 +202,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		log.Errorw("缓存写入失败", "username", user.Name, "error", err)
 	}
 
-	// 使用批量方式添加到布隆过滤器
-	//bloomfilter.SendBatchAddRequest("username", user.Name)
+	
 
 	log.Infof("用户创建成功: username=%s", user.Name)
 	return nil

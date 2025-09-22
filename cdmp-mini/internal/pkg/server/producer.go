@@ -136,6 +136,8 @@ func (p *UserProducer) validateMessage(msg kafka.Message) error {
 // sendWithRetry 带重试的发送逻辑
 func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
 	startTime := time.Now()
+	// 添加详细的发送日志
+	log.Errorf("准备发送消息到[测试丢失记录问题] %s: key=%s", topic, string(msg.Key))
 	operation := p.getOperationFromHeaders(msg.Headers)
 
 	// 记录发送尝试
@@ -178,7 +180,8 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 	// ✅ 修复：直接成功时记录成功指标
 	metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
 	metrics.MessageProcessingTime.WithLabelValues(topic, operation, "success").Observe(time.Since(startTime).Seconds())
-	log.Infow("消息成功发送到Topic", "topic", topic, "key", string(msg.Key))
+	log.Infof("发送成功: topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
+	metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
 	return nil
 }
 
@@ -257,8 +260,6 @@ func (p *UserProducer) calcNextRetryTS(retryCount int) time.Time {
 	}
 	return time.Now().Add(delay)
 }
-
-
 
 func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
 	operation := p.getOperationFromHeaders(msg.Headers)

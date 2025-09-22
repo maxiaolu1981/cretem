@@ -18,6 +18,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	mysql "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	bloomOptions "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
@@ -102,6 +103,10 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	log.Info("初始化bloom服务成功")
 
 	// 初始化Kafka生产者和消费者
+	if err := InitKafkaWithRetry(opts); err != nil {
+		return nil, errors.WithCode(code.ErrKafkaFailed, "kafka服务未启动")
+	}
+
 	if err := g.initKafkaComponents(dbIns); err != nil {
 		return nil, err
 	}
