@@ -21,6 +21,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	bloomOptions "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
@@ -97,6 +98,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		log.Warnf("初始化bloom失败: %v", bloomErr)
 		return nil, bloomErr
 	}
+
 	log.Info("初始化bloom服务成功")
 
 	// 初始化Kafka生产者和消费者

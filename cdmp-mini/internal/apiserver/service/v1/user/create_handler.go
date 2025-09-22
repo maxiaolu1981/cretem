@@ -48,7 +48,6 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 			}
 		} else {
 			metrics.RecordBloomFilterCheck("username", "miss", duration)
-			return nil
 		}
 	}
 

@@ -70,7 +70,7 @@ func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 			}
 		}
 
-		//找到了
+		// //找到了
 		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{}, g.options)
 		if err != nil {
 			elapsed := time.Since(start)
@@ -586,7 +586,7 @@ func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context)
 		start := time.Now()
 		path := c.Request.URL.Path
 
-		//检查bloom过滤器
+		// //检查bloom过滤器
 		bloom, err := bloomfilter.GetFilter()
 		if err != nil {
 			metrics.RecordBloomFilterCheck("username", "error", 0)
@@ -684,13 +684,6 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire 
 		log.Warnf("设置认证Cookie失败: %v", err)
 	}
 
-	//加日志：记录当前响应函数被调用
-	// core.WriteResponse(c, nil, map[string]string{
-	// 	"access_token":  atToken,
-	// 	"refresh_token": refreshToken,
-	// 	"expire":        expire.Format(time.RFC3339),
-	// 	"token_type":    "Bearer",
-	// })
 	core.WriteResponse(c, nil, gin.H{
 		"code":    0,
 		"message": "登录成功",

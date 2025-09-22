@@ -47,7 +47,7 @@ func (u *Users) Get(ctx context.Context, username string,
 		}
 
 		resultUser = user
-		logger.Debugf("单次查询尝试成功",
+		logger.Debugf("单次查询尝试成功%v,%v",
 			"attempt_cost_ms", time.Since(attemptStart).Milliseconds())
 		return nil
 	})

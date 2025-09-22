@@ -24,6 +24,88 @@ var (
 	updaterStop  chan struct{}
 )
 
+var (
+	bloomAddChan       = make(chan bloomAddRequest, 10000) // 更大的缓冲区
+	batchProcessorOnce sync.Once
+)
+
+// 批量请求结构
+type bloomAddRequest struct {
+	filterType string
+	value      string
+}
+
+// 启动批量处理器（单例模式）
+func StartBatchProcessor() {
+	batchProcessorOnce.Do(func() {
+		go batchProcessorWorker()
+	})
+}
+
+// 批量处理工作器
+func batchProcessorWorker() {
+	ticker := time.NewTicker(50 * time.Millisecond) // 更短的间隔，更快响应
+	defer ticker.Stop()
+
+	var batch []bloomAddRequest
+	maxBatchSize := 1000 // 更大的批处理量
+
+	for {
+		select {
+		case req := <-bloomAddChan:
+			batch = append(batch, req)
+			if len(batch) >= maxBatchSize {
+				processBloomBatch(batch)
+				batch = batch[:0]
+			}
+		case <-ticker.C:
+			if len(batch) > 0 {
+				processBloomBatch(batch)
+				batch = batch[:0]
+			}
+		}
+	}
+}
+
+// 处理批量请求
+func processBloomBatch(batch []bloomAddRequest) {
+	if len(batch) == 0 {
+		return
+	}
+
+	bloom, err := GetFilter()
+	if err != nil || bloom == nil {
+		return
+	}
+
+	start := time.Now()
+	bloom.Mu.Lock()
+	for _, req := range batch {
+		bloom.Add(req.filterType, req.value)
+	}
+	bloom.Mu.Unlock()
+
+	duration := time.Since(start)
+	metrics.RecordBloomFilterCheck("batch", "batch_add_success", duration)
+}
+
+// 发送批量添加请求
+func SendBatchAddRequest(filterType, value string) {
+	req := bloomAddRequest{
+		filterType: filterType,
+		value:      value,
+	}
+
+	select {
+	case bloomAddChan <- req:
+		// 成功发送到批量通道
+	//	metrics.BloomFilterBatchOperations.WithLabelValues("enqueued").Inc()
+	default:
+		// 通道满时丢弃，避免阻塞业务逻辑
+		//	metrics.BloomFilterBatchOperations.WithLabelValues("dropped").Inc()
+	}
+}
+
 // Init 初始化布隆过滤器
 func Init(configs map[string]*bloomOptions.BloomFilterOptions) error {
 	initOnce.Do(func() {
