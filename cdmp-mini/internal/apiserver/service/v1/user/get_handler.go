@@ -16,20 +16,31 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 	logger := log.L(ctx).WithValues("service", "UserService", "operation", "Get")
 	cacheKey := u.generateUserCacheKey(username)
 
+	//检查bloom过滤器
 	bloom, err := bloomfilter.GetFilter()
 	if err != nil {
-		log.Errorf("加载bloom服务失败%v", err)
+		metrics.RecordBloomFilterCheck("username", "error", 0)
+		metrics.SetBloomFilterStatus("username", false)
 	}
-	// 1. 布隆过滤器检查
-	if bloom != nil && !bloom.Test("username", username) {
-		bloom.Mu.Lock()
-		// 双重检查，避免并发重复添加
+	if bloom != nil {
+		start := time.Now()
+		//如果没有找到，，直接返回
 		if !bloom.Test("username", username) {
+			// 第一次查询不存在的用户会进入这里
+			duration := time.Since(start)
+			metrics.RecordBloomFilterCheck("username", "miss", duration)
+			//记录布隆过滤器防护次数
+			metrics.BloomFilterPreventions.WithLabelValues("username").Inc()
+			bloom.Mu.Lock()
+			// 添加到布隆过滤器
 			bloom.Add("username", username)
+			bloom.Mu.Unlock()
+			// 设置Redis空值缓存
 			go u.cacheNullValue(ctx, cacheKey)
+
+			return nil, nil
 		}
-		bloom.Mu.Unlock()
-		return nil, nil
+
 	}
 
 	// 2. 使用singleflight包装整个查询

@@ -83,7 +83,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 	log.Info("redis服务器初始化成功")
 
-	// 使用默认配置懒初始化
+	//使用默认配置懒初始化
 	config := map[string]*bloomOptions.BloomFilterOptions{
 		"user_id":  {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
 		"username": {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
@@ -272,16 +272,13 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	createConsumer := NewUserConsumer(brokers, UserCreateTopic, "user-create-group", db, g.redis)
 	createConsumer.SetProducer(userProducer)
 
-
 	log.Info("初始化更新消费者...")
 	updateConsumer := NewUserConsumer(brokers, UserUpdateTopic, "user-update-group", db, g.redis)
 	updateConsumer.SetProducer(userProducer)
 
-
 	log.Info("初始化删除消费者...")
 	deleteConsumer := NewUserConsumer(brokers, UserDeleteTopic, "user-delete-group", db, g.redis)
 	deleteConsumer.SetProducer(userProducer)
-	
 
 	log.Info("初始化重试消费者...")
 	retryConsumer := NewRetryConsumer(brokers, db, g.redis, userProducer)

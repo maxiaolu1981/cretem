@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -155,7 +154,7 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 	if err := p.validateMessage(msg); err != nil {
 		return fmt.Errorf("invalid message: %v", err)
 	}
-	
+
 	err := p.writer.WriteMessages(ctx, sendMsg)
 
 	if err != nil {
@@ -259,48 +258,7 @@ func (p *UserProducer) calcNextRetryTS(retryCount int) time.Time {
 	return time.Now().Add(delay)
 }
 
-// 新增：将失败消息写入本地兜底日志
-func (p *UserProducer) writeFailoverLog(msg kafka.Message, err error) error {
-	// 确保日志目录存在
-	logDir := "/var/log/iam/kafka_retry_failover"
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		return fmt.Errorf("创建日志目录失败: %w", err)
-	}
 
-	// 按日期分文件，避免单文件过大
-	filename := fmt.Sprintf("%s/retry_%s.log", logDir, time.Now().Format("20060102"))
-	f, err := os.OpenFile(filename, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("打开日志文件失败: %w", err)
-	}
-	defer f.Close()
-
-	// 记录关键信息：时间、key、重试次数、错误原因等
-	logContent := fmt.Sprintf(
-		"[时间] %s\n[Key] %s\n[重试次数] %s\n[错误原因] %v\n[消息内容] %s\n%s\n",
-		time.Now().Format(time.RFC3339),
-		string(msg.Key),
-		p.getHeaderValue(msg.Headers, HeaderRetryCount),
-		err,
-		string(msg.Value),
-		strings.Repeat("-", 100), // 分隔线
-	)
-
-	if _, err := f.WriteString(logContent); err != nil {
-		return fmt.Errorf("写入日志内容失败: %w", err)
-	}
-	return nil
-}
-
-// 新增：辅助函数，从headers中获取指定key的值
-func (p *UserProducer) getHeaderValue(headers []kafka.Header, key string) string {
-	for _, h := range headers {
-		if h.Key == key {
-			return string(h.Value)
-		}
-	}
-	return "0"
-}
 
 func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
 	operation := p.getOperationFromHeaders(msg.Headers)

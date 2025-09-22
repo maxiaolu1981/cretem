@@ -2,9 +2,7 @@ package v1
 
 import (
 	"fmt"
-	"sync"
 
-	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
@@ -18,12 +16,10 @@ import (
 )
 
 type ServiceSrv struct {
-	Store       interfaces.Factory
-	Redis       *storage.RedisCluster
-	Options     *options.Options
-	BloomFilter *bloom.BloomFilter
-	BloomMutex  *sync.RWMutex
-	producer    producer.MessageProducer
+	Store    interfaces.Factory
+	Redis    *storage.RedisCluster
+	Options  *options.Options
+	producer producer.MessageProducer
 }
 
 type ServiceManager interface {

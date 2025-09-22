@@ -2,7 +2,6 @@ package user
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -25,14 +24,8 @@ func (u *UserController) Get(ctx *gin.Context) {
 		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "传入的GetOptions参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
 		return
 	}
-	if r.Kind == "" {
-		r.Kind = "GetUserOption"
-	}
-	if r.APIVersion == "" {
-		r.APIVersion = u.options.MetaOptions.GetOptions.APIVersion
-	}
 
-	logger := log.L(ctx).WithValues(
+	log.L(ctx).WithValues(
 		"controller", "UserController", // 标识当前控制器
 		"action", "Get", // 标识当前操作
 		"client_ip", ctx.ClientIP(), // 客户端IP
@@ -43,19 +36,6 @@ func (u *UserController) Get(ctx *gin.Context) {
 		"resource_id", username,
 		"user_agent", ctx.Request.UserAgent(),
 	)
-	//logger.Debugf("开始处理用户查询请求(单资源)")
-	errs := u.validateGetOptions(&r)
-	if len(errs) > 0 {
-		errDetails := make(map[string]string, len(errs))
-		for _, fieldErr := range errs {
-			errDetails[fieldErr.Field] = fieldErr.ErrorBody()
-		}
-		detailStr := fmt.Sprintf("参数错误:%+v", errDetails)
-		err := errors.WrapC(nil, code.ErrInvalidParameter, "%s", detailStr)
-		logger.Errorf("%v", err.Error())
-		core.WriteResponse(ctx, err, nil)
-		return
-	}
 
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errMsg := strings.Join(errs, ":")

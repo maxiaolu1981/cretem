@@ -22,27 +22,36 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		"service", "UserService",
 		"method", "Create",
 	)
-	logger.Debug("使用布隆过滤器检查用户名是否存在")
+
 	defer func() {
 		// 记录业务处理时间
 		duration := time.Since(startTime).Seconds()
 		metrics.BusinessProcessingTime.WithLabelValues("user_create").Observe(duration)
 	}()
 
+	//检查bloom过滤器
 	bloom, err := bloomfilter.GetFilter()
 	if err != nil {
-		log.Errorf("加载bloom服务失败%v", err)
+		metrics.RecordBloomFilterCheck("username", "error", 0)
+		metrics.SetBloomFilterStatus("username", false)
 	}
 	if bloom != nil {
-		if bloom.Test("username", user.Name) {
-			// 布隆过滤器说可能存在，需要进一步数据库确认
-			logger.Info("布隆过滤器提示用户名可能存在，进行数据库确认")
+		start := time.Now()
+		exists := bloom.Test("username", user.Name)
+		duration := time.Since(start)
+		//如果存在,需要数据库确认
+		if exists {
+			metrics.RecordBloomFilterCheck("username", "hit", duration)
 			user, err := u.Store.Users().Get(ctx, user.Name, metav1.GetOptions{}, u.Options)
 			if err == nil && user != nil {
 				return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在%s", user.Name)
 			}
+		} else {
+			metrics.RecordBloomFilterCheck("username", "miss", duration)
+			return nil
 		}
 	}
+
 	if u.Producer == nil {
 		log.Errorf("生产者转换错误")
 		return errors.WithCode(code.ErrKafkaFailed, "Kafka生产者未初始化")

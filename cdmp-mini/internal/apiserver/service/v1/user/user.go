@@ -12,7 +12,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -50,19 +49,6 @@ type UserSrv interface {
 	List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error)
 	ListWithBadPerformance(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error)
 	ChangePassword(ctx context.Context, user *v1.User, opt *options.Options) error
-}
-
-// 业务方法：检查用户名是否可能存在
-func (us *UserService) UsernameMightExist(username string) bool {
-	// 使用字符串专用的便捷方法
-	bloom, err := bloomfilter.GetFilter()
-	if err != nil {
-		log.Errorf("加载bloom服务失败%v", err)
-	}
-	if bloom != nil {
-		return bloom.Test("username", username)
-	}
-	return false
 }
 
 // getFromCache 从Redis获取缓存数据

@@ -1,12 +1,10 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -21,6 +19,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
 
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
@@ -48,14 +47,20 @@ type loginInfo struct {
 func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 	return auth.NewBasicStrategy(func(username string, password string) bool {
 		start := time.Now()
-		// 防止用户枚举无效登录
+		//检查bloom过滤器
 		bloom, err := bloomfilter.GetFilter()
 		if err != nil {
-			log.Errorf("加载bloom服务失败%v", err)
+			metrics.RecordBloomFilterCheck("username", "error", 0)
+			metrics.SetBloomFilterStatus("username", false)
 		}
-
 		if bloom != nil {
+			//如果没有找到，，直接返回
 			if !bloom.Test("username", username) {
+				// 第一次查询不存在的用户会进入这里
+				duration := time.Since(start)
+				metrics.RecordBloomFilterCheck("username", "miss", duration)
+				//记录布隆过滤器防护次数
+				metrics.BloomFilterPreventions.WithLabelValues("username").Inc()
 				elapsed := time.Since(start)
 				targetDelay := 150 * time.Millisecond
 				if elapsed < targetDelay {
@@ -64,6 +69,7 @@ func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 				return false
 			}
 		}
+
 		//找到了
 		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{}, g.options)
 		if err != nil {
@@ -235,7 +241,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	}
 	if bloom != nil {
 		if !bloom.Test("username", login.Username) {
-			// 布隆过滤器确认用户名肯定不存在
+			//布隆过滤器确认用户名肯定不存在
 			log.Warnf("登录失败：用户名不存在（布隆过滤器验证）: username=%s", login.Username)
 			err := errors.WithCode(code.ErrUserNotFound, "用户不存在")
 			recordErrorToContext(c, err)
@@ -565,10 +571,6 @@ func (g *GenericAPIServer) generateAccessTokenClaims(data interface{}) jwt.MapCl
 		claims["session_id"] = sessionID
 		claims["type"] = "access"
 	}
-	// if err := g.storeAtSessionID(userID, sessionID, g.options.JwtOptions.Timeout); err != nil {
-	// 	log.Warnf("存储刷新令牌失败:error=%v", err)
-	// 	return nil
-	// }
 
 	return claims
 }
@@ -584,21 +586,29 @@ func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context)
 		start := time.Now()
 		path := c.Request.URL.Path
 
+		//检查bloom过滤器
 		bloom, err := bloomfilter.GetFilter()
 		if err != nil {
-			log.Errorf("加载bloom服务失败%v", err)
+			metrics.RecordBloomFilterCheck("username", "error", 0)
+			metrics.SetBloomFilterStatus("username", false)
 		}
-        if bloom != nil{
-		if !bloom.Test("username", u) {
-			// 布隆过滤器判定用户不存在，模拟一个数据库查询的耗时
-			elapsed := time.Since(start)
-			targetDelay := 150 * time.Millisecond // 模拟的耗时
-			if elapsed < targetDelay {
-				time.Sleep(targetDelay - elapsed)
+		if bloom != nil {
+			//如果没有找到，，直接返回
+			if !bloom.Test("username", u) {
+				// 第一次查询不存在的用户会进入这里
+				duration := time.Since(start)
+				metrics.RecordBloomFilterCheck("username", "miss", duration)
+				//记录布隆过滤器防护次数
+				metrics.BloomFilterPreventions.WithLabelValues("username").Inc()
+				elapsed := time.Since(start)
+				targetDelay := 150 * time.Millisecond
+				if elapsed < targetDelay {
+					time.Sleep(targetDelay - elapsed)
+				}
+				return false
 			}
-			return false
 		}
-	}
+
 		user, err := interfaces.Client().Users().Get(c, u, metav1.GetOptions{}, g.options)
 		if err != nil {
 			elapsed := time.Since(start)
@@ -1089,52 +1099,6 @@ func (g *GenericAPIServer) restLoginFailCount(username string) error {
 	return nil
 }
 
-// 存储at的session id
-func (g *GenericAPIServer) storeAtSessionID(userID, sessionID string, atExpire time.Duration) error {
-	ctx := context.TODO()
-	atSessionID := redisAtSessionIDPrefix + userID
-	if err := g.redis.SetKey(ctx, atSessionID, sessionID, atExpire); err != nil {
-		log.Warnf("存储at sessionid信息失败: %v", err)
-		return err
-	}
-	return nil
-}
-
-// 存储rt的token和session id
-func (g *GenericAPIServer) storeRefreshToken(userID, refreshToken string, sessionID string, rtExpire time.Duration) error {
-	ctx := context.TODO()
-
-	rtKey := redisRefreshTokenPrefix + refreshToken
-	userSessionsKey := redisUserSessionsPrefix + userID
-	rtSessionID := redisRtSessionIDPrefix + userID
-
-	// 先尝试所有操作
-	if err := g.redis.SetKey(ctx, rtKey, userID, rtExpire); err != nil {
-		log.Warnf("添加刷新令牌失败: user_id=%s, error=%v", userID, err)
-		return err
-	}
-
-	if err := g.redis.AddToSet(ctx, userSessionsKey, refreshToken); err != nil {
-		log.Errorf("保存Refresh Token到用户会话失败: user_id=%s, error=%v", userID, err)
-		g.redis.DeleteKey(ctx, rtKey) // 回滚第一步
-		return err
-	}
-
-	if err := g.redis.SetKey(ctx, rtSessionID, sessionID, rtExpire); err != nil {
-		log.Warnf("存储RT session信息失败: %v", err)
-		g.redis.DeleteKey(ctx, rtKey)                             // 回滚第一步
-		g.redis.RemoveFromSet(ctx, userSessionsKey, refreshToken) // 回滚第二步
-		return err
-	}
-
-	// 设置集合过期时间（可选，失败不影响主要逻辑）
-	if err := g.redis.SetExp(ctx, userSessionsKey, rtExpire); err != nil {
-		log.Warnf("设置用户会话集合过期时间失败: %v", err)
-	}
-
-	return nil
-}
-
 func (g *GenericAPIServer) setAuthCookies(c *gin.Context, accessToken, refreshToken string, accessTokenExpire time.Time) error {
 	domain := g.options.ServerRunOptions.CookieDomain // 从配置获取域名
 	secure := g.options.ServerRunOptions.CookieSecure // 是否仅HTTPS
@@ -1151,47 +1115,6 @@ func (g *GenericAPIServer) setAuthCookies(c *gin.Context, accessToken, refreshTo
 
 	log.Debugf("认证Cookie设置成功: domain=%s, secure=%t", domain, secure)
 	return nil
-}
-
-func (g *GenericAPIServer) removeRefreshTokenFromUserSessions(ctx context.Context, userID, refreshToken string) error {
-	if !g.checkRedisAlive() {
-		log.Warnf("Redis不可用，无法从用户会话移除刷新令牌: user_id=%s", userID)
-		return nil
-	}
-
-	userSessionsKey := redisUserSessionsPrefix + userID
-	if err := g.redis.RemoveFromSet(
-		ctx,
-		userSessionsKey,
-		refreshToken,
-	); err != nil {
-		return fmt.Errorf("remove from user sessions failed: %w", err)
-	}
-	return nil
-}
-
-func (g *GenericAPIServer) addTokenToBlacklist(ctx context.Context, jti string, expireAt time.Time) error {
-	if !g.checkRedisAlive() {
-		return errors.WithCode(code.ErrInternal, "系统缓存不可用，无法注销令牌")
-	}
-	key := g.options.JwtOptions.Blacklist_key_prefix + jti
-	log.Debugf("黑名单key:%s", key)
-	expire := time.Until(expireAt) + time.Hour
-	if expire < 0 {
-		expire = time.Hour
-	}
-	// 使用SetRawKey存储黑名单键值对
-	if err := g.redis.SetKey(
-		ctx,
-		key,
-		"1",
-		expire,
-	); err != nil {
-		return fmt.Errorf("添加到黑名单失败: %w", err)
-	}
-	log.Debugf("添加到黑名单成功")
-	return nil
-
 }
 
 // generateRefreshToken 生成刷新令牌
@@ -1226,47 +1149,6 @@ func (g *GenericAPIServer) generateRefreshToken(user *v1.User, atToken string) (
 	}
 
 	return refreshToken, nil
-}
-
-func debugRequestInfo(c *gin.Context) {
-	log.Info("=== 请求调试信息 ===")
-
-	// 1. 检查请求头
-	authHeader := c.GetHeader("Authorization")
-	log.Infof("Authorization 头: %s", authHeader)
-
-	// 2. 检查请求体
-	if c.Request.Body != nil {
-		bodyBytes, _ := io.ReadAll(c.Request.Body)
-		c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes)) // 重置 body
-		log.Infof("请求体: %s", string(bodyBytes))
-	}
-
-	// 3. 检查所有上下文键
-	log.Info("上下文中的所有键:")
-	for key, value := range c.Keys {
-		log.Infof("  %s: %v (类型: %T)", key, value, value)
-	}
-
-	// 4. 尝试手动解析令牌
-	if authHeader != "" && strings.HasPrefix(authHeader, "Bearer ") {
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		log.Infof("提取的令牌字符串: %s...", tokenString[:50])
-
-		// 手动解析令牌查看 claims
-		parser := new(gojwt.Parser)
-		token, _, err := parser.ParseUnverified(tokenString, gojwt.MapClaims{})
-		if err != nil {
-			log.Errorf("手动解析令牌失败: %v", err)
-		} else if claims, ok := token.Claims.(gojwt.MapClaims); ok {
-			log.Info("手动解析的 claims:")
-			for key, value := range claims {
-				log.Infof("  %s: %v (类型: %T)", key, value, value)
-			}
-		}
-	}
-
-	log.Info("====================")
 }
 
 func extractBizCode(c *gin.Context, message string) int {

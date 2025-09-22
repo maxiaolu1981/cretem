@@ -156,10 +156,10 @@ const (
 	RespCodeForbidden  = 110009 //无权访问
 	RespCodeValidation = 100400
 
-	ConcurrentUsers       = 1
-	RequestsPerUser       = 1
+	ConcurrentUsers       = 1000
+	RequestsPerUser       = 1000
 	RequestInterval       = 50 * time.Millisecond
-	BatchSize             = 1
+	BatchSize             = 50
 	HotUserRequestPercent = 50 // 热点用户请求百分比
 	InvalidRequestPercent = 20 //无效请求百分比
 
@@ -700,7 +700,7 @@ func testSingleUserGetRequest(t *testing.T, userID int, ctx *TestContext) (bool,
 	// ===================================
 
 	// 使用更简洁但完整的日志格式
-	log.Warnf("调试: 用户=%-15s 类型=%-4s 期望HTTP=%-3d 实际HTTP=%-3d 成功=%-5v",
+	log.Errorf("调试: 用户=%-15s 类型=%-4s 期望HTTP=%-3d 实际HTTP=%-3d 成功=%-5v",
 		truncateString(targetUserID, 15),
 		getShortRequestType(randNum),
 		expectedHTTP, resp.HTTPStatus,

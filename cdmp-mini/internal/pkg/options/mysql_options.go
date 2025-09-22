@@ -135,7 +135,7 @@ func NewMySQLOptions() *MySQLOptions {
 
 		// 连接池优化
 		MaxIdleConnections:    200,               // 减少连接创建开销
-		MaxOpenConnections:    1000,              // 支持更高并发
+		MaxOpenConnections:    500,               // 支持更高并发
 		MaxConnectionLifeTime: 300 * time.Second, // 避免连接长时间占用
 
 		// 新增连接参数

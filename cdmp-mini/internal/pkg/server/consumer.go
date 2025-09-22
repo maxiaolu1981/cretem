@@ -203,15 +203,24 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		log.Errorw("缓存写入失败", "username", user.Name, "error", err)
 	}
 
+	//添加用户到bloom过滤器
 	bloom, err := bloomfilter.GetFilter()
 	if err != nil {
-		log.Warnf("初始化boolm失败%v", err)
+		metrics.RecordBloomFilterCheck("username", "error", 0)
+		metrics.SetBloomFilterStatus("username", false)
 	}
-
-	if bloom != nil {
+	go func(bloom *bloomfilter.MultiBloomFilter, username string) {
+		if bloom == nil {
+			return
+		}
+		start := time.Now()
+		bloom.Mu.Lock()
+		// 添加到布隆过滤器
 		bloom.Add("username", user.Name)
-		log.Debugf("用户添加到布隆过滤器: username=%s", user.Name)
-	}
+		bloom.Mu.Unlock()
+		duration := time.Since(start)
+		metrics.RecordBloomFilterCheck("username", "add_success", duration)
+	}(bloom, user.Name)
 
 	log.Infof("用户创建成功: username=%s", user.Name)
 	return nil

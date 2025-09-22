@@ -1,6 +1,8 @@
 package metrics
 
 import (
+	"time"
+
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
@@ -169,6 +171,79 @@ var (
 
 )
 
+var (
+	// 布隆过滤器指标
+	BloomFilterChecks = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "bloom_filter_checks_total",
+		Help: "Total number of bloom filter checks",
+	}, []string{"filter_type", "result"}) // result: hit, miss, error
+
+	BloomFilterProcessingTime = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "bloom_filter_processing_seconds",
+		Help:    "Time taken for bloom filter operations",
+		Buckets: []float64{0.000001, 0.000005, 0.00001, 0.00005, 0.0001, 0.0005}, // 微秒到毫秒级
+	}, []string{"operation"}) // operation: test, add, update
+
+	BloomFilterCapacity = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "bloom_filter_capacity",
+		Help: "Capacity of bloom filters",
+	}, []string{"filter_type"})
+
+	BloomFilterEstimatedSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "bloom_filter_estimated_size",
+		Help: "Estimated number of elements in bloom filters",
+	}, []string{"filter_type"})
+
+	BloomFilterMemoryUsage = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "bloom_filter_memory_bytes",
+		Help: "Memory usage of bloom filters in bytes",
+	}, []string{"filter_type"})
+
+	BloomFilterFalsePositiveRate = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "bloom_filter_false_positive_rate",
+		Help: "Configured false positive rate of bloom filters",
+	}, []string{"filter_type"})
+
+	BloomFilterUpdateOperations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "bloom_filter_updates_total",
+		Help: "Total number of bloom filter update operations",
+	}, []string{"filter_type", "status"}) // status: success, failure
+
+	BloomFilterUpdateDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "bloom_filter_update_duration_seconds",
+		Help:    "Time taken for bloom filter update operations",
+		Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30},
+	}, []string{"filter_type"})
+
+	BloomFilterAutoUpdateEnabled = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "bloom_filter_auto_update_enabled",
+		Help: "Whether auto update is enabled for bloom filter (1=enabled, 0=disabled)",
+	}, []string{"filter_type"})
+
+	BloomFilterStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "bloom_filter_status",
+		Help: "Bloom filter status (1=healthy, 0=unavailable)",
+	}, []string{"filter_type"})
+
+	  // 布隆过滤器防护统计
+    BloomFilterPreventions = promauto.NewCounterVec(prometheus.CounterOpts{
+        Name: "bloom_filter_preventions_total",
+        Help: "Total number of requests prevented by bloom filter",
+    }, []string{"filter_type"})
+
+    // 空值缓存数量（使用Gauge）
+    CacheNullValuesCount = promauto.NewGauge(prometheus.GaugeOpts{
+        Name: "cache_null_values_count",
+        Help: "Current number of null value caches in Redis",
+    })
+
+    // 空值缓存操作统计
+    CacheNullValueOperations = promauto.NewCounterVec(prometheus.CounterOpts{
+        Name: "cache_null_value_operations_total",
+        Help: "Total null value cache operations",
+    }, []string{"operation"}) // operation: set, hit, expire, erreration: set, hit, expire
+)
+
 // 辅助函数用于记录数据库操作
 func RecordDatabaseQuery(operation, table string, duration float64, err error) {
 
@@ -226,4 +301,85 @@ func SetDatabaseConnectionsInUse(poolName string, count int) {
 
 func IncDatabaseConnectionsWait(poolName string) {
 	DatabaseConnectionsWait.WithLabelValues(poolName).Inc()
+}
+
+// 记录布隆过滤器检查
+func RecordBloomFilterCheck(filterType string, result string, duration time.Duration) {
+	BloomFilterChecks.WithLabelValues(filterType, result).Inc()
+	BloomFilterProcessingTime.WithLabelValues("test").Observe(duration.Seconds())
+}
+
+// 记录布隆过滤器添加操作
+func RecordBloomFilterAdd(filterType string, duration time.Duration) {
+	BloomFilterProcessingTime.WithLabelValues("add").Observe(duration.Seconds())
+}
+
+// 记录布隆过滤器更新操作
+func RecordBloomFilterUpdate(filterType string, success bool, duration time.Duration, itemsCount int) {
+	status := "success"
+	if !success {
+		status = "failure"
+	}
+
+	BloomFilterUpdateOperations.WithLabelValues(filterType, status).Inc()
+	BloomFilterUpdateDuration.WithLabelValues(filterType).Observe(duration.Seconds())
+
+	if success {
+		BloomFilterEstimatedSize.WithLabelValues(filterType).Set(float64(itemsCount))
+	}
+}
+
+// 设置布隆过滤器容量信息
+func SetBloomFilterCapacity(filterType string, capacity uint, memoryUsage uint64, falsePositiveRate float64) {
+	BloomFilterCapacity.WithLabelValues(filterType).Set(float64(capacity))
+	BloomFilterMemoryUsage.WithLabelValues(filterType).Set(float64(memoryUsage))
+	BloomFilterFalsePositiveRate.WithLabelValues(filterType).Set(falsePositiveRate)
+}
+
+// 设置布隆过滤器状态
+func SetBloomFilterStatus(filterType string, available bool) {
+	status := 0.0
+	if available {
+		status = 1.0
+	}
+	BloomFilterStatus.WithLabelValues(filterType).Set(status)
+}
+
+// 设置自动更新状态
+func SetBloomFilterAutoUpdateStatus(filterType string, enabled bool) {
+	status := 0.0
+	if enabled {
+		status = 1.0
+	}
+	BloomFilterAutoUpdateEnabled.WithLabelValues(filterType).Set(status)
+}
+
+// 获取错误类型分类
+func getBloomFilterErrorType(err error) string {
+	if err == nil {
+		return "none"
+	}
+
+	switch {
+	case err.Error() == "bloom filter not initialized":
+		return "not_initialized"
+	case err.Error() == "filter type not found":
+		return "filter_not_found"
+	case err.Error() == "database connection error":
+		return "database_error"
+	case err.Error() == "context deadline exceeded":
+		return "timeout"
+	default:
+		return "unknown"
+	}
+}
+
+func CalculateMemoryUsage(capacity uint) uint64 {
+	// 布隆过滤器内存占用 = 容量(bits) / 8 (转换为字节) + 数据结构开销
+	baseMemory := uint64(capacity) / 8
+
+	// 加上Bloom过滤器数据结构的基础开销（约1KB）
+	const baseOverhead = 1024
+
+	return baseMemory + baseOverhead
 }
