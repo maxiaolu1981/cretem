@@ -20,8 +20,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
-	bloomOptions "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
@@ -84,23 +82,6 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		return nil, err
 	}
 	log.Info("redis服务器初始化成功")
-
-	//使用默认配置懒初始化
-	config := map[string]*bloomOptions.BloomFilterOptions{
-		"user_id":  {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
-		"username": {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
-		"email":    {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
-		"phone":    {Capacity: 1000000, FalsePositiveRate: 0.001, AutoUpdate: true, UpdateInterval: 1 * time.Hour},
-	}
-
-	log.Info("开始初始化bloom服务")
-	bloomErr := bloomfilter.Init(config) // 或者传入配置
-	if bloomErr != nil {
-		log.Warnf("初始化bloom失败: %v", bloomErr)
-		return nil, bloomErr
-	}
-
-	log.Info("初始化bloom服务成功")
 
 	// 初始化Kafka生产者和消费者
 	if err := InitKafkaWithRetry(opts); err != nil {

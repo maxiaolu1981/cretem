@@ -19,8 +19,6 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/bloomfilter"
 
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
@@ -47,30 +45,7 @@ type loginInfo struct {
 func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 	return auth.NewBasicStrategy(func(username string, password string) bool {
 		start := time.Now()
-		//检查bloom过滤器
-		bloom, err := bloomfilter.GetFilter()
-		if err != nil {
-			metrics.RecordBloomFilterCheck("username", "error", 0)
-			metrics.SetBloomFilterStatus("username", false)
-		}
-		if bloom != nil {
-			//如果没有找到，，直接返回
-			if !bloom.Test("username", username) {
-				// 第一次查询不存在的用户会进入这里
-				duration := time.Since(start)
-				metrics.RecordBloomFilterCheck("username", "miss", duration)
-				//记录布隆过滤器防护次数
-				metrics.BloomFilterPreventions.WithLabelValues("username").Inc()
-				elapsed := time.Since(start)
-				targetDelay := 150 * time.Millisecond
-				if elapsed < targetDelay {
-					time.Sleep(targetDelay - elapsed)
-				}
-				return false
-			}
-		}
 
-		//找到了
 		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{}, g.options)
 		if err != nil {
 			elapsed := time.Since(start)
@@ -234,21 +209,6 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		return nil, err
 	}
 
-	// 新增：使用布隆过滤器快速检查用户名是否存在
-	bloom, err := bloomfilter.GetFilter()
-	if err != nil {
-		log.Errorf("加载bloom服务失败%v", err)
-	}
-	if bloom != nil {
-		if !bloom.Test("username", login.Username) {
-			//布隆过滤器确认用户名肯定不存在
-			log.Warnf("登录失败：用户名不存在（布隆过滤器验证）: username=%s", login.Username)
-			err := errors.WithCode(code.ErrUserNotFound, "用户不存在")
-			recordErrorToContext(c, err)
-			return nil, err
-		}
-	}
-
 	//检查登录异常
 	failCount, err := g.getLoginFailCount(c, login.Username)
 	if err != nil {
@@ -259,7 +219,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		recordErrorToContext(c, err)
 		return nil, err
 	}
-
+	//检查用户名是否合法
 	if errs := validation.IsQualifiedName(login.Username); len(errs) > 0 {
 		errsMsg := strings.Join(errs, ":")
 		log.Warnw("用户名不合法:", errsMsg)
@@ -268,6 +228,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		return nil, err
 
 	}
+	//检查密码是否有效
 	if err := validation.IsValidPassword(login.Password); err != nil {
 		errMsg := "密码不合法：" + err.Error()
 		err := errors.WithCode(code.ErrInvalidParameter, "%s", errMsg)
@@ -585,30 +546,6 @@ func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context)
 
 		start := time.Now()
 		path := c.Request.URL.Path
-
-		// //检查bloom过滤器
-		bloom, err := bloomfilter.GetFilter()
-		if err != nil {
-			metrics.RecordBloomFilterCheck("username", "error", 0)
-			metrics.SetBloomFilterStatus("username", false)
-		}
-		if bloom != nil {
-			//如果没有找到，，直接返回
-			if !bloom.Test("username", u) {
-				// 第一次查询不存在的用户会进入这里
-				duration := time.Since(start)
-				metrics.RecordBloomFilterCheck("username", "miss", duration)
-				//记录布隆过滤器防护次数
-				metrics.BloomFilterPreventions.WithLabelValues("username").Inc()
-				elapsed := time.Since(start)
-				targetDelay := 150 * time.Millisecond
-				if elapsed < targetDelay {
-					time.Sleep(targetDelay - elapsed)
-				}
-				return false
-			}
-		}
-
 		user, err := interfaces.Client().Users().Get(c, u, metav1.GetOptions{}, g.options)
 		if err != nil {
 			elapsed := time.Since(start)
@@ -1505,4 +1442,8 @@ func extractSessionID(tokenString string) (string, error) {
 	}
 
 	return sessionID, nil
+}
+
+func todo(){
+	//TODO :如何限制用户的恶意登录
 }
