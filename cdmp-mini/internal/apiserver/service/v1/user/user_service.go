@@ -64,7 +64,7 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 	}
 
 	if data == "" {
-		log.Errorf("空值缓存命中: key=%s", cacheKey)
+		log.Infof("空值缓存命中: key=%s", cacheKey)
 		return nil, true, nil
 	}
 
@@ -74,7 +74,7 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 	if err := json.Unmarshal([]byte(data), &user); err != nil {
 		return nil, false, errors.WithCode(code.ErrDecodingFailed, "数据解码失败")
 	}
-	log.Errorf("从缓存中查询到用户:%s: key=%s", user.Name, cacheKey)
+	log.Infof("从缓存中查询到用户:%s: key=%s", user.Name, cacheKey)
 	return &user, true, nil
 }
 

@@ -33,16 +33,19 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 			metrics.BloomFilterPreventions.WithLabelValues("username").Inc()
 			// 设置Redis空值缓存
 			go u.cacheNullValue(cacheKey)
-
 			return nil, nil
 		}
-
 	}
 
 	// 2. 使用singleflight包装整个查询
-	result, err, _ := u.group.Do(cacheKey, func() (interface{}, error) {
+	result, err, shared := u.group.Do(cacheKey, func() (interface{}, error) {
 		return u.getUserWithCache(ctx, username, cacheKey, opts, opt)
 	})
+
+	if shared {
+		log.Infof("请求被合并，共享结果: %s", username)
+	}
+
 	if err != nil {
 		logger.Debugf("查询失败", "username", username, "error", err.Error())
 		return nil, err
@@ -55,7 +58,6 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 
 // 内部方法，不包含singleflight
 func (u *UserService) getUserWithCache(ctx context.Context, username, cacheKey string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
-
 
 	// 设置Redis超时
 	redisTimeout := u.Options.RedisOptions.Timeout
@@ -83,7 +85,7 @@ func (u *UserService) getUserWithCache(ctx context.Context, username, cacheKey s
 	}
 
 	// 缓存中没有记录
-	log.Errorf("缓存未命中，查询数据库")
+	log.Infof("缓存未命中，查询数据库")
 	metrics.CacheHits.WithLabelValues("no_record").Inc()
 	return u.getUserFromDBAndSetCache(ctx, username, cacheKey, opts, opt)
 }

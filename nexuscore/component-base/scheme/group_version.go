@@ -193,11 +193,7 @@ func (gv GroupVersion) Identifier() string {
 	return gv.String()
 }
 
-// KindForGroupVersionKinds identifies the preferred GroupVersionKind out of a list. It returns ok false
-// if none of the options match the group. It prefers a match to group and version over just group.
-// TODO: Move GroupVersion to a package under pkg/runtime, since it's used by scheme.
-// TODO: Introduce an adapter type between GroupVersion and runtime.GroupVersioner, and use LegacyCodec(GroupVersion)
-//
+
 //	in fewer places.
 func (gv GroupVersion) KindForGroupVersionKinds(kinds []GroupVersionKind) (target GroupVersionKind, ok bool) {
 	for _, gvk := range kinds {
@@ -216,8 +212,7 @@ func (gv GroupVersion) KindForGroupVersionKinds(kinds []GroupVersionKind) (targe
 // ParseGroupVersion turns "group/version" string into a GroupVersion struct. It reports error
 // if it cannot parse the string.
 func ParseGroupVersion(gv string) (GroupVersion, error) {
-	// this can be the internal version for the legacy apimachinery types
-	// TODO once we've cleared the last uses as strings, this special case should be removed.
+	
 	if (len(gv) == 0) || (gv == "/") {
 		return GroupVersion{}, nil
 	}
@@ -243,11 +238,7 @@ func (gv GroupVersion) WithResource(resource string) GroupVersionResource {
 	return GroupVersionResource{Group: gv.Group, Version: gv.Version, Resource: resource}
 }
 
-// GroupVersions can be used to represent a set of desired group versions.
-// TODO: Move GroupVersions to a package under pkg/runtime, since it's used by scheme.
-// TODO: Introduce an adapter type between GroupVersions and runtime.GroupVersioner, and use LegacyCodec(GroupVersion)
-//
-//	in fewer places.
+
 type GroupVersions []GroupVersion
 
 // Identifier implements runtime.GroupVersioner interface.
@@ -302,10 +293,6 @@ func (gvk GroupVersionKind) ToAPIVersionAndKind() (string, string) {
 	return gvk.GroupVersion().String(), gvk.Kind
 }
 
-// FromAPIVersionAndKind returns a GVK representing the provided fields for types that
-// do not use TypeMeta. This method exists to support test types and legacy serializations
-// that have a distinct group and kind.
-// TODO: further reduce usage of this method.
 func FromAPIVersionAndKind(apiVersion, kind string) GroupVersionKind {
 	if gv, err := ParseGroupVersion(apiVersion); err == nil {
 		return GroupVersionKind{Group: gv.Group, Version: gv.Version, Kind: kind}

@@ -119,6 +119,7 @@ func (u *Users) isRetryableError(err error) bool {
 	return u.isRetryableByErrorMessage(err.Error())
 }
 
+// TODO: 需要和code框架保持一致
 // isNonRetryableBusinessError 检查明确不可重试的业务错误码
 func (u *Users) isNonRetryableBusinessError(errorCode int) bool {
 	nonRetryableCodes := map[int]bool{
