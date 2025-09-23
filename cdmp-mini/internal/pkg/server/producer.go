@@ -137,7 +137,7 @@ func (p *UserProducer) validateMessage(msg kafka.Message) error {
 func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
 	startTime := time.Now()
 	// 添加详细的发送日志
-	log.Errorf("准备发送消息到[测试丢失记录问题] %s: key=%s", topic, string(msg.Key))
+	//log.Errorf("准备发送消息到[测试丢失记录问题] %s: key=%s", topic, string(msg.Key))
 	operation := p.getOperationFromHeaders(msg.Headers)
 
 	// 记录发送尝试

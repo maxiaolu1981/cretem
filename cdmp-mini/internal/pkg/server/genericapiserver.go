@@ -302,26 +302,21 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 // initRedisStore 初始化Redis存储，根据分布式锁开关状态调整初始化策略
 // 在initRedisStore函数中正确初始化RedisCluster
 func (g *GenericAPIServer) initRedisStore() error {
-	// 获取分布式锁开关状态
-	distributedLockEnabled = g.options.DistributedLock.Enabled
-	log.Infof("分布式锁开关状态: %v", distributedLockEnabled)
-
 	ctx, cancel := context.WithCancel(context.Background())
 	g.redisCancel = cancel
 	defer func() {
-		if r := recover(); r != nil || redisClient == nil {
+		if r := recover(); r != nil {
 			cancel()
-			log.Errorf("Redis初始化异常，触发上下文取消: recover=%v, 客户端是否为空=%t", r, redisClient == nil)
+			log.Errorf("Redis初始化异常: %v", r)
 		}
 	}()
 
-	// 关键修复：正确初始化RedisCluster，明确设置IsCache=false
+	// 初始化RedisCluster
 	g.redis = &storage.RedisCluster{
 		KeyPrefix: "genericapiserver:",
 		HashKeys:  false,
-		IsCache:   false, // 匹配singlePool（非缓存客户端）
+		IsCache:   false,
 	}
-	log.Debugf("RedisCluster实例初始化完成，KeyPrefix=%s，IsCache=%v", g.redis.KeyPrefix, g.redis.IsCache)
 
 	// 启动Redis异步连接任务
 	go func() {
@@ -330,57 +325,57 @@ func (g *GenericAPIServer) initRedisStore() error {
 		log.Warn("Redis异步连接任务退出（可能上下文已取消）")
 	}()
 
+	// 等待初始连接尝试完成
+	log.Info("等待Redis初始连接尝试...")
+	time.Sleep(3 * time.Second)
+
 	// 等待Redis客户端就绪（带重试机制）
 	const (
 		maxRetries    = 30
-		retryInterval = 1 * time.Second
+		retryInterval = 2 * time.Second
 	)
-	var retryCount int
-	var lastErr error
 
-	for {
-		// 检查存储是否标记为已连接
+	for retryCount := 0; retryCount < maxRetries; retryCount++ {
+		// 1. 检查连接状态
 		if !storage.Connected() {
-			lastErr = fmt.Errorf("storage未标记为已连接")
-		} else {
-			// 尝试获取客户端并验证可用性
-			redisClient = g.redis.GetClient()
-			if redisClient != nil {
-				if err := pingRedis(ctx, redisClient); err == nil {
-					log.Info("✅ Redis客户端获取成功且验证可用")
-					go g.monitorRedisConnection(ctx)
-					return nil
-				} else {
-					lastErr = fmt.Errorf("客户端非空但验证失败: %v", err)
-					redisClient = nil // 重置客户端，重新尝试
-				}
-			} else {
-				lastErr = fmt.Errorf("GetClient()返回空客户端")
+			log.Warnf("Redis未连接（尝试 %d/%d）", retryCount+1, maxRetries)
+			if retryCount == maxRetries-1 {
+				return fmt.Errorf("Redis连接失败：storage未标记为已连接（重试%d次后）", maxRetries)
 			}
+			time.Sleep(retryInterval)
+			continue
 		}
 
-		// 检查是否达到最大重试次数
-		retryCount++
-		if retryCount >= maxRetries {
-			if distributedLockEnabled {
-				finalErr := fmt.Errorf("Redis初始化失败（核心依赖），已达最大重试次数(%d)，最后错误: %v", maxRetries, lastErr)
-				log.Fatal(finalErr.Error())
-				return finalErr
-			} else {
-				log.Warnf("Redis初始化重试达最大次数(%d)（非核心依赖），最后错误: %v，继续启动并监控", maxRetries, lastErr)
-				go g.monitorRedisConnection(ctx)
-				return nil
+		// 2. 获取客户端
+		redisClient = g.redis.GetClient()
+		if redisClient == nil {
+			log.Warnf("Redis客户端为空（尝试 %d/%d）", retryCount+1, maxRetries)
+			if retryCount == maxRetries-1 {
+				return fmt.Errorf("Redis连接失败：GetClient()返回空客户端（重试%d次后）", maxRetries)
 			}
+			time.Sleep(retryInterval)
+			continue
 		}
 
-		// 输出重试日志
-		if distributedLockEnabled {
-			log.Warnf("Redis初始化重试中（核心依赖），第%d/%d次，最后错误: %v", retryCount, maxRetries, lastErr)
-		} else {
-			log.Debugf("Redis初始化重试中（非核心依赖），第%d/%d次，最后错误: %v", retryCount, maxRetries, lastErr)
+		// 3. 验证连接
+		if err := pingRedis(ctx, redisClient); err != nil {
+			log.Warnf("Redis连接验证失败（尝试 %d/%d）: %v", retryCount+1, maxRetries, err)
+			redisClient = nil
+			if retryCount == maxRetries-1 {
+				return fmt.Errorf("Redis连接失败：PING验证失败（重试%d次后）: %v", maxRetries, err)
+			}
+			time.Sleep(retryInterval)
+			continue
 		}
-		time.Sleep(retryInterval)
+
+		// 4. 所有检查通过，连接成功
+		log.Info("✅ Redis连接成功且验证可用")
+		go g.monitorRedisConnection(ctx)
+		return nil
 	}
+
+	// 如果循环结束仍未成功，返回错误
+	return fmt.Errorf("Redis连接失败，已达最大重试次数(%d)", maxRetries)
 }
 
 // monitorRedisConnection 监控Redis连接状态，根据分布式锁开关决定是否影响主进程

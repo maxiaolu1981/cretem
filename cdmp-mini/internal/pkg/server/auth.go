@@ -70,7 +70,7 @@ func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 			}
 		}
 
-		// //找到了
+		//找到了
 		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{}, g.options)
 		if err != nil {
 			elapsed := time.Since(start)
@@ -685,7 +685,7 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire 
 	}
 
 	core.WriteResponse(c, nil, gin.H{
-		"code":    0,
+		"code":    code.ErrSuccess,
 		"message": "登录成功",
 		"data": map[string]string{
 			"access_token":  atToken,
@@ -1055,18 +1055,19 @@ func isTokenInBlacklist(g *GenericAPIServer, c *gin.Context, jti string) (bool, 
 func (g *GenericAPIServer) getLoginFailCount(ctx *gin.Context, username string) (int, error) {
 
 	key := redisLoginFailPrefix + username
-	//	log.Debugf("key:%s", key)
 	val, err := g.redis.GetKey(ctx, key)
 	if err != nil {
-		log.Errorf("获取登录失败次数失败:username=%s,error=%v", username, err)
-		return 0, err
-	}
-	if val == "" {
-		return 0, nil
+		if errors.Is(err, redis.Nil) {
+			log.Infof("缓存键不存在: key=%s", key)
+			return 0, nil
+		} else {
+			log.Errorf("redis服务错误:err=%v", err)
+			return 0, err
+		}
 	}
 	count, err := strconv.Atoi(val)
 	if err != nil {
-		log.Warnf("解析登录失败次数失败: username=%s, val=%s, error=%v", username, val, err)
+		log.Infof("解析登录失败次数失败: username=%s, val=%s, error=%v", username, val, err)
 		return 0, nil // 解析失败默认返回0次
 	}
 	return count, nil

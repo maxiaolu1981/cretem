@@ -1399,7 +1399,7 @@ func (r *RedisCluster) SetNX(ctx context.Context, keyName string, value interfac
 
 	result, err := r.singleton().SetNX(ctx, keyName, value, expiration).Result()
 	if err != nil {
-		log.Errorf("Error trying to set NX value: %s", err.Error())
+		log.Errorf("redis服务出现问题,请马上修改: %s", err.Error())
 		return false, err
 	}
 	return result, nil

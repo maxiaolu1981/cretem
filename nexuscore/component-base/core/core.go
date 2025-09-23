@@ -18,7 +18,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/errors" // 自定义错误处理包
-	"github.com/maxiaolu1981/cretem/nexuscore/log"    // 自定义日志包
+	// 自定义日志包
 )
 
 // ErrResponse 定义了错误发生时的返回格式
@@ -40,24 +40,9 @@ type ErrResponse struct {
 // errors.Coder 包含错误码、用户安全的错误消息和对应的 HTTP 状态码
 func WriteResponse(c *gin.Context, err error, data interface{}) {
 	if err != nil {
-		// 1. 记录错误详情到日志（便于后端排查，包含完整错误堆栈）
-		log.Errorf("%#+v", err)
-
-		// 2. 将错误解析为自定义错误编码结构（包含业务码、HTTP状态码等）
+		// 将错误解析为自定义错误编码结构（包含业务码、HTTP状态码等）
 		coder := errors.ParseCoderByErr(err)
-		//log.Debugf("core:返回的业务码%v", coder.Code())
-
-		// 设置错误码到上下文（供Prometheus中间件使用）
-		c.Set("error_code", coder.Code())
-		c.Set("http_status", coder.HTTPStatus())
-
-		// 记录500错误详情
-		if coder.HTTPStatus() == 500 {
-			log.Errorf("500业务错误 - 路径: %s, 方法: %s, 错误码: %d, 错误: %v",
-				c.Request.URL.Path, c.Request.Method, coder.Code(), err)
-		}
-
-		// 3. 构建错误响应并返回（使用错误编码中定义的 HTTP 状态码）
+		//构建错误响应并返回（使用错误编码中定义的 HTTP 状态码）
 		c.JSON(coder.HTTPStatus(), ErrResponse{
 			Code:      coder.Code(),      // 业务错误码
 			Message:   coder.String(),    // 用户可见的错误消息
@@ -65,37 +50,47 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 		})
 		return
 	}
+	// ✅ 根据请求路径和方法决定状态码
+	statusCode := determineStatusCode(c.Request)
+	c.JSON(statusCode, data)
 
-	// 4. 无错误时，返回 200 OK 和业务数据
-	c.Set("http_status", http.StatusOK) // 设置成功状态码
-	c.JSON(http.StatusOK, data)
 }
 
-// -------------------------- 新增：WriteDeleteSuccess --------------------------
-// WriteDeleteSuccess 处理 DELETE 操作成功的响应（RESTful 规范：204 No Content）
-// 核心：仅返回 204 状态码，无响应体（符合 HTTP 规范）
-func WriteDeleteSuccess(c *gin.Context) {
-	// 设置 204 状态码（成功且无内容），不写入任何响应体
-	c.Status(http.StatusNoContent)
+// ✅ 明确的状态码判断逻辑
+// ✅ 明确的状态码判断逻辑
+func determineStatusCode(req *http.Request) int {
+	path := req.URL.Path
+	method := req.Method
+
+	// 登录认证操作 - 返回200
+	if path == "/login" && method == "POST" {
+		return http.StatusOK
+	}
+
+	// 删除操作 - 返回204
+	if method == "DELETE" {
+		return http.StatusNoContent
+	}
+
+	// 真正的资源创建操作 - 返回201
+	if method == "POST" && isResourceCreation(path) {
+		return http.StatusCreated
+	}
+
+	// 其他所有情况 - 返回200
+	return http.StatusOK
 }
 
-// SuccessResponse 统一成功响应结构体
-type SuccessResponse struct {
-	Code    int         `json:"code"`    // 成功码固定为0（与错误码区分）
-	Message string      `json:"message"` // 成功提示信息
-	Data    interface{} `json:"data"`    // 业务数据（单资源对象）
-}
+// ✅ 明确定义哪些是资源创建端点
+func isResourceCreation(path string) bool {
+	resourceCreationPaths := []string{
+		"/v1/users",
+	}
 
-// WriteSuccessResponse 写入成功响应（适用于所有成功场景，如GET单资源、创建资源等）
-// 参数：
-//   - c: gin上下文
-//   - message: 成功提示信息（如"查询用户详情成功"）
-//   - data: 业务数据（如单条用户记录）
-func WriteSuccessResponse(c *gin.Context, message string, data interface{}) {
-	// 成功响应HTTP状态码固定为200 OK（符合RESTful规范）
-	c.JSON(http.StatusCreated, SuccessResponse{
-		Code:    100001,  // 成功码固定为0，区别于错误码（如100004）
-		Message: message, // 自定义成功提示（语义化）
-		Data:    data,    // 单资源数据（如过滤后的用户对象）
-	})
+	for _, p := range resourceCreationPaths {
+		if path == p {
+			return true
+		}
+	}
+	return false
 }

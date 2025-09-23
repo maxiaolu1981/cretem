@@ -34,27 +34,10 @@ func init() {
 	register(ErrPasswordIncorrect, 401, "密码不正确")          // 401：密码错误导致未授权
 	register(ErrPermissionDenied, 403, "权限不足，无操作权限")      // 403 Forbidden：已授权但无权限
 	register(ErrTokenInvalid, 401, "令牌无效（格式/签名错误）")       // 401：令牌本身无效
-	register(
-		ErrBase64DecodeFail,
-		400,
-		"Basic认证 payload Base64解码失败（请确保格式为 username:password 的Base64编码）",
-	)
-	register(
-		ErrInvalidBasicPayload,
-		400,
-		"Basic认证 payload格式无效（需用冒号分隔用户名和密码，如 username:password）",
-	)
-	register(
-		ErrRespCodeRTRevoked,
-		403,
-		"令牌已经撤销",
-	)
-	register(
-		ErrTokenMismatch,
-		401,
-		"访问令牌和刷新令牌不匹配",
-	)
-
+	register(ErrBase64DecodeFail, 400, "Basic认证 payload Base64解码失败（请确保格式为 username:password 的Base64编码）")
+	register(ErrInvalidBasicPayload, 400, "Basic认证 payload格式无效（需用冒号分隔用户名和密码，如 username:password）")
+	register(ErrRespCodeRTRevoked, 403, "令牌已经撤销")
+	register(ErrTokenMismatch, 401, "访问令牌和刷新令牌不匹配")
 	// 4. 通用加解码错误（1003xx）
 	register(ErrEncodingFailed, 500, "数据编码失败")          // 500：服务端编码逻辑错误
 	register(ErrDecodingFailed, 400, "数据解码失败（格式错误）")    // 400：客户端传入的数据格式无法解码（如 JSON 格式错误）

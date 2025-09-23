@@ -85,10 +85,12 @@ type ServerRunOptions struct {
 	EnableProfiling bool     `json:"enableProfiling" mapstructure:"enableProfiling"`
 	EnableMetrics   bool     `json:"enableMetrics" mapstructure:"enableMetrics"`
 	// 新增：Cookie相关配置
-	CookieDomain string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
-	CookieSecure bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
-	CtxTimeout   time.Duration `json:"ctxtimeout"    mapstructure:"ctxtimeout"`
-	Env          string        `json:"env"    mapstructure:"env"`
+	CookieDomain   string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
+	CookieSecure   bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
+	CtxTimeout     time.Duration `json:"ctxtimeout"    mapstructure:"ctxtimeout"`
+	Env            string        `json:"env"    mapstructure:"env"`
+	LoginRateLimit int           `json:"loginlimit"   mapstructure:"loginlimit"`
+	LoginWindow    time.Duration `json:"loginwindow"   mapstructure:"loginwindow"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -103,6 +105,8 @@ func NewServerRunOptions() *ServerRunOptions {
 		CookieSecure:    false,
 		CtxTimeout:      50 * time.Second,
 		Env:             "development",
+		LoginRateLimit:  50000, // 5万/分钟
+		LoginWindow:     2 * time.Minute,
 	}
 }
 
@@ -163,6 +167,14 @@ func (s *ServerRunOptions) Complete() {
 	if s.Env == "" {
 		s.Env = "Env"
 	}
+
+	if s.LoginRateLimit == 0 {
+		s.LoginRateLimit = 1000
+	}
+
+	if s.LoginWindow == 0 {
+		s.LoginWindow = time.Minute
+	}
 }
 
 func (s *ServerRunOptions) Validate() []error {
@@ -216,6 +228,23 @@ func (s *ServerRunOptions) Validate() []error {
 			"调试模式下不应启用Secure Cookie（建议设置为false）",
 		))
 	}
+
+	if s.LoginRateLimit < 0 {
+		errs = append(errs, field.Invalid(
+			path.Child("loginRateLimit"),
+			s.LoginRateLimit,
+			"限流数不能小于0",
+		))
+	}
+
+	if s.LoginWindow < 1 {
+		errs = append(errs, field.Invalid(
+			path.Child("LoginWindow"),
+			s.LoginWindow,
+			"限流时间不能小于1",
+		))
+	}
+
 	agg := errs.ToAggregate()
 	if agg == nil {
 		return nil // 无错误时返回空切片，而非nil
@@ -239,4 +268,9 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 		"服务器允许的中间件列表，逗号分隔。如果列表为空，将使用默认中间件。")
 	fs.StringVar(&s.Env, "server.env", s.Env, ""+
 		"环境模式包括:development,release,test")
+
+	fs.IntVar(&s.LoginRateLimit, "server.Loginlimit", s.LoginRateLimit, ""+
+		"指定限流次数")
+	fs.DurationVar(&s.LoginWindow, "server.loginwindow", s.LoginWindow, ""+
+		"指定限流时间")
 }
