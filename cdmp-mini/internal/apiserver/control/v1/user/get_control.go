@@ -6,13 +6,13 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	sru "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/user"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
-
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
@@ -59,14 +59,16 @@ func (u *UserController) Get(ctx *gin.Context) {
 	}
 
 	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{}, u.options)
+
+	//数据库错误
 	if err != nil {
-		//log.Errorf("查询用户%s失败,错误:%v", username, err.Error())
 		core.WriteResponse(ctx, err, nil)
 		return
 	}
-	if user == nil {
-		// 用户不存在（业务正常状态）
-		core.WriteResponse(ctx, errors.WithCode(code.ErrUserNotFound, "用户不存在"), nil)
+	// 用户不存在（业务正常状态）
+	if user.Name == sru.RATE_LIMIT_PREVENTION {
+		err := errors.WithCode(code.ErrPasswordIncorrect, "用户名密码无效")
+		core.WriteResponse(ctx, err, nil)
 		return
 	}
 

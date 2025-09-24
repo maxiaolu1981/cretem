@@ -351,7 +351,7 @@ func (r *RedisCluster) GetClient() redis.UniversalClient {
 		log.Warnf("RedisCluster.GetClient() 获取客户端为空，IsCache=%v", r.IsCache)
 		return nil
 	}
-	log.Debugf("RedisCluster.GetClient() 获取客户端成功，类型=%T，IsCache=%v", client, r.IsCache)
+	//log.Debugf("RedisCluster.GetClient() 获取客户端成功，类型=%T，IsCache=%v", client, r.IsCache)
 	return client
 }
 
@@ -987,7 +987,7 @@ func (r *RedisCluster) AppendToSet(ctx context.Context, keyName, value string) {
 // Exists checks if a key exists
 func (r *RedisCluster) Exists(ctx context.Context, keyName string) (bool, error) {
 	fixedKey := r.fixKey(keyName)
-	log.Debug("Checking if exists", log.String("keyName", fixedKey))
+	//log.Debug("Checking if exists", log.String("keyName", fixedKey))
 
 	exists, err := r.singleton().Exists(ctx, fixedKey).Result()
 	if err != nil {

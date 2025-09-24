@@ -264,9 +264,9 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	}
 	// 新增：在返回前打印 user 信息，确认非 nil
 	// 5. 关键：打印返回前的用户数据，确认有效
-	log.Debugf("authenticate: 成功返回用户数据，username=%s，InstanceID=%s，user=%+v",
-		user.Name, user.InstanceID, user)
-	log.Debugf("正确退出调用方法:%s", c.HandlerName())
+	//	log.Debugf("authenticate: 成功返回用户数据，username=%s，InstanceID=%s，user=%+v",
+	//	user.Name, user.InstanceID, user)
+	//log.Debugf("正确退出调用方法:%s", c.HandlerName())
 	return user, nil
 }
 
@@ -510,7 +510,7 @@ func (g *GenericAPIServer) generateAccessTokenClaims(data interface{}) jwt.MapCl
 	//统一生成sessionid,存储与at和rt中
 	sessionID := idutil.GenerateSecureSessionID("")
 
-	log.Debugf("生成atsession_id: %s, 时间: %v", sessionID, time.Now().UnixNano())
+	//log.Debugf("生成atsession_id: %s, 时间: %v", sessionID, time.Now().UnixNano())
 	expirationTime := time.Now().Add(g.options.JwtOptions.Timeout)
 
 	var userID string
@@ -565,7 +565,7 @@ func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context)
 			log.L(c).Warnf("用户%s无权访问%s(需要管理员校色)", user.Name, path)
 			return false
 		}
-		log.Info("用户认证通过") // 添加参数
+		//	log.Info("用户认证通过") // 添加参数
 		c.Set(common.UsernameKey, user.Name)
 
 		return true
@@ -596,7 +596,7 @@ func (g *GenericAPIServer) generateRefreshTokenAndGetUserID(c *gin.Context, atTo
 }
 
 func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire time.Time) {
-	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
+	//	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
 
 	// 获取刷新令牌
 	refreshToken, userID, err := g.generateRefreshTokenAndGetUserID(c, atToken)
@@ -1044,7 +1044,7 @@ func (g *GenericAPIServer) setAuthCookies(c *gin.Context, accessToken, refreshTo
 	// 设置Refresh Token Cookie
 	c.SetCookie("refresh_token", refreshToken, refreshTokenMaxAge, "/", domain, secure, true)
 
-	log.Debugf("认证Cookie设置成功: domain=%s, secure=%t", domain, secure)
+	//log.Debugf("认证Cookie设置成功: domain=%s, secure=%t", domain, secure)
 	return nil
 }
 
@@ -1444,6 +1444,6 @@ func extractSessionID(tokenString string) (string, error) {
 	return sessionID, nil
 }
 
-func todo(){
+func todo() {
 	//TODO :如何限制用户的恶意登录
 }

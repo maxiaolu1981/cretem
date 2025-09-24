@@ -50,7 +50,7 @@ func init() {
 
 	// 5. iam-apiserver 用户模块（1100xx）
 	register(ErrUserNotFound, 404, "用户不存在")              // 404：用户资源不存在
-	register(ErrUserAlreadyExist, 409, "用户已存在（用户名冲突）")   // 409 Conflict：资源冲突（用户名已被占用）
+	register(ErrUserAlreadyExist, 409, "用户已存在")          // 409 Conflict：资源冲突（用户名已被占用）
 	register(ErrUnauthorized, 401, "未授权访问用户资源")          // 401：未登录/令牌无效，无法访问用户资源
 	register(ErrInvalidParameter, 400, "用户参数无效（如用户名为空）") // 400：参数格式错误
 	register(ErrInternal, 500, "用户模块内部逻辑错误")             // 500：服务端用户模块错误

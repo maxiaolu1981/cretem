@@ -17,6 +17,21 @@ import (
 func PrometheusMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
+
+		// 增加并发请求计数
+		metrics.HTTPRequestsInProgress.WithLabelValues(
+			getFullPath(c),
+			c.Request.Method,
+		).Inc()
+
+		defer func() {
+			// 减少并发请求计数
+			metrics.HTTPRequestsInProgress.WithLabelValues(
+				getFullPath(c),
+				c.Request.Method,
+			).Dec()
+		}()
+
 		metrics.HTTPMiddlewareStart()
 
 		var requestSize int64
@@ -34,7 +49,33 @@ func PrometheusMiddleware() gin.HandlerFunc {
 			responseSize = 0
 		}
 
-		// 记录HTTP请求指标
+		// 获取业务维度信息
+		userID, tenantID := getBusinessDimensions(c)
+		errorCode := getErrorCode(c)
+		errorType := getErrorType(c, c.Errors.Last())
+
+		// 记录HTTP请求总数
+		metrics.HTTPRequestsTotal.WithLabelValues(
+			getFullPath(c),
+			c.Request.Method,
+			status,
+			errorType,
+			userID,
+			tenantID,
+			c.ClientIP(),
+			c.Request.UserAgent(),
+			c.Request.Host,
+		).Inc()
+
+		// 记录HTTP请求延迟分布
+		metrics.HTTPRequestDuration.WithLabelValues(
+			getFullPath(c),
+			c.Request.Method,
+			status,
+			errorType,
+		).Observe(duration)
+
+		// 记录详细的HTTP请求指标
 		metrics.RecordHTTPRequest(
 			getFullPath(c),
 			c.Request.Method,
@@ -42,29 +83,52 @@ func PrometheusMiddleware() gin.HandlerFunc {
 			duration,
 			requestSize,
 			int64(responseSize),
+			c.ClientIP(),
+			c.Request.UserAgent(),
+			c.Request.Host,
+			strconv.Itoa(errorCode),
+			errorType,
+			userID,
+			tenantID,
 		)
+
+		// 记录缓存命中情况（如果存在）
+		if cacheHit, exists := c.Get("cache_hit"); exists {
+			metrics.CacheRequests.WithLabelValues(
+				getFullPath(c),
+				fmt.Sprintf("%v", cacheHit),
+				userID,
+				tenantID,
+			).Inc()
+		}
 
 		// 记录错误指标
 		if c.Writer.Status() >= 400 {
-			// 获取错误码（优先从上下文）
-			var errorCode int
-			if codeVal, exists := c.Get("error_code"); exists {
-				if code, ok := codeVal.(int); ok {
-					errorCode = code
-				}
-			}
-
-			errorType := getErrorType(c, c.Errors.Last())
-
 			// 记录500错误详情
 			if c.Writer.Status() == 500 {
-				log.Errorf("500系统错误 - 路径: %s, 方法: %s, 错误码: %d, 错误: %v",
-					c.Request.URL.Path, c.Request.Method, errorCode, c.Errors.Last())
+				log.Errorf("500系统错误 - 路径: %s, 方法: %s, 错误码: %d, 错误类型: %s, 用户: %s, 租户: %s, 错误: %v",
+					c.Request.URL.Path, c.Request.Method, errorCode, errorType, userID, tenantID, c.Errors.Last())
 			}
 
 			metrics.HTTPErrors.WithLabelValues(
 				c.Request.Method,
 				getFullPath(c),
+				status,
+				errorType,
+				strconv.Itoa(errorCode),
+				userID,
+				tenantID,
+			).Inc()
+		}
+
+		// 记录慢请求（超过1秒）
+		if duration > 1.0 {
+			log.Warnf("慢请求告警 - 路径: %s, 方法: %s, 延迟: %.3fs, 状态: %s, 用户: %s, 租户: %s",
+				getFullPath(c), c.Request.Method, duration, status, userID, tenantID)
+
+			metrics.SlowHTTPRequests.WithLabelValues(
+				getFullPath(c),
+				c.Request.Method,
 				status,
 				errorType,
 			).Inc()
@@ -81,6 +145,50 @@ func getFullPath(c *gin.Context) string {
 		path = c.Request.URL.Path
 	}
 	return path
+}
+
+// getBusinessDimensions 获取业务维度信息
+func getBusinessDimensions(c *gin.Context) (string, string) {
+	userID := "unknown"
+	tenantID := "unknown"
+
+	// 从JWT token或上下文中获取用户信息
+	if userVal, exists := c.Get("user_id"); exists {
+		userID = fmt.Sprintf("%v", userVal)
+	}
+	if tenantVal, exists := c.Get("tenant_id"); exists {
+		tenantID = fmt.Sprintf("%v", tenantVal)
+	}
+
+	return userID, tenantID
+}
+
+// getErrorCode 获取错误码（完善版本）
+func getErrorCode(c *gin.Context) int {
+	// 优先从上下文获取
+	if codeVal, exists := c.Get("error_code"); exists {
+		if code, ok := codeVal.(int); ok {
+			return code
+		}
+	}
+
+	// 从错误中解析
+	if err := c.Errors.Last(); err != nil {
+		if coder := errors.ParseCoderByErr(err); coder != nil {
+			return coder.Code()
+		}
+	}
+
+	// 根据HTTP状态码返回默认错误码
+	status := c.Writer.Status()
+	switch {
+	case status >= 400 && status < 500:
+		return xcode.ErrInvalidParameter
+	case status >= 500:
+		return xcode.ErrInternalServer
+	default:
+		return 0 // 成功请求
+	}
 }
 
 func getErrorTypeFromError(err error) string {

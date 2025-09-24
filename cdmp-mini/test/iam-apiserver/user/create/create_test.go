@@ -43,8 +43,8 @@ const (
 	RespCodeValidation = 100400
 	RespCodeConflict   = 100409
 
-	ConcurrentUsers = 10000
-	RequestsPerUser = 1
+	ConcurrentUsers = 1000
+	RequestsPerUser = 10
 	RequestInterval = 5 * time.Millisecond
 	BatchSize       = 50 // 减小批次大小，避免资源压力
 )
@@ -112,7 +112,6 @@ var (
 )
 
 func TestCase_CreateUserSuccess_Concurrent(t *testing.T) {
-	// 清空测试结果
 
 	// 使用新的测试函数
 	runBatchConcurrentTest(t, "创建用户成功并发测试", func(t *testing.T, userID int, username, password string) (bool, *APIResponse, int, int) {

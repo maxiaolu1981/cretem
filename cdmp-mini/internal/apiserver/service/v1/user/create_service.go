@@ -23,8 +23,8 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	)
 
 	//判断用户是否存在
-	user, err := u.Get(ctx, user.Name, metav1.GetOptions{}, u.Options)
-	if err == nil && user != nil {
+	rUser, err := u.Store.Users().Get(ctx, user.Name, metav1.GetOptions{}, u.Options)
+	if err == nil && rUser != nil {
 		return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在%s", user.Name)
 	}
 

@@ -2,7 +2,6 @@ package user
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/bytedance/gopkg/util/logger"
@@ -16,8 +15,6 @@ import (
 func (u *Users) Get(ctx context.Context, username string,
 	opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
 
-	start := time.Now()
-	//logger.Debugf("开始查询用户", "username", username)
 	// 设置包含重试时间预算的超时上下文
 	totalCtx, cancel := u.createTimeoutContext(ctx, opt.ServerRunOptions.CtxTimeout, 3)
 	defer cancel()
@@ -37,29 +34,17 @@ func (u *Users) Get(ctx context.Context, username string,
 	// 执行带重试的数据库查询
 	err := db.Do(totalCtx, queryConfig, func(attemptCtx context.Context) error {
 		attemptStart := time.Now()
-
 		user, innerErr := u.executeSingleGet(attemptCtx, username)
 		if innerErr != nil {
-			 logger.Errorf("单次查询尝试失败",
-				"attempt_cost_ms", time.Since(attemptStart).Milliseconds(),
-			 	"error", innerErr.Error())
 			return innerErr
 		}
-
 		resultUser = user
 		logger.Debugf("单次查询尝试成功%v,%v",
 			"attempt_cost_ms", time.Since(attemptStart).Milliseconds())
 		return nil
 	})
 
-	totalCost := time.Since(start)
-
 	if err != nil {
-		logger.Warnf("用户查询失败",
-			"username", username,
-			"total_cost_ms", totalCost.Milliseconds(),
-			"error", err.Error(),
-			"error_type", fmt.Sprintf("%T", err)) // 记录错误类型
 		return nil, u.handleGetError(err)
 	}
 	return resultUser, nil

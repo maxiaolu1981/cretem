@@ -126,11 +126,6 @@ var (
 		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5},
 	}, []string{"path", "method", "status"})
 
-	HTTPRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "http_requests_total",
-		Help: "Total number of HTTP requests",
-	}, []string{"path", "method", "status"})
-
 	HTTPRequestsInFlight = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "http_requests_in_flight",
 		Help: "Number of ongoing HTTP requests",
@@ -225,7 +220,8 @@ func getDatabaseErrorType(err error) string {
 }
 
 // 辅助函数用于记录HTTP请求
-func RecordHTTPRequest(path, method, status string, duration float64, requestSize, responseSize int64) {
+func RecordHTTPRequest(path, method, status string, duration float64, requestSize, responseSize int64, clientIP string, userAgent string,
+	host string, errorCode string, errorType string, userID string, tenantID string) {
 	HTTPResponseTime.WithLabelValues(path, method, status).Observe(duration)
 	HTTPRequestsTotal.WithLabelValues(path, method, status).Inc()
 
@@ -254,4 +250,63 @@ func SetDatabaseConnectionsInUse(poolName string, count int) {
 
 func IncDatabaseConnectionsWait(poolName string) {
 	DatabaseConnectionsWait.WithLabelValues(poolName).Inc()
+}
+
+// 在 metrics 包中添加以下指标定义
+
+// HTTP请求总数（增强版）
+var HTTPRequestsTotal = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "HTTP请求总数",
+	},
+	[]string{"path", "method", "status", "error_type", "user_id", "tenant_id", "client_ip", "user_agent", "host"},
+)
+
+// HTTP请求延迟分布
+var HTTPRequestDuration = prometheus.NewHistogramVec(
+	prometheus.HistogramOpts{
+		Name:    "http_request_duration_seconds",
+		Help:    "HTTP请求延迟分布",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10},
+	},
+	[]string{"path", "method", "status", "error_type"},
+)
+
+// 并发请求数
+var HTTPRequestsInProgress = prometheus.NewGaugeVec(
+	prometheus.GaugeOpts{
+		Name: "http_requests_in_progress",
+		Help: "当前正在处理的HTTP请求数",
+	},
+	[]string{"path", "method"},
+)
+
+// 缓存请求统计
+var CacheRequests = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "http_cache_requests_total",
+		Help: "HTTP请求缓存命中统计",
+	},
+	[]string{"path", "cache_status", "user_id", "tenant_id"},
+)
+
+// 慢请求统计
+var SlowHTTPRequests = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "http_slow_requests_total",
+		Help: "慢HTTP请求统计（>1s）",
+	},
+	[]string{"path", "method", "status", "error_type"},
+)
+
+// 注册所有指标
+func init() {
+	prometheus.MustRegister(
+		HTTPRequestsTotal,
+		HTTPRequestDuration,
+		HTTPRequestsInProgress,
+		CacheRequests,
+		SlowHTTPRequests,
+	)
 }

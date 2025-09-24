@@ -9,10 +9,8 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
-	"github.com/maxiaolu1981/cretem/nexuscore/log"
 	"gorm.io/gorm"
 )
 
@@ -37,31 +35,23 @@ func (u *Users) executeSingleGet(ctx context.Context, username string) (*v1.User
 		First(user).Error
 
 	if err != nil {
-		log.Errorf("数据库查询失败 - 用户:%s, 错误:%v, 错误类型:%T", username, err, err)
 		// 检查是否是 gorm.ErrRecordNotFound
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Error("确认为记录不存在错误")
+			err := errors.WithCode(code.ErrUserNotFound, "用户没有发现")
+			return nil, err
 		}
-
 		return nil, err
 	}
-	log.Errorf("数据库查询成功 - 用户ID:%d, Name:%s, Status:%d", user.ID, user.Name, user.Status)
-	metrics.DBQueries.WithLabelValues("found").Inc()
 	// 检查用户状态
 	if user.Status == 0 { // status = 0 表示失效
 		return nil, errors.WithCode(code.ErrUserDisabled, "用户已失效")
 	}
-	log.Infof("用户状态检查通过")
-
 	return user, nil
 }
 
 // handleGetError 处理查询错误
 func (u *Users) handleGetError(err error) error {
 	// 使用错误码框架解析错误
-	log.Errorf("=== handleGetError 开始 ===")
-	log.Errorf("输入错误: %v", err)
-	log.Errorf("错误类型: %T", err)
 	coder := errors.ParseCoderByErr(err)
 	if coder != nil {
 		// 如果是已知错误码，直接返回

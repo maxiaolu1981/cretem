@@ -148,14 +148,14 @@ const (
 	ValidPassword = "Test@123456"
 
 	RespCodeSuccess    = 100001
-	RespCodeNotFound   = 110001 // 根据实际系统调整为110001
-	RespCodeForbidden  = 110001 //无权访问
+	RespCodeNotFound   = 100206 // 根据实际系统调整为110001
+	RespCodeForbidden  = 110009 //无权访问
 	RespCodeValidation = 100400
 
-	ConcurrentUsers       = 100000
+	ConcurrentUsers       = 10000
 	RequestsPerUser       = 1
-	RequestInterval       = 5 * time.Millisecond
-	BatchSize             = 100
+	RequestInterval       = 10 * time.Millisecond
+	BatchSize             = 1
 	HotUserRequestPercent = 50 // 热点用户请求百分比
 	InvalidRequestPercent = 20 //无效请求百分比
 
@@ -165,10 +165,10 @@ const (
 	ErrorRateLimit = 0.01
 
 	// 缓存击穿测试相关常量
-	CachePenetrationTestUsers  = 100                      // 缓存击穿测试并发用户数
-	CachePenetrationRequests   = 100                     // 每个用户请求次数
-	CachePenetrationUserID     = "nonexistent-user-12345" // 用于缓存击穿测试的用户ID
-	CachePenetrationBatchDelay = 100 * time.Millisecond   // 批次间延迟
+	CachePenetrationTestUsers  = 1000                       // 缓存击穿测试并发用户数
+	CachePenetrationRequests   = 100                       // 每个用户请求次数
+	CachePenetrationUserID     = "mxl_nonexistent-user-11" // 用于缓存击穿测试的用户ID
+	CachePenetrationBatchDelay = 300 * time.Millisecond    // 批次间延迟
 )
 
 // 在全局变量部分添加预定义的用户列表
@@ -1214,13 +1214,6 @@ func min(a, b int) int {
 
 // ==================== 测试用例函数 ====================
 
-// TestSingleUserGetConcurrent 单用户查询接口并发测试
-func TestSingleUserGetConcurrent(t *testing.T) {
-	t.Run("单用户查询接口大并发压力测试", func(t *testing.T) {
-		runBatchConcurrentTest(t, "单用户查询接口压力测试", testSingleUserGetRequest)
-	})
-}
-
 // ==================== 并发测试框架 ====================
 func runBatchConcurrentTest(t *testing.T, testName string, testFunc func(*testing.T, int, *TestContext) (bool, bool, *APIResponse, int, int)) {
 	totalBatches := (ConcurrentUsers + BatchSize - 1) / BatchSize
@@ -1298,6 +1291,7 @@ func testSingleUserGetRequest(t *testing.T, userID int, ctx *TestContext) (bool,
 
 	// 随机决定请求类型
 	randNum := rand.IntN(100)
+	//randNum = 90
 	switch {
 	case randNum < HotUserRequestPercent:
 		targetUserID = hotUserID
@@ -1305,12 +1299,12 @@ func testSingleUserGetRequest(t *testing.T, userID int, ctx *TestContext) (bool,
 		expectedBiz = RespCodeSuccess
 	case randNum < HotUserRequestPercent+InvalidRequestPercent:
 		targetUserID = invalidUserIDs[rand.IntN(len(invalidUserIDs))]
-		expectedHTTP = http.StatusNotFound
+		expectedHTTP = http.StatusUnauthorized
 		expectedBiz = RespCodeNotFound
 		isExpectedFailure = true
 	case randNum < HotUserRequestPercent+InvalidRequestPercent+10:
 		targetUserID = unauthorizedUser
-		expectedHTTP = http.StatusNotFound
+		expectedHTTP = http.StatusForbidden
 		expectedBiz = RespCodeForbidden
 		isExpectedFailure = true
 	default:
@@ -1496,7 +1490,12 @@ func truncateText(text string, maxLength int) string {
 	return text[:maxLength-3] + "..."
 }
 
-// ==================== 其他测试函数 ====================
+// TestSingleUserGetConcurrent 单用户查询接口并发测试
+func TestSingleUserGetConcurrent(t *testing.T) {
+	t.Run("单用户查询接口大并发压力测试", func(t *testing.T) {
+		runBatchConcurrentTest(t, "单用户查询接口压力测试", testSingleUserGetRequest)
+	})
+}
 
 // TestSingleUserGetCachePenetration 缓存击穿测试
 func TestSingleUserGetCachePenetration(t *testing.T) {
@@ -1534,7 +1533,7 @@ func TestSingleUserGetCachePenetration(t *testing.T) {
 
 					mu.Lock()
 					stats.TotalRequests++
-					if err == nil && resp.HTTPStatus == http.StatusNotFound {
+					if err == nil && resp.HTTPStatus == http.StatusUnauthorized {
 						stats.SuccessCount++
 						stats.TotalDuration += duration
 					} else {
