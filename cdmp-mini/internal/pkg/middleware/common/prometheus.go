@@ -67,14 +67,7 @@ func PrometheusMiddleware() gin.HandlerFunc {
 			c.Request.Host,
 		).Inc()
 
-		// 记录HTTP请求延迟分布
-		metrics.HTTPRequestDuration.WithLabelValues(
-			getFullPath(c),
-			c.Request.Method,
-			status,
-			errorType,
-		).Observe(duration)
-
+	
 		// 记录详细的HTTP请求指标
 		metrics.RecordHTTPRequest(
 			getFullPath(c),

@@ -167,6 +167,7 @@ func (c *UserConsumer) getOperationFromHeaders(headers []kafka.Header) string {
 	return OperationCreate
 }
 
+// TODO 其他相关的delet,update操作也要加入监控指标
 func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Message) error {
 	startTime := time.Now()
 	defer func() {
@@ -201,8 +202,6 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	if err := c.setUserCache(ctx, &user); err != nil {
 		log.Errorw("缓存写入失败", "username", user.Name, "error", err)
 	}
-
-	
 
 	log.Infof("用户创建成功: username=%s", user.Name)
 	return nil
@@ -356,7 +355,7 @@ func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) err
 
 func (c *UserConsumer) sendToRetry(ctx context.Context, msg kafka.Message, errorInfo string) error {
 	operation := c.getOperationFromHeaders(msg.Headers)
-	errorType := getErrorType(fmt.Errorf(errorInfo))
+	errorType := getErrorType(fmt.Errorf("%s", errorInfo))
 	// 记录重试指标
 	metrics.ConsumerRetryMessages.WithLabelValues(c.topic, c.groupID, operation, errorType).Inc()
 
@@ -384,7 +383,7 @@ func (c *UserConsumer) sendToRetry(ctx context.Context, msg kafka.Message, error
 
 func (c *UserConsumer) sendToDeadLetter(ctx context.Context, msg kafka.Message, reason string) error {
 	operation := c.getOperationFromHeaders(msg.Headers)
-	errorType := getErrorType(fmt.Errorf(reason))
+	errorType := getErrorType(fmt.Errorf("%s", reason))
 	// 记录死信指标
 	metrics.ConsumerDeadLetterMessages.WithLabelValues(c.topic, c.groupID, operation, errorType).Inc()
 	if c.producer == nil {

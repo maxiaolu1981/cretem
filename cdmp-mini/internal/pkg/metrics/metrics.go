@@ -1,8 +1,19 @@
+/*
+这份 Go 代码基于 prometheus/client_golang 库，定义了Kafka（生产者 / 消费者）、数据库、HTTP、缓存, redis五大核心场景的监控指标（Counter/Gauge/Histogram），并提供了 7 个辅助函数用于简化业务代码中指标的上报操作。
+所有指标通过 promauto.NewXXX 自动注册到 Prometheus 默认注册表，无需手动调用 prometheus.Register；函数的核心作用是封装指标的标签赋值、计数 / 观测逻辑，让业务代码无需关注 Prometheus 指标的底层操作，只需传入业务参数即可完成监控上报。
+*/
 package metrics
 
 import (
+	"context"
+
+	"strings"
+
+	"github.com/go-sql-driver/mysql"
+	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"gorm.io/gorm"
 )
 
 var (
@@ -118,8 +129,32 @@ var (
 	}, []string{"pool"})
 )
 
+// Redis操作指标
 var (
-	// HTTP指标
+	RedisOperations = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "redis_operations_total",
+		Help: "Redis操作总数",
+	}, []string{"operation", "status"}) // operation: get, set, del; status: success, error
+
+	RedisOperationDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "redis_operation_duration_seconds",
+		Help:    "Redis操作延迟",
+		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
+	}, []string{"operation"})
+
+	RedisErrors = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "redis_errors_total",
+		Help: "Redis错误总数",
+	}, []string{"operation", "error_type"}) // error_type: connection, timeout, serialization等
+
+	RedisCacheSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "redis_cache_size_bytes",
+		Help: "Redis缓存大小",
+	}, []string{"key_pattern"})
+)
+
+var (
+	// HTTP指标 - 使用 promauto 自动注册
 	HTTPResponseTime = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    "http_response_time_seconds",
 		Help:    "Duration of HTTP requests",
@@ -143,6 +178,34 @@ var (
 		Buckets: prometheus.ExponentialBuckets(100, 10, 7), // 100B to 1GB
 	}, []string{"path", "method", "status"})
 
+	// 新增的HTTP增强指标 - 使用 promauto 自动注册
+	HTTPRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_requests_total",
+		Help: "HTTP请求总数",
+	}, []string{"path", "method", "status", "error_type", "user_id", "tenant_id", "client_ip", "user_agent", "host"})
+
+	HTTPRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "http_request_duration_seconds",
+		Help:    "HTTP请求延迟分布",
+		Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10},
+	}, []string{"path", "method", "status", "error_type"})
+
+	HTTPRequestsInProgress = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "http_requests_in_progress",
+		Help: "当前正在处理的HTTP请求数",
+	}, []string{"path", "method"})
+
+	CacheRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_cache_requests_total",
+		Help: "HTTP请求缓存命中统计",
+	}, []string{"path", "cache_status", "user_id", "tenant_id"})
+
+	SlowHTTPRequests = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "http_slow_requests_total",
+		Help: "慢HTTP请求统计（>1s）",
+	}, []string{"path", "method", "status", "error_type"})
+
+	// 原有的HTTPErrors指标保持不变
 	HTTPErrors = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "http_errors_total",
 		Help: "Total number of HTTP errors by type",
@@ -179,6 +242,7 @@ var (
 		},
 		[]string{"type", "operation"}, // 错误类型，操作类型
 	)
+
 	// 空值缓存数量（使用Gauge）
 	CacheNullValuesCount = promauto.NewGauge(prometheus.GaugeOpts{
 		Name: "cache_null_values_count",
@@ -192,45 +256,84 @@ var (
 	}, []string{"operation"}) // operation: set, hit, expire, erreration: set, hit, expire
 )
 
-// 辅助函数用于记录数据库操作
+// 统一处理数据库查询的监控上报，包括查询错误计数和查询耗时统计
 func RecordDatabaseQuery(operation, table string, duration float64, err error) {
-
+	DatabaseQueryDuration.WithLabelValues(operation, table).Observe(duration)
 	if err != nil {
-
-		errorType := getDatabaseErrorType(err)
+		errorType := GetDatabaseErrorType(err)
 		DatabaseQueryErrors.WithLabelValues(operation, table, errorType).Inc()
 	}
-
-	DatabaseQueryDuration.WithLabelValues(operation, table).Observe(duration)
 }
 
-func getDatabaseErrorType(err error) string {
-	// 根据实际错误类型进行分类
-	// 这里可以根据你的数据库驱动错误类型进行细化
+// GetDatabaseErrorType 数据库错误分类，仅用于监控指标
+func GetDatabaseErrorType(err error) string {
+	if err == nil {
+		return "success"
+	}
+
+	// 1. 先检查是否是业务框架已知错误
+	coder := errors.ParseCoderByErr(err)
+	if coder != nil {
+		// 对于已知业务错误，返回通用分类
+		return "business_error"
+	}
+
+	// 2. 检查上下文相关错误
 	switch {
-	case err.Error() == "context deadline exceeded":
+	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
-	case err.Error() == "connection refused":
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	}
+
+	// 3. 检查GORM特定错误
+	switch {
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		return "not_found"
+	case errors.Is(err, gorm.ErrDuplicatedKey):
+		return "duplicate_key"
+	case errors.Is(err, gorm.ErrForeignKeyViolated):
+		return "foreign_key_violation"
+	}
+
+	// 4. 检查MySQL驱动错误
+	var mysqlErr *mysql.MySQLError
+	if errors.As(err, &mysqlErr) {
+		switch mysqlErr.Number {
+		case 1213: // ER_LOCK_DEADLOCK
+			return "deadlock"
+		case 1205: // ER_LOCK_WAIT_TIMEOUT
+			return "lock_timeout"
+		case 1062: // ER_DUP_ENTRY
+			return "duplicate_entry"
+		case 1452: // ER_NO_REFERENCED_ROW
+			return "foreign_key_violation"
+		case 1045: // ER_ACCESS_DENIED_ERROR
+			return "access_denied"
+		case 2002, 2003: // 连接相关错误
+			return "connection_error"
+		default:
+			return "mysql_error"
+		}
+	}
+
+	// 5. 基于错误消息的模式匹配
+	errMsg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(errMsg, "timeout"):
+		return "timeout"
+	case strings.Contains(errMsg, "connection"):
 		return "connection_error"
-	case err.Error() == "duplicate key":
+	case strings.Contains(errMsg, "deadlock"):
+		return "deadlock"
+	case strings.Contains(errMsg, "duplicate"):
+		return "duplicate"
+	case strings.Contains(errMsg, "constraint"):
 		return "constraint_violation"
+	case strings.Contains(errMsg, "full"):
+		return "disk_full"
 	default:
 		return "unknown"
-	}
-}
-
-// 辅助函数用于记录HTTP请求
-func RecordHTTPRequest(path, method, status string, duration float64, requestSize, responseSize int64, clientIP string, userAgent string,
-	host string, errorCode string, errorType string, userID string, tenantID string) {
-	HTTPResponseTime.WithLabelValues(path, method, status).Observe(duration)
-	HTTPRequestsTotal.WithLabelValues(path, method, status).Inc()
-
-	if requestSize > 0 {
-		HTTPRequestSize.WithLabelValues(path, method).Observe(float64(requestSize))
-	}
-
-	if responseSize > 0 {
-		HTTPResponseSize.WithLabelValues(path, method, status).Observe(float64(responseSize))
 	}
 }
 
@@ -252,61 +355,59 @@ func IncDatabaseConnectionsWait(poolName string) {
 	DatabaseConnectionsWait.WithLabelValues(poolName).Inc()
 }
 
-// 在 metrics 包中添加以下指标定义
+// RecordHTTPRequest 记录HTTP请求指标（简化版，与您现有代码兼容）
+func RecordHTTPRequest(path, method, status string, duration float64, requestSize, responseSize int64,
+	clientIP, userAgent, host, errorCode, errorType, userID, tenantID string) {
 
-// HTTP请求总数（增强版）
-var HTTPRequestsTotal = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "http_requests_total",
-		Help: "HTTP请求总数",
-	},
-	[]string{"path", "method", "status", "error_type", "user_id", "tenant_id", "client_ip", "user_agent", "host"},
-)
+	// 使用现有的HTTP指标
+	HTTPResponseTime.WithLabelValues(path, method, status).Observe(duration)
 
-// HTTP请求延迟分布
-var HTTPRequestDuration = prometheus.NewHistogramVec(
-	prometheus.HistogramOpts{
-		Name:    "http_request_duration_seconds",
-		Help:    "HTTP请求延迟分布",
-		Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10},
-	},
-	[]string{"path", "method", "status", "error_type"},
-)
+	if requestSize > 0 {
+		HTTPRequestSize.WithLabelValues(path, method).Observe(float64(requestSize))
+	}
+	if responseSize > 0 {
+		HTTPResponseSize.WithLabelValues(path, method, status).Observe(float64(responseSize))
+	}
 
-// 并发请求数
-var HTTPRequestsInProgress = prometheus.NewGaugeVec(
-	prometheus.GaugeOpts{
-		Name: "http_requests_in_progress",
-		Help: "当前正在处理的HTTP请求数",
-	},
-	[]string{"path", "method"},
-)
+	// 记录新增的增强版指标
+	HTTPRequestsTotal.WithLabelValues(
+		path, method, status, errorType, userID, tenantID, clientIP, userAgent, host,
+	).Inc()
 
-// 缓存请求统计
-var CacheRequests = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "http_cache_requests_total",
-		Help: "HTTP请求缓存命中统计",
-	},
-	[]string{"path", "cache_status", "user_id", "tenant_id"},
-)
+	// 记录延迟分布
+	HTTPRequestDuration.WithLabelValues(
+		path, method, status, errorType,
+	).Observe(duration)
 
-// 慢请求统计
-var SlowHTTPRequests = prometheus.NewCounterVec(
-	prometheus.CounterOpts{
-		Name: "http_slow_requests_total",
-		Help: "慢HTTP请求统计（>1s）",
-	},
-	[]string{"path", "method", "status", "error_type"},
-)
+	// 记录慢请求
+	if duration > 1.0 {
+		SlowHTTPRequests.WithLabelValues(path, method, status, errorType).Inc()
+	}
+}
 
-// 注册所有指标
-func init() {
-	prometheus.MustRegister(
-		HTTPRequestsTotal,
-		HTTPRequestDuration,
-		HTTPRequestsInProgress,
-		CacheRequests,
-		SlowHTTPRequests,
-	)
+// GetRedisErrorType Redis错误分类
+func GetRedisErrorType(err error) string {
+	if err == nil {
+		return "success"
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(errMsg, "timeout"):
+		return "timeout"
+	case strings.Contains(errMsg, "connection"):
+		return "connection_error"
+	case strings.Contains(errMsg, "network"):
+		return "network_error"
+	case strings.Contains(errMsg, "max memory"):
+		return "memory_limit"
+	case strings.Contains(errMsg, "serialize"), strings.Contains(errMsg, "marshal"):
+		return "serialization_error"
+	case strings.Contains(errMsg, "deserialize"), strings.Contains(errMsg, "unmarshal"):
+		return "deserialization_error"
+	case strings.Contains(errMsg, "nil"): // redis.Nil错误
+		return "key_not_found"
+	default:
+		return "unknown_error"
+	}
 }

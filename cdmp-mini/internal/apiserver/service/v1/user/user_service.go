@@ -81,7 +81,7 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 }
 
 // getUserFromDBAndSetCache 带缓存的用户查询核心逻辑
-func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, cacheKey string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
+func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, cacheKey string, opts metav1.GetOptions) (*v1.User, error) {
 	logger := log.L(ctx).WithValues("operation", "getUserWithCache")
 
 	// 1. 查询数据库

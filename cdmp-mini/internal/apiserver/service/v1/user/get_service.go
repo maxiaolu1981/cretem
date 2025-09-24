@@ -34,7 +34,7 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 
 	// 2. 缓存未命中，使用singleflight保护数据库查询
 	result, err, shared := u.group.Do(cacheKey, func() (interface{}, error) {
-		return u.getUserFromDBAndSetCache(ctx, username, cacheKey, opts, opt)
+		return u.getUserFromDBAndSetCache(ctx, username, cacheKey, opts)
 	})
 	if shared {
 		logger.Infow("数据库查询被合并，共享结果", "username", username)

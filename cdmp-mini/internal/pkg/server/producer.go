@@ -21,13 +21,11 @@ import (
 var _ producer.MessageProducer = (*UserProducer)(nil)
 var KafkaBrokers = []string{"127.0.0.1:9092"}
 
-// 在全局变量区域添加 Prometheus 指标
 
 type UserProducer struct {
 	writer           *kafka.Writer
 	retryWriter      *kafka.Writer
 	maxRetries       int
-	deadLetterWriter *kafka.Writer
 }
 
 // internal/pkg/server/producer.go
@@ -236,7 +234,7 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 	// 4. 使用增强的同步发送（不改变原有函数名）
 	retryCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	err := p.sendMessageWithRetry(retryCtx, retryMsg, UserRetryTopic, currentRetryCount)
+	err := p.sendMessageWithRetry(retryCtx, retryMsg, UserRetryTopic)
 	if err != nil {
 		log.Errorf("重试发送失败（key=%s, 第%d次）: %v", string(msg.Key), currentRetryCount, err)
 		// 进入死信队列
@@ -276,7 +274,7 @@ func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Mess
 	log.Warnf("发送到死信队列: key=%s, reason=%s", string(msg.Key), errorInfo)
 
 	// 使用增强的同步发送
-	return p.sendMessageWithRetry(ctx, deadLetterMsg, UserDeadLetterTopic, 0)
+	return p.sendMessageWithRetry(ctx, deadLetterMsg, UserDeadLetterTopic)
 }
 
 func (p *UserProducer) Close() error {
@@ -344,7 +342,7 @@ func (p *UserProducer) updateOrAddHeader(headers []kafka.Header, key, value stri
 
 // sendMessageWithRetry 增强的同步发送方法（新增）
 // sendMessageWithRetry 增强的同步发送方法
-func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Message, topic string, attempt int) error {
+func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
 	const maxSendRetries = 3
 	var lastErr error
 

@@ -8,8 +8,6 @@ const (
 	redisRefreshTokenPrefix     = "auth:refresh_token:"
 	redisLoginFailPrefix        = "auth:login_fail:"
 	redisUserSessionsPrefix     = "auth:user_sessions:"
-	redisAtSessionIDPrefix      = "auth:atsession_id:"
-	redisRtSessionIDPrefix      = "auth:rtsession_id:"
 )
 
 // 登录失败限制配置

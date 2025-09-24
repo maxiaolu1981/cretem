@@ -39,7 +39,7 @@ func CheckKafkaConnection(opt *options.Options) error {
 		return nil
 	}
 
-	return fmt.Errorf("Kafka 连接失败，已达到最大重试次数: %v", lastErr)
+	return fmt.Errorf("kafka 连接失败，已达到最大重试次数: %v", lastErr)
 }
 
 // checkKafkaBrokers 检查 Kafka Broker 连接
@@ -88,12 +88,11 @@ func checkKafkaCluster(opt *options.Options) error {
 // isKafkaStartingError 判断是否是 Kafka 启动中的错误
 func isKafkaStartingError(err error) bool {
 	// 这些错误通常表示 Kafka 还在启动中
-	switch err.(type) {
+	switch e := err.(type) {
 	case *net.OpError:
 		return true
 	case kafka.Error:
-		kafkaErr := err.(kafka.Error)
-		return kafkaErr.Temporary()
+		return e.Temporary()
 	default:
 		return false
 	}

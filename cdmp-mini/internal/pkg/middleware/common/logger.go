@@ -107,7 +107,7 @@ func LoggerWithConfig(conf gin.LoggerConfig) gin.HandlerFunc {
 	// 返回中间件函数
 	return func(c *gin.Context) {
 		// 1. 记录请求开始时间
-		start := time.Now()
+	
 		path := c.Request.URL.Path
 		raw := c.Request.URL.RawQuery // 原始查询参数（如 ?id=1&name=test）
 
@@ -116,25 +116,13 @@ func LoggerWithConfig(conf gin.LoggerConfig) gin.HandlerFunc {
 
 		// 3. 若路径不在忽略列表中，则生成并输出日志
 		if _, ok := skip[path]; !ok {
-			param := gin.LogFormatterParams{}
-
-			// 计算请求耗时
-			param.TimeStamp = time.Now()
-			param.Latency = param.TimeStamp.Sub(start)
-
-			// 收集请求相关信息
-			param.ClientIP = c.ClientIP()                                       // 客户端 IP
-			param.Method = c.Request.Method                                     // HTTP 方法
-			param.StatusCode = c.Writer.Status()                                // 响应状态码
-			param.ErrorMessage = c.Errors.ByType(gin.ErrorTypePrivate).String() // 错误信息
-
-			param.BodySize = c.Writer.Size() // 响应体大小
+		
 
 			// 拼接路径和查询参数（如 /api/users?id=1）
 			if raw != "" {
 				path = path + "?" + raw
 			}
-			param.Path = path
+	
 
 			// 生成日志并输出（原代码注释了输出逻辑，实际使用时需补充）
 			//log.L(c).Debug(formatter(param))
