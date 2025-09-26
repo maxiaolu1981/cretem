@@ -152,10 +152,10 @@ const (
 	RespCodeForbidden  = 110009 //无权访问
 	RespCodeValidation = 100400
 
-	ConcurrentUsers       = 10000
-	RequestsPerUser       = 1
+	ConcurrentUsers       = 1000
+	RequestsPerUser       = 100
 	RequestInterval       = 10 * time.Millisecond
-	BatchSize             = 1
+	BatchSize             = 20
 	HotUserRequestPercent = 50 // 热点用户请求百分比
 	InvalidRequestPercent = 20 //无效请求百分比
 
@@ -165,7 +165,7 @@ const (
 	ErrorRateLimit = 0.01
 
 	// 缓存击穿测试相关常量
-	CachePenetrationTestUsers  = 1000                       // 缓存击穿测试并发用户数
+	CachePenetrationTestUsers  = 1000                      // 缓存击穿测试并发用户数
 	CachePenetrationRequests   = 100                       // 每个用户请求次数
 	CachePenetrationUserID     = "mxl_nonexistent-user-11" // 用于缓存击穿测试的用户ID
 	CachePenetrationBatchDelay = 300 * time.Millisecond    // 批次间延迟

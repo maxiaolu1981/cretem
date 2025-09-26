@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -197,9 +198,7 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "检查用户存在性失败: "+err.Error())
 	}
 
-	if err := rc.setUserCache(ctx, &user); err != nil {
-		log.Errorw("重试创建成功但缓存写入失败", "username", user.Name, "error", err)
-	}
+	rc.setUserCache(ctx, &user)
 
 	log.Infof("第%d次重试创建成功: username=%s", currentRetryCount+1, user.Name)
 	return nil
@@ -236,9 +235,7 @@ func (rc *RetryConsumer) processRetryUpdate(ctx context.Context, msg kafka.Messa
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "错误信息: "+err.Error())
 	}
 
-	if err := rc.setUserCache(ctx, &user); err != nil {
-		log.Errorw("重试更新成功但缓存写入失败", "username", user.Name, "error", err)
-	}
+	rc.setUserCache(ctx, &user)
 
 	log.Infof("第%d次重试更新成功: username=%s", currentRetryCount+1, user.Name)
 	return nil
@@ -478,12 +475,23 @@ func (rc *RetryConsumer) checkUserExists(ctx context.Context, username string) (
 }
 
 func (rc *RetryConsumer) setUserCache(ctx context.Context, user *v1.User) error {
+	startTime := time.Now()
+	var operationErr error
+	defer func() {
+		metrics.RecordRedisOperation("set", float64(time.Since(startTime).Seconds()), operationErr)
+	}()
 	cacheKey := fmt.Sprintf("user:%s", user.Name)
 	data, err := json.Marshal(user)
 	if err != nil {
-		return err
+		operationErr = err
+		log.L(ctx).Errorw("用户数据序列化失败", "username", user.Name, "error", err)
+		return operationErr
 	}
-	return rc.redis.SetKey(ctx, cacheKey, string(data), 24*time.Hour)
+	operationErr = rc.redis.SetKey(ctx, cacheKey, string(data), 24*time.Hour)
+	if operationErr != nil {
+		log.L(ctx).Errorw("缓存写入失败", "username", user.Name, "error", operationErr)
+	}
+	return operationErr
 }
 
 func (rc *RetryConsumer) deleteUserCache(ctx context.Context, username string) error {

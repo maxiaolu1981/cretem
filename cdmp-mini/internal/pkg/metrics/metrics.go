@@ -1,232 +1,445 @@
 /*
-这份 Go 代码基于 prometheus/client_golang 库，定义了Kafka（生产者 / 消费者）、数据库、HTTP、缓存, redis五大核心场景的监控指标（Counter/Gauge/Histogram），并提供了 7 个辅助函数用于简化业务代码中指标的上报操作。
-所有指标通过 promauto.NewXXX 自动注册到 Prometheus 默认注册表，无需手动调用 prometheus.Register；函数的核心作用是封装指标的标签赋值、计数 / 观测逻辑，让业务代码无需关注 Prometheus 指标的底层操作，只需传入业务参数即可完成监控上报。
+这份 Go 代码基于 prometheus/client_golang 库，定义了Kafka（生产者 / 消费者）、数据库、HTTP、缓存, redis五大核心场景的监控指标（Counter/Gauge/Histogram），并提供了辅助函数用于简化业务代码中指标的上报操作。
+所有指标通过手动初始化后注册到 Prometheus 默认注册表（需在 init 函数中调用 prometheus.MustRegister）；函数的核心作用是封装指标的标签赋值、计数 / 观测逻辑，让业务代码无需关注 Prometheus 指标的底层操作，只需传入业务参数即可完成监控上报。
 */
 package metrics
 
 import (
 	"context"
-
 	"strings"
+	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promauto"
 	"gorm.io/gorm"
 )
 
+// -------------------------- 1. 先声明所有指标变量（仅声明，不初始化）--------------------------
 var (
 	// 生产者指标
-	ProducerAttempts = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_producer_attempts_total",
-		Help: "生产者发送消息的总尝试次数（包括首次发送和重试）",
-	}, []string{"topic", "operation"})
-
-	ProducerSuccess = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_producer_success_total",
-		Help: "Total number of successfully sent Kafka messages",
-	}, []string{"topic", "operation"})
-
-	ProducerFailures = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_producer_failures_total",
-		Help: "Total number of failed Kafka message sending attempts",
-	}, []string{"topic", "operation", "error_type"})
-
-	ProducerRetries = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_producer_retries_total",
-		Help: "Total number of message retries",
-	}, []string{"topic", "operation"})
-
-	DeadLetterMessages = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_dead_letter_messages_total",
-		Help: "Total number of messages sent to dead letter queue",
-	}, []string{"topic", "operation"})
-
-	// 消息处理延迟指标
-	MessageProcessingTime = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "kafka_message_processing_seconds",
-		Help:    "Time taken to process messages",
-		Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5},
-	}, []string{"topic", "operation", "status"})
+	ProducerAttempts      *prometheus.CounterVec
+	ProducerSuccess       *prometheus.CounterVec
+	ProducerFailures      *prometheus.CounterVec
+	ProducerRetries       *prometheus.CounterVec
+	DeadLetterMessages    *prometheus.CounterVec
+	MessageProcessingTime *prometheus.HistogramVec
 
 	// 业务处理指标
-	BusinessProcessingTime = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "business_processing_seconds",
-		Help:    "Time taken for business logic processing",
-		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
-	}, []string{"operation"})
+	BusinessProcessingTime *prometheus.HistogramVec
+	BusinessSuccess        *prometheus.CounterVec
+	BusinessFailures       *prometheus.CounterVec
 
-	BusinessSuccess = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "business_operations_success_total",
-		Help: "Total number of successful business operations",
-	}, []string{"operation"})
-
-	BusinessFailures = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "business_operations_failures_total",
-		Help: "Total number of failed business operations",
-	}, []string{"operation", "error_type"})
+	// 新增：业务吞吐量指标
+	BusinessOperationsTotal *prometheus.CounterVec // 业务操作总数
+	BusinessOperationsRate  *prometheus.GaugeVec   // 业务操作速率（QPS）
+	BusinessInProgress      *prometheus.GaugeVec   // 当前处理中的业务数
+	BusinessThroughputStats *prometheus.SummaryVec // 业务吞吐量统计
+	BusinessErrorRate       *prometheus.GaugeVec   // 业务错误率
 )
 
 var (
 	// Kafka消费者指标
-	ConsumerMessagesReceived = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_consumer_messages_received_total",
-		Help: "Total number of messages received by consumer",
-	}, []string{"topic", "group", "operation"})
-
-	ConsumerMessagesProcessed = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_consumer_messages_processed_total",
-		Help: "Total number of messages successfully processed",
-	}, []string{"topic", "group", "operation"})
-
-	ConsumerProcessingErrors = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_consumer_processing_errors_total",
-		Help: "Total number of message processing errors",
-	}, []string{"topic", "group", "operation", "error_type"})
-
-	ConsumerProcessingTime = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "kafka_consumer_processing_seconds",
-		Help:    "Time taken to process messages by consumer",
-		Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10},
-	}, []string{"topic", "group", "operation", "status"})
-
-	ConsumerRetryMessages = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_consumer_retry_messages_total",
-		Help: "Total number of messages sent to retry topic",
-	}, []string{"topic", "group", "operation", "error_type"})
-
-	ConsumerDeadLetterMessages = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "kafka_consumer_dead_letter_messages_total",
-		Help: "Total number of messages sent to dead letter queue by consumer",
-	}, []string{"topic", "group", "operation", "error_type"})
-
-	ConsumerLag = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "kafka_consumer_lag",
-		Help: "Current consumer lag (estimated)",
-	}, []string{"topic", "group"})
+	ConsumerMessagesReceived   *prometheus.CounterVec
+	ConsumerMessagesProcessed  *prometheus.CounterVec
+	ConsumerProcessingErrors   *prometheus.CounterVec
+	ConsumerProcessingTime     *prometheus.HistogramVec
+	ConsumerRetryMessages      *prometheus.CounterVec
+	ConsumerDeadLetterMessages *prometheus.CounterVec
+	ConsumerLag                *prometheus.GaugeVec
 
 	// 数据库操作指标
-	DatabaseQueryDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "database_query_duration_seconds",
-		Help:    "Time taken for database queries",
-		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2},
-	}, []string{"operation", "table"})
-
-	DatabaseQueryErrors = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "database_query_errors_total",
-		Help: "Total number of database query errors",
-	}, []string{"operation", "table", "error_type"})
-
-	DatabaseConnectionsInUse = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "database_connections_in_use",
-		Help: "Number of database connections currently in use",
-	}, []string{"pool"})
-
-	DatabaseConnectionsWait = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "database_connections_wait_total",
-		Help: "Total number of database connection waits",
-	}, []string{"pool"})
+	DatabaseQueryDuration    *prometheus.HistogramVec
+	DatabaseQueryErrors      *prometheus.CounterVec
+	DatabaseConnectionsInUse *prometheus.GaugeVec
+	DatabaseConnectionsWait  *prometheus.CounterVec
 )
 
 // Redis操作指标
 var (
-	RedisOperations = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_operations_total",
-		Help: "Redis操作总数",
-	}, []string{"operation", "status"}) // operation: get, set, del; status: success, error
-
-	RedisOperationDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "redis_operation_duration_seconds",
-		Help:    "Redis操作延迟",
-		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
-	}, []string{"operation"})
-
-	RedisErrors = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "redis_errors_total",
-		Help: "Redis错误总数",
-	}, []string{"operation", "error_type"}) // error_type: connection, timeout, serialization等
-
-	RedisCacheSize = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "redis_cache_size_bytes",
-		Help: "Redis缓存大小",
-	}, []string{"key_pattern"})
+	RedisOperations        *prometheus.CounterVec
+	RedisOperationDuration *prometheus.HistogramVec
+	RedisErrors            *prometheus.CounterVec
+	RedisCacheSize         *prometheus.GaugeVec
 )
 
 var (
-	// HTTP指标 - 使用 promauto 自动注册
-	HTTPResponseTime = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "http_response_time_seconds",
-		Help:    "Duration of HTTP requests",
-		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5},
-	}, []string{"path", "method", "status"})
-
-	HTTPRequestsInFlight = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "http_requests_in_flight",
-		Help: "Number of ongoing HTTP requests",
-	})
-
-	HTTPRequestSize = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "http_request_size_bytes",
-		Help:    "HTTP request size in bytes",
-		Buckets: prometheus.ExponentialBuckets(100, 10, 6), // 100B to 100MB
-	}, []string{"path", "method"})
-
-	HTTPResponseSize = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "http_response_size_bytes",
-		Help:    "HTTP response size in bytes",
-		Buckets: prometheus.ExponentialBuckets(100, 10, 7), // 100B to 1GB
-	}, []string{"path", "method", "status"})
-
-	// 新增的HTTP增强指标 - 使用 promauto 自动注册
-	HTTPRequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "http_requests_total",
-		Help: "HTTP请求总数",
-	}, []string{"path", "method", "status", "error_type", "user_id", "tenant_id", "client_ip", "user_agent", "host"})
-
-	HTTPRequestDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "http_request_duration_seconds",
-		Help:    "HTTP请求延迟分布",
-		Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10},
-	}, []string{"path", "method", "status", "error_type"})
-
-	HTTPRequestsInProgress = promauto.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "http_requests_in_progress",
-		Help: "当前正在处理的HTTP请求数",
-	}, []string{"path", "method"})
-
-	CacheRequests = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "http_cache_requests_total",
-		Help: "HTTP请求缓存命中统计",
-	}, []string{"path", "cache_status", "user_id", "tenant_id"})
-
-	SlowHTTPRequests = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "http_slow_requests_total",
-		Help: "慢HTTP请求统计（>1s）",
-	}, []string{"path", "method", "status", "error_type"})
-
-	// 原有的HTTPErrors指标保持不变
-	HTTPErrors = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "http_errors_total",
-		Help: "Total number of HTTP errors by type",
-	}, []string{"method", "path", "status", "error_type"})
+	// HTTP指标 - 手动初始化（原配置不变）
+	HTTPResponseTime       *prometheus.HistogramVec
+	HTTPRequestsInFlight   prometheus.Gauge // 修正：去掉指针
+	HTTPRequestSize        *prometheus.HistogramVec
+	HTTPResponseSize       *prometheus.HistogramVec
+	HTTPRequestsTotal      *prometheus.CounterVec
+	HTTPRequestDuration    *prometheus.HistogramVec
+	HTTPRequestsInProgress *prometheus.GaugeVec
+	CacheRequests          *prometheus.CounterVec
+	SlowHTTPRequests       *prometheus.CounterVec
+	HTTPErrors             *prometheus.CounterVec
 )
 
 var (
 	// 缓存命中指标
-	CacheHits = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "user_cache_hits_total",
-		Help: "Total user cache hits",
-	}, []string{"type"}) // hit, miss, null_hit
-
+	CacheHits *prometheus.CounterVec
 	// 数据库查询指标
-	DBQueries = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "user_db_queries_total",
-		Help: "Total user database queries",
-	}, []string{"result"}) // found, not_found
-
+	DBQueries *prometheus.CounterVec
 	// RequestsMerged 记录被singleflight合并的请求数量
-	RequestsMerged = promauto.NewCounterVec(
+	RequestsMerged *prometheus.CounterVec
+	// CacheErrors 记录缓存相关错误
+	CacheErrors *prometheus.CounterVec
+	// 空值缓存数量（使用Gauge）
+	CacheNullValuesCount prometheus.Gauge // 修正：去掉指针
+	// 空值缓存操作统计
+	CacheNullValueOperations *prometheus.CounterVec
+)
+
+// -------------------------- 2. 在 init 函数中初始化指标 + 手动注册 --------------------------
+func init() {
+	// -------------------------- 初始化：生产者指标 --------------------------
+	ProducerAttempts = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_producer_attempts_total",
+			Help: "生产者发送消息的总尝试次数（包括首次发送和重试）",
+		},
+		[]string{"topic", "operation"},
+	)
+
+	ProducerSuccess = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_producer_success_total",
+			Help: "Total number of successfully sent Kafka messages",
+		},
+		[]string{"topic", "operation"},
+	)
+
+	ProducerFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_producer_failures_total",
+			Help: "Total number of failed Kafka message sending attempts",
+		},
+		[]string{"topic", "operation", "error_type"},
+	)
+
+	ProducerRetries = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_producer_retries_total",
+			Help: "Total number of message retries",
+		},
+		[]string{"topic", "operation"},
+	)
+
+	DeadLetterMessages = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_dead_letter_messages_total",
+			Help: "Total number of messages sent to dead letter queue",
+		},
+		[]string{"topic", "operation"},
+	)
+
+	MessageProcessingTime = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kafka_message_processing_seconds",
+			Help:    "Time taken to process messages",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5},
+		},
+		[]string{"topic", "operation", "status"},
+	)
+
+	// -------------------------- 初始化：业务处理指标 --------------------------
+	BusinessProcessingTime = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "business_processing_seconds",
+			Help:    "Time taken for business logic processing",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
+		},
+		[]string{"operation"},
+	)
+
+	BusinessSuccess = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "business_operations_success_total",
+			Help: "Total number of successful business operations",
+		},
+		[]string{"operation"},
+	)
+
+	BusinessFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "business_operations_failures_total",
+			Help: "Total number of failed business operations",
+		},
+		[]string{"operation", "error_type"},
+	)
+
+	// -------------------------- 初始化：新增业务吞吐量指标 --------------------------
+	BusinessOperationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "business_operations_total",
+			Help: "Total number of business operations",
+		},
+		[]string{"service", "operation", "source"}, // service: user_service, source: http/kafka
+	)
+
+	BusinessOperationsRate = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "business_operations_rate_per_second",
+			Help: "Business operations processing rate per second",
+		},
+		[]string{"service", "operation"},
+	)
+
+	BusinessInProgress = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "business_operations_in_progress",
+			Help: "Number of business operations currently in progress",
+		},
+		[]string{"service", "operation"},
+	)
+
+	BusinessThroughputStats = prometheus.NewSummaryVec(
+		prometheus.SummaryOpts{
+			Name:       "business_throughput_stats_seconds",
+			Help:       "Business throughput statistics in seconds",
+			Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
+		},
+		[]string{"service", "operation"},
+	)
+
+	BusinessErrorRate = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "business_error_rate",
+			Help: "Business operation error rate percentage",
+		},
+		[]string{"service", "operation"},
+	)
+
+	// -------------------------- 初始化：Kafka消费者指标 --------------------------
+	ConsumerMessagesReceived = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_messages_received_total",
+			Help: "Total number of messages received by consumer",
+		},
+		[]string{"topic", "group", "operation"},
+	)
+
+	ConsumerMessagesProcessed = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_messages_processed_total",
+			Help: "Total number of messages successfully processed",
+		},
+		[]string{"topic", "group", "operation"},
+	)
+
+	ConsumerProcessingErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_processing_errors_total",
+			Help: "Total number of message processing errors",
+		},
+		[]string{"topic", "group", "operation", "error_type"},
+	)
+
+	ConsumerProcessingTime = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kafka_consumer_processing_seconds",
+			Help:    "Time taken to process messages by consumer",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10},
+		},
+		[]string{"topic", "group", "operation", "status"},
+	)
+
+	ConsumerRetryMessages = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_retry_messages_total",
+			Help: "Total number of messages sent to retry topic",
+		},
+		[]string{"topic", "group", "operation", "error_type"},
+	)
+
+	ConsumerDeadLetterMessages = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_dead_letter_messages_total",
+			Help: "Total number of messages sent to dead letter queue by consumer",
+		},
+		[]string{"topic", "group", "operation", "error_type"},
+	)
+
+	ConsumerLag = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kafka_consumer_lag",
+			Help: "Current consumer lag (estimated)",
+		},
+		[]string{"topic", "group"},
+	)
+
+	// -------------------------- 初始化：数据库操作指标 --------------------------
+	DatabaseQueryDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "database_query_duration_seconds",
+			Help:    "Time taken for database queries",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2},
+		},
+		[]string{"operation", "table"},
+	)
+
+	DatabaseQueryErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "database_query_errors_total",
+			Help: "Total number of database query errors",
+		},
+		[]string{"operation", "table", "error_type"},
+	)
+
+	DatabaseConnectionsInUse = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "database_connections_in_use",
+			Help: "Number of database connections currently in use",
+		},
+		[]string{"pool"},
+	)
+
+	DatabaseConnectionsWait = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "database_connections_wait_total",
+			Help: "Total number of database connection waits",
+		},
+		[]string{"pool"},
+	)
+
+	// -------------------------- 初始化：Redis操作指标 --------------------------
+	RedisOperations = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "redis_operations_total",
+			Help: "Redis操作总数",
+		},
+		[]string{"operation", "status"}, // operation: get, set, del; status: success, error
+	)
+
+	RedisOperationDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "redis_operation_duration_seconds",
+			Help:    "Redis操作延迟",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
+		},
+		[]string{"operation"},
+	)
+
+	RedisErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "redis_errors_total",
+			Help: "Redis错误总数",
+		},
+		[]string{"operation", "error_type"}, // error_type: connection, timeout, serialization等
+	)
+
+	RedisCacheSize = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cache_size_bytes",
+			Help: "Redis缓存大小",
+		},
+		[]string{"key_pattern"},
+	)
+
+	// -------------------------- 初始化：HTTP指标 --------------------------
+	HTTPResponseTime = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_response_time_seconds",
+			Help:    "Duration of HTTP requests",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5},
+		},
+		[]string{"path", "method", "status"},
+	)
+
+	HTTPRequestsInFlight = prometheus.NewGauge( // 修正：直接赋值，不使用指针
+		prometheus.GaugeOpts{
+			Name: "http_requests_in_flight",
+			Help: "Number of ongoing HTTP requests",
+		},
+	)
+
+	HTTPRequestSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_request_size_bytes",
+			Help:    "HTTP request size in bytes",
+			Buckets: prometheus.ExponentialBuckets(100, 10, 6), // 100B to 100MB
+		},
+		[]string{"path", "method"},
+	)
+
+	HTTPResponseSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_response_size_bytes",
+			Help:    "HTTP response size in bytes",
+			Buckets: prometheus.ExponentialBuckets(100, 10, 7), // 100B to 1GB
+		},
+		[]string{"path", "method", "status"},
+	)
+
+	HTTPRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_requests_total",
+			Help: "HTTP请求总数",
+		},
+		[]string{"path", "method", "status", "error_type", "user_id", "tenant_id", "client_ip", "user_agent", "host"},
+	)
+
+	HTTPRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_request_duration_seconds",
+			Help:    "HTTP请求延迟分布",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10},
+		},
+		[]string{"path", "method", "status", "error_type"},
+	)
+
+	HTTPRequestsInProgress = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "http_requests_in_progress",
+			Help: "当前正在处理的HTTP请求数",
+		},
+		[]string{"path", "method"},
+	)
+
+	CacheRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_cache_requests_total",
+			Help: "HTTP请求缓存命中统计",
+		},
+		[]string{"path", "cache_status", "user_id", "tenant_id"},
+	)
+
+	SlowHTTPRequests = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_slow_requests_total",
+			Help: "慢HTTP请求统计（>1s）",
+		},
+		[]string{"path", "method", "status", "error_type"},
+	)
+
+	HTTPErrors = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_errors_total",
+			Help: "Total number of HTTP errors by type",
+		},
+		[]string{"method", "path", "status", "error_type", "error_code", "tenant_id", "user_id"},
+	)
+
+	// -------------------------- 初始化：缓存相关指标 --------------------------
+	CacheHits = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "user_cache_hits_total",
+			Help: "Total user cache hits",
+		},
+		[]string{"type"}, // hit, miss, null_hit
+	)
+
+	DBQueries = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "user_db_queries_total",
+			Help: "Total user database queries",
+		},
+		[]string{"result"}, // found, not_found
+	)
+
+	RequestsMerged = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "user_service_requests_merged_total",
 			Help: "被singleflight合并的请求数量",
@@ -234,8 +447,7 @@ var (
 		[]string{"operation"}, // 操作类型：get, create, update等
 	)
 
-	// CacheErrors 记录缓存相关错误
-	CacheErrors = promauto.NewCounterVec(
+	CacheErrors = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "user_service_cache_errors_total",
 			Help: "缓存操作错误数量",
@@ -243,19 +455,88 @@ var (
 		[]string{"type", "operation"}, // 错误类型，操作类型
 	)
 
-	// 空值缓存数量（使用Gauge）
-	CacheNullValuesCount = promauto.NewGauge(prometheus.GaugeOpts{
-		Name: "cache_null_values_count",
-		Help: "Current number of null value caches in Redis",
-	})
+	CacheNullValuesCount = prometheus.NewGauge( // 修正：直接赋值，不使用指针
+		prometheus.GaugeOpts{
+			Name: "cache_null_values_count",
+			Help: "Current number of null value caches in Redis",
+		},
+	)
 
-	// 空值缓存操作统计
-	CacheNullValueOperations = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "cache_null_value_operations_total",
-		Help: "Total null value cache operations",
-	}, []string{"operation"}) // operation: set, hit, expire, erreration: set, hit, expire
-)
+	CacheNullValueOperations = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "cache_null_value_operations_total",
+			Help: "Total null value cache operations",
+		},
+		[]string{"operation"}, // operation: set, hit, expire
+	)
 
+	// -------------------------- 手动注册所有指标到 Prometheus 默认注册表 --------------------------
+	// MustRegister：注册失败会panic（适合初始化阶段，提前暴露配置错误）
+	prometheus.MustRegister(
+		// 生产者指标
+		ProducerAttempts,
+		ProducerSuccess,
+		ProducerFailures,
+		ProducerRetries,
+		DeadLetterMessages,
+		MessageProcessingTime,
+
+		// 业务处理指标
+		BusinessProcessingTime,
+		BusinessSuccess,
+		BusinessFailures,
+
+		// 新增业务吞吐量指标
+		BusinessOperationsTotal,
+		BusinessOperationsRate,
+		BusinessInProgress,
+		BusinessThroughputStats,
+		BusinessErrorRate,
+
+		// 消费者指标
+		ConsumerMessagesReceived,
+		ConsumerMessagesProcessed,
+		ConsumerProcessingErrors,
+		ConsumerProcessingTime,
+		ConsumerRetryMessages,
+		ConsumerDeadLetterMessages,
+		ConsumerLag,
+
+		// 数据库指标
+		DatabaseQueryDuration,
+		DatabaseQueryErrors,
+		DatabaseConnectionsInUse,
+		DatabaseConnectionsWait,
+
+		// Redis指标
+		RedisOperations,
+		RedisOperationDuration,
+		RedisErrors,
+		RedisCacheSize,
+
+		// HTTP指标
+		HTTPResponseTime,
+		HTTPRequestsInFlight, // 修正：现在可以正确注册
+		HTTPRequestSize,
+		HTTPResponseSize,
+		HTTPRequestsTotal,
+		HTTPRequestDuration,
+		HTTPRequestsInProgress,
+		CacheRequests,
+		SlowHTTPRequests,
+		HTTPErrors,
+
+		// 缓存相关指标
+		CacheHits,
+		DBQueries,
+		RequestsMerged,
+		CacheErrors,
+		CacheNullValuesCount, // 修正：现在可以正确注册
+		CacheNullValueOperations,
+	)
+}
+
+// -------------------------- 以下辅助函数保持不变 --------------------------
 // 统一处理数据库查询的监控上报，包括查询错误计数和查询耗时统计
 func RecordDatabaseQuery(operation, table string, duration float64, err error) {
 	DatabaseQueryDuration.WithLabelValues(operation, table).Observe(duration)
@@ -337,25 +618,27 @@ func GetDatabaseErrorType(err error) string {
 	}
 }
 
-// HTTP中间件使用的函数
+// 标记请求开始
 func HTTPMiddlewareStart() {
-	HTTPRequestsInFlight.Inc()
+	HTTPRequestsInFlight.Inc() // 现在可以正确调用方法
 }
 
+// 标记请求结束
 func HTTPMiddlewareEnd() {
-	HTTPRequestsInFlight.Dec()
+	HTTPRequestsInFlight.Dec() // 现在可以正确调用方法
 }
 
-// 数据库连接池监控
+// 监控数据库连接池的实时活跃连接数
 func SetDatabaseConnectionsInUse(poolName string, count int) {
 	DatabaseConnectionsInUse.WithLabelValues(poolName).Set(float64(count))
 }
 
+// 统计数据库连接池的连接等待次数（即当连接池无空闲连接时，请求等待获取连接的次数
 func IncDatabaseConnectionsWait(poolName string) {
 	DatabaseConnectionsWait.WithLabelValues(poolName).Inc()
 }
 
-// RecordHTTPRequest 记录HTTP请求指标（简化版，与您现有代码兼容）
+// HTTP 请求最核心的监控上报函数，一次性上报请求计数、耗时、大小、慢请求等多维度指标，关联 8 个 HTTP 相关指标（覆盖请求生命周期），支持多租户、用户级别的精细化监控。
 func RecordHTTPRequest(path, method, status string, duration float64, requestSize, responseSize int64,
 	clientIP, userAgent, host, errorCode, errorType, userID, tenantID string) {
 
@@ -410,4 +693,281 @@ func GetRedisErrorType(err error) string {
 	default:
 		return "unknown_error"
 	}
+}
+
+// RecordRedisOperation 记录Redis操作指标
+func RecordRedisOperation(operation string, duration float64, err error) {
+	// 记录操作延迟
+	RedisOperationDuration.WithLabelValues(operation).Observe(duration)
+
+	// 记录操作计数
+	status := "success"
+	if err != nil {
+		status = "error"
+		errorType := GetRedisErrorType(err)
+		RedisErrors.WithLabelValues(operation, errorType).Inc()
+	}
+
+	RedisOperations.WithLabelValues(operation, status).Inc()
+}
+
+// RecordKafkaProducerOperation 记录Kafka生产者操作指标
+func RecordKafkaProducerOperation(topic, operation string, duration float64, err error, isRetry bool) {
+	// 记录尝试次数
+	ProducerAttempts.WithLabelValues(topic, operation).Inc()
+
+	if err != nil {
+		errorType := GetKafkaErrorType(err)
+		ProducerFailures.WithLabelValues(topic, operation, errorType).Inc()
+
+		// 如果是重试，记录重试指标
+		if isRetry {
+			ProducerRetries.WithLabelValues(topic, operation).Inc()
+		}
+	} else {
+		ProducerSuccess.WithLabelValues(topic, operation).Inc()
+	}
+
+	// 记录处理时间（如果有duration信息）
+	if duration > 0 {
+		status := "success"
+		if err != nil {
+			status = "error"
+		}
+		MessageProcessingTime.WithLabelValues(topic, operation, status).Observe(duration)
+	}
+}
+
+// RecordDeadLetterMessage 记录死信消息
+func RecordDeadLetterMessage(topic, operation string) {
+	DeadLetterMessages.WithLabelValues(topic, operation).Inc()
+}
+
+// RecordKafkaConsumerOperation 记录Kafka消费者操作指标
+func RecordKafkaConsumerOperation(topic, group, operation string, duration float64, err error) {
+	// 记录接收消息
+	ConsumerMessagesReceived.WithLabelValues(topic, group, operation).Inc()
+
+	if err != nil {
+		errorType := GetKafkaErrorType(err)
+		ConsumerProcessingErrors.WithLabelValues(topic, group, operation, errorType).Inc()
+	} else {
+		ConsumerMessagesProcessed.WithLabelValues(topic, group, operation).Inc()
+	}
+
+	// 记录处理时间
+	status := "success"
+	if err != nil {
+		status = "error"
+	}
+	ConsumerProcessingTime.WithLabelValues(topic, group, operation, status).Observe(duration)
+}
+
+// RecordConsumerRetry 记录消费者重试
+func RecordConsumerRetry(topic, group, operation, errorType string) {
+	ConsumerRetryMessages.WithLabelValues(topic, group, operation, errorType).Inc()
+}
+
+// RecordConsumerDeadLetter 记录消费者死信
+func RecordConsumerDeadLetter(topic, group, operation, errorType string) {
+	ConsumerDeadLetterMessages.WithLabelValues(topic, group, operation, errorType).Inc()
+}
+
+// SetConsumerLag 设置消费者延迟
+func SetConsumerLag(topic, group string, lag int64) {
+	ConsumerLag.WithLabelValues(topic, group).Set(float64(lag))
+}
+
+// GetKafkaErrorType Kafka错误分类
+func GetKafkaErrorType(err error) string {
+	if err == nil {
+		return "success"
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(errMsg, "timeout"):
+		return "timeout"
+	case strings.Contains(errMsg, "connection"):
+		return "connection_error"
+	case strings.Contains(errMsg, "network"):
+		return "network_error"
+	case strings.Contains(errMsg, "leader not available"):
+		return "leader_unavailable"
+	case strings.Contains(errMsg, "not leader for partition"):
+		return "not_leader"
+	case strings.Contains(errMsg, "message size too large"):
+		return "message_too_large"
+	case strings.Contains(errMsg, "unknown topic or partition"):
+		return "unknown_topic"
+	case strings.Contains(errMsg, "offset out of range"):
+		return "offset_out_of_range"
+	case strings.Contains(errMsg, "serialize"), strings.Contains(errMsg, "marshal"):
+		return "serialization_error"
+	case strings.Contains(errMsg, "deserialize"), strings.Contains(errMsg, "unmarshal"):
+		return "deserialization_error"
+	case strings.Contains(errMsg, "authentication"):
+		return "authentication_error"
+	case strings.Contains(errMsg, "authorization"):
+		return "authorization_error"
+	default:
+		return "unknown_error"
+	}
+}
+
+// GetBusinessErrorType 业务错误分类
+func GetBusinessErrorType(err error) string {
+	if err == nil {
+		return "success"
+	}
+
+	// 使用现有的错误分类逻辑
+	coder := errors.ParseCoderByErr(err)
+	if coder != nil {
+		return "business_error"
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(errMsg, "validation"), strings.Contains(errMsg, "validate"):
+		return "validation_error"
+	case strings.Contains(errMsg, "timeout"):
+		return "timeout"
+	case strings.Contains(errMsg, "database"):
+		return "database_error"
+	case strings.Contains(errMsg, "network"):
+		return "network_error"
+	case strings.Contains(errMsg, "permission"), strings.Contains(errMsg, "unauthorized"):
+		return "permission_error"
+	case strings.Contains(errMsg, "marshal"), strings.Contains(errMsg, "unmarshal"):
+		return "serialization_error"
+	case strings.Contains(errMsg, "not found"), strings.Contains(errMsg, "不存在"):
+		return "not_found"
+	case strings.Contains(errMsg, "already exists"), strings.Contains(errMsg, "已存在"):
+		return "duplicate"
+	default:
+		return "unknown_error"
+	}
+}
+
+// -------------------------- 新增业务监控辅助函数 --------------------------
+
+// MonitorBusinessOperation 完整的业务操作监控包装函数
+func MonitorBusinessOperation(service, operation, source string, fn func() error) error {
+	start := time.Now()
+
+	// 增加处理中计数
+	BusinessInProgress.WithLabelValues(service, operation).Inc()
+	defer BusinessInProgress.WithLabelValues(service, operation).Dec()
+
+	// 记录操作开始
+	BusinessOperationsTotal.WithLabelValues(service, operation, source).Inc()
+
+	// 执行业务逻辑
+	err := fn()
+	duration := time.Since(start).Seconds()
+
+	// 记录处理时长
+	BusinessProcessingTime.WithLabelValues(service, operation).Observe(duration)
+	BusinessThroughputStats.WithLabelValues(service, operation).Observe(duration)
+
+	// 记录成功/失败
+	if err != nil {
+		errorType := GetBusinessErrorType(err)
+		BusinessFailures.WithLabelValues(service, operation, errorType).Inc()
+	} else {
+		BusinessSuccess.WithLabelValues(service, operation, "success").Inc()
+	}
+
+	// 更新QPS（简化版本，实际应该用更复杂的计算）
+	updateBusinessRate(service, operation)
+
+	return err
+}
+
+// updateBusinessRate 更新业务操作速率（QPS）
+func updateBusinessRate(service, operation string) {
+	// 这里可以实现更复杂的QPS计算逻辑
+	// 简单版本：使用rate函数在Prometheus中计算
+	// 复杂版本：可以在这里实现滑动窗口计算
+}
+
+// RecordBusinessQPS 记录业务QPS（供外部调用）
+func RecordBusinessQPS(service, operation string, qps float64) {
+	BusinessOperationsRate.WithLabelValues(service, operation).Set(qps)
+}
+
+// RecordBusinessErrorRate 记录业务错误率
+func RecordBusinessErrorRate(service, operation string, errorRate float64) {
+	BusinessErrorRate.WithLabelValues(service, operation).Set(errorRate)
+}
+
+// GetBusinessOperationLabels 获取业务操作的标准标签
+func GetBusinessOperationLabels(service, operation string) prometheus.Labels {
+	return prometheus.Labels{
+		"service":   service,
+		"operation": operation,
+	}
+}
+
+// BusinessOperationTimer 业务操作计时器
+type BusinessOperationTimer struct {
+	start     time.Time
+	service   string
+	operation string
+	source    string
+}
+
+// StartBusinessOperation 开始业务操作监控
+func StartBusinessOperation(service, operation, source string) *BusinessOperationTimer {
+	BusinessInProgress.WithLabelValues(service, operation).Inc()
+	BusinessOperationsTotal.WithLabelValues(service, operation, source).Inc()
+
+	return &BusinessOperationTimer{
+		start:     time.Now(),
+		service:   service,
+		operation: operation,
+		source:    source,
+	}
+}
+
+// EndBusinessOperation 结束业务操作监控
+func (t *BusinessOperationTimer) EndBusinessOperation(err error) {
+	defer BusinessInProgress.WithLabelValues(t.service, t.operation).Dec()
+
+	duration := time.Since(t.start).Seconds()
+
+	// 记录处理时长
+	BusinessProcessingTime.WithLabelValues(t.service, t.operation).Observe(duration)
+	BusinessThroughputStats.WithLabelValues(t.service, t.operation).Observe(duration)
+
+	// 记录成功/失败
+	if err != nil {
+		errorType := GetBusinessErrorType(err)
+		BusinessFailures.WithLabelValues(t.service, t.operation, errorType).Inc()
+	} else {
+		BusinessSuccess.WithLabelValues(t.service, t.operation, "success").Inc()
+	}
+}
+
+// -------------------------- 特定业务场景的便捷函数 --------------------------
+
+// MonitorUserCreation 监控用户创建业务
+func MonitorUserCreation(source string, fn func() error) error {
+	return MonitorBusinessOperation("user_service", "create_user", source, fn)
+}
+
+// MonitorUserQuery 监控用户查询业务
+func MonitorUserQuery(source string, fn func() error) error {
+	return MonitorBusinessOperation("user_service", "query_user", source, fn)
+}
+
+// MonitorKafkaMessageProcessing 监控Kafka消息处理业务
+func MonitorKafkaMessageProcessing(operation string, fn func() error) error {
+	return MonitorBusinessOperation("kafka_consumer", operation, "kafka", fn)
+}
+
+// MonitorHTTPRequestBusiness 监控HTTP请求业务逻辑
+func MonitorHTTPRequestBusiness(operation string, fn func() error) error {
+	return MonitorBusinessOperation("http_service", operation, "http", fn)
 }

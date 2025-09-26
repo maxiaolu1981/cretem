@@ -81,42 +81,74 @@ func (c *UserConsumer) worker(ctx context.Context, workerID int) {
 			log.Infof("Worker %d: 停止消费", workerID)
 			return
 		default:
-			// 记录消息接收
-			startTime := time.Now()
-			//从Kafka拉取消息
-			msg, err := c.reader.FetchMessage(ctx)
-			if err != nil {
-				log.Errorf("Worker %d: 获取消息失败: %v", workerID, err)
-				continue
-			}
-			operation := c.getOperationFromHeaders(msg.Headers)
-			metrics.ConsumerMessagesReceived.WithLabelValues(c.topic, c.groupID, operation).Inc()
-
-			//处理消息
-			processingStart := time.Now()
-			processingErr := c.processMessage(ctx, msg)
-			processingDuration := time.Since(processingStart).Seconds()
-			if processingErr != nil {
-				errorType := getErrorType(processingErr)
-				metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, operation, errorType).Inc()
-				metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "error").Observe(processingDuration)
-				log.Errorf("Worker %d: 处理消息失败: %v", workerID, processingErr)
-				continue
-			}
-			// 记录成功处理
-			metrics.ConsumerMessagesProcessed.WithLabelValues(c.topic, c.groupID, operation).Inc()
-			metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "success").Observe(processingDuration)
-
-			//提交偏移量（确认消费）
-			if err := c.reader.CommitMessages(ctx, msg); err != nil {
-				log.Errorf("Worker %d: 提交偏移量失败: %v", workerID, err)
-				metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, "commit", "commit_error").Inc()
-			}
-			totalDuration := time.Since(startTime).Seconds()
-			log.Debugf("消息处理完成: topic=%s, key=%s, operation=%s, 总耗时=%.3fs, 处理耗时=%.3fs",
-				c.topic, string(msg.Key), operation, totalDuration, processingDuration)
+			c.processSingleMessage(ctx, workerID)
 		}
 	}
+}
+
+func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) {
+	startTime := time.Now()
+	var operation, messageKey string
+	var processingErr error
+
+	// 使用defer统一记录指标
+	defer func() {
+		c.recordConsumerMetrics(operation, messageKey, startTime, processingErr, workerID)
+	}()
+
+	// 从Kafka拉取消息
+	msg, err := c.reader.FetchMessage(ctx)
+	if err != nil {
+		log.Errorf("Worker %d: 获取消息失败: %v", workerID, err)
+		processingErr = err
+		return
+	}
+
+	operation = c.getOperationFromHeaders(msg.Headers)
+	messageKey = string(msg.Key)
+
+	// 处理消息
+	processingErr = c.processMessage(ctx, msg)
+
+	if processingErr != nil {
+		log.Errorf("Worker %d: 处理消息失败: %v", workerID, processingErr)
+		return
+	}
+
+	// 提交偏移量（确认消费）
+	if err := c.reader.CommitMessages(ctx, msg); err != nil {
+		log.Errorf("Worker %d: 提交偏移量失败: %v", workerID, err)
+		metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, "commit", "commit_error").Inc()
+	}
+}
+
+// recordConsumerMetrics 记录消费者指标
+func (c *UserConsumer) recordConsumerMetrics(operation, messageKey string, startTime time.Time, processingErr error, workerID int) {
+	totalDuration := time.Since(startTime).Seconds()
+
+	// 记录消息接收（无论成功失败）
+	if operation != "" {
+		metrics.ConsumerMessagesReceived.WithLabelValues(c.topic, c.groupID, operation).Inc()
+	}
+
+	// 如果有错误，记录错误指标
+	if processingErr != nil {
+		if operation != "" {
+			errorType := getErrorType(processingErr)
+			metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, operation, errorType).Inc()
+			metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "error").Observe(totalDuration)
+		}
+		return
+	}
+
+	// 记录成功处理
+	if operation != "" {
+		metrics.ConsumerMessagesProcessed.WithLabelValues(c.topic, c.groupID, operation).Inc()
+		metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "success").Observe(totalDuration)
+	}
+
+	log.Debugf("Worker %d 消息处理完成: topic=%s, key=%s, operation=%s, 总耗时=%.3fs",
+		workerID, c.topic, messageKey, operation, totalDuration)
 }
 
 // 添加错误类型提取函数
@@ -170,14 +202,17 @@ func (c *UserConsumer) getOperationFromHeaders(headers []kafka.Header) string {
 // TODO 其他相关的delet,update操作也要加入监控指标
 func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Message) error {
 	startTime := time.Now()
+	var operationErr error
+
 	defer func() {
 		duration := time.Since(startTime).Seconds()
-		metrics.DatabaseQueryDuration.WithLabelValues("create", "users").Observe(duration)
+		metrics.RecordDatabaseQuery("create", "users", duration, operationErr)
+	
 	}()
 
 	var user v1.User
 	if err := json.Unmarshal(msg.Value, &user); err != nil {
-		metrics.DatabaseQueryErrors.WithLabelValues("unmarshal", "users", "unmarshal_error").Inc()
+		operationErr = fmt.Errorf("unmarshal_error: %w", err)
 		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
 	}
 
@@ -186,7 +221,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	// 2. 幂等性检查
 	exists, err := c.checkUserExists(ctx, user.Name)
 	if err != nil {
-		metrics.DatabaseQueryErrors.WithLabelValues("check_exists", "users", "query_error").Inc()
+		operationErr = fmt.Errorf("check_exists_error: %w", err)
 		return c.sendToRetry(ctx, msg, "检查用户存在性失败: "+err.Error())
 	}
 	if exists {
@@ -194,13 +229,16 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		return nil
 	}
 
+	// 创建用户
 	if err := c.createUserInDB(ctx, &user); err != nil {
-		metrics.DatabaseQueryErrors.WithLabelValues("create", "users", "insert_error").Inc()
+		operationErr = fmt.Errorf("create_error: %w", err)
 		return c.sendToRetry(ctx, msg, "创建用户失败: "+err.Error())
 	}
 
+	// 设置缓存
 	if err := c.setUserCache(ctx, &user); err != nil {
-		log.Errorw("缓存写入失败", "username", user.Name, "error", err)
+		log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
+		// 缓存失败不影响主流程，不记录为操作错误
 	}
 
 	log.Infof("用户创建成功: username=%s", user.Name)
@@ -228,9 +266,7 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 		return c.sendToRetry(ctx, msg, "更新用户失败: "+err.Error())
 	}
 
-	if err := c.setUserCache(ctx, &user); err != nil {
-		log.Errorw("缓存更新失败", "username", user.Name, "error", err)
-	}
+	c.setUserCache(ctx, &user)
 
 	log.Infof("用户更新成功: username=%s", user.Name)
 	return nil
@@ -339,14 +375,22 @@ func (c *UserConsumer) deleteUserFromDB(ctx context.Context, username string) er
 }
 
 func (c *UserConsumer) setUserCache(ctx context.Context, user *v1.User) error {
+	startTime := time.Now()
+	var operationErr error // 用于记录最终的操作错误
+	defer func() {
+		// 使用defer确保无论从哪个return退出都会记录指标
+		metrics.RecordRedisOperation("set", time.Since(startTime).Seconds(), operationErr)
+	}()
+
 	cacheKey := fmt.Sprintf("user:%s", user.Name)
 	data, err := json.Marshal(user)
 	if err != nil {
+		operationErr = err
 		return err
 	}
-	return c.redis.SetKey(ctx, cacheKey, string(data), 24*time.Hour)
+	operationErr = c.redis.SetKey(ctx, cacheKey, string(data), 24*time.Hour)
+	return operationErr
 }
-
 func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) error {
 	cacheKey := fmt.Sprintf("user:%s", username)
 	_, err := c.redis.DeleteKey(ctx, cacheKey)

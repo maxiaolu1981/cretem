@@ -67,7 +67,15 @@ func PrometheusMiddleware() gin.HandlerFunc {
 			c.Request.Host,
 		).Inc()
 
-	
+		// 记录HTTP请求延迟分布
+		metrics.HTTPRequestDuration.WithLabelValues(
+			getFullPath(c),
+			c.Request.Method,
+			status,
+			errorType,
+		).Observe(duration)
+
+		// 记录详细的HTTP请求指标
 		// 记录详细的HTTP请求指标
 		metrics.RecordHTTPRequest(
 			getFullPath(c),
@@ -134,8 +142,9 @@ func PrometheusMiddleware() gin.HandlerFunc {
 // getFullPath 安全地获取完整路径
 func getFullPath(c *gin.Context) string {
 	path := c.FullPath()
+	// 如果FullPath为空，说明路由未匹配，使用固定值
 	if path == "" {
-		path = c.Request.URL.Path
+		path = "unmatched_route"
 	}
 	return path
 }

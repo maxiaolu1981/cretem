@@ -3,6 +3,7 @@ package server
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -21,11 +22,10 @@ import (
 var _ producer.MessageProducer = (*UserProducer)(nil)
 var KafkaBrokers = []string{"127.0.0.1:9092"}
 
-
 type UserProducer struct {
-	writer           *kafka.Writer
-	retryWriter      *kafka.Writer
-	maxRetries       int
+	writer      *kafka.Writer
+	retryWriter *kafka.Writer
+	maxRetries  int
 }
 
 // internal/pkg/server/producer.go
@@ -103,30 +103,42 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 }
 
 func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, operation, topic string) error {
+	start := time.Now()
+	var errSend error
+	defer func() {
+		metrics.RecordKafkaProducerOperation(topic, operation, time.Since(start).Seconds(), errSend, false)
+	}()
+
 	userData, err := json.Marshal(user)
 	if err != nil {
+		errSend = err
+		log.Errorf("topic:%v operation:%v消息序列号失败:%v", topic, operation, err)
 		return errors.WithCode(code.ErrEncodingJSON, "用户消息序列化失败")
 	}
-
+	now := time.Now()
+	idBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(idBytes, user.ID)
 	msg := kafka.Message{
-		Key:   []byte(user.Name),
+		Key:   idBytes,
 		Value: userData,
-		Time:  time.Now(),
+		Time:  now,
 		Headers: []kafka.Header{
 			{Key: HeaderOperation, Value: []byte(operation)},
-			{Key: HeaderOriginalTimestamp, Value: []byte(time.Now().Format(time.RFC3339))},
+			{Key: HeaderOriginalTimestamp, Value: []byte(now.Format(time.RFC3339))},
 			{Key: HeaderRetryCount, Value: []byte("0")},
 		},
 	}
-
-	return p.sendWithRetry(ctx, msg, topic)
+	errSend = p.sendWithRetry(ctx, msg, topic)
+	return errSend
 }
 
 // 添加验证方法
 func (p *UserProducer) validateMessage(msg kafka.Message) error {
 	// 检查消息是否包含Topic字段（不应该包含）
-	if msg.Topic != "" {
-		return fmt.Errorf("message should not have Topic field set")
+	if strings.TrimSpace(msg.Topic) != "" {
+		err := errors.WithCode(code.ErrMissingHeader, "必须设置topic")
+		log.Errorf("%v %v", errors.GetMessage(err), err)
+		return err
 	}
 	return nil
 }
@@ -138,8 +150,22 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 	//log.Errorf("准备发送消息到[测试丢失记录问题] %s: key=%s", topic, string(msg.Key))
 	operation := p.getOperationFromHeaders(msg.Headers)
 
-	// 记录发送尝试
-	metrics.ProducerAttempts.WithLabelValues(topic, operation).Inc()
+	var sendErr error
+	var isRetry bool
+	var success bool
+
+	defer func() {
+		// 只有成功或最终失败时才记录指标
+		if success || sendErr != nil {
+			metrics.RecordKafkaProducerOperation(topic, operation,
+				time.Since(startTime).Seconds(), sendErr, isRetry)
+		}
+	}()
+
+	if err := p.validateMessage(msg); err != nil {
+		sendErr = err
+		return err
+	}
 
 	// 创建新的消息
 	sendMsg := kafka.Message{
@@ -151,35 +177,24 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 	}
 	copy(sendMsg.Headers, msg.Headers)
 
-	if err := p.validateMessage(msg); err != nil {
-		return fmt.Errorf("invalid message: %v", err)
-	}
-
+	//首次发送
 	err := p.writer.WriteMessages(ctx, sendMsg)
-
-	if err != nil {
-		log.Errorf("Topic %s 发送失败，尝试重试Topic. Key: %s", topic, string(msg.Key))
-		// 记录失败
-		metrics.ProducerFailures.WithLabelValues(topic, operation, "initial_send").Inc()
-
-		retryErr := p.sendToRetryTopic(ctx, msg, err.Error())
-		if retryErr != nil {
-			// 记录重试失败的总时间
-			metrics.MessageProcessingTime.WithLabelValues(topic, operation, "failure").Observe(time.Since(startTime).Seconds())
-			return retryErr
-		}
-		// 记录重试成功
-		metrics.ProducerRetries.WithLabelValues(topic, operation).Inc()
-		metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc() // ✅ 重试成功也要记录成功！
-		metrics.MessageProcessingTime.WithLabelValues(topic, operation, "retry_success").Observe(time.Since(startTime).Seconds())
+	if err == nil {
+		success = true // 标记为成功
+		log.Infof("发送成功: topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
 		return nil
 	}
+	// 首次发送失败，进行重试
+	isRetry = true
+	sendErr = p.sendToRetryTopic(ctx, msg, err.Error())
 
-	// ✅ 修复：直接成功时记录成功指标
-	metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
-	metrics.MessageProcessingTime.WithLabelValues(topic, operation, "success").Observe(time.Since(startTime).Seconds())
-	log.Infof("发送成功: topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
-	metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
+	if sendErr != nil {
+		return sendErr
+	}
+
+	success = true
+	sendErr = nil
+	log.Infof("发送成功(重试): topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
 	return nil
 }
 
@@ -194,11 +209,11 @@ func (p *UserProducer) getOperationFromHeaders(headers []kafka.Header) string {
 
 func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
 	// 1. 读取原始消息的重试次数
-	log.Debugf("📨 进入sendToRetryTopic: key=%s", string(msg.Key))
+	//log.Debugf("📨 进入sendToRetryTopic: key=%s", string(msg.Key))
 
-	for i, header := range msg.Headers {
-		log.Debugf("  输入消息Header[%d]: %s=%s", i, header.Key, string(header.Value))
-	}
+	// for i, header := range msg.Headers {
+	// 	log.Debugf("  输入消息Header[%d]: %s=%s", i, header.Key, string(header.Value))
+	// }
 	currentRetryCount := 0
 	for _, h := range msg.Headers {
 		if h.Key == HeaderRetryCount {
@@ -260,8 +275,13 @@ func (p *UserProducer) calcNextRetryTS(retryCount int) time.Time {
 }
 
 func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
+	start := time.Now()
 	operation := p.getOperationFromHeaders(msg.Headers)
-	metrics.DeadLetterMessages.WithLabelValues(UserDeadLetterTopic, operation).Inc()
+
+	var sendErr error
+	defer func() {
+		p.recordDeadLetterOperation(UserDeadLetterTopic, operation, start, sendErr, errorInfo, string(msg.Key))
+	}()
 	// 创建死信消息
 	deadLetterMsg := kafka.Message{
 		Key:     msg.Key,
@@ -270,11 +290,35 @@ func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Mess
 		Headers: p.updateOrAddHeader(msg.Headers, "deadletter-reason", errorInfo),
 	}
 	deadLetterMsg.Headers = p.updateOrAddHeader(deadLetterMsg.Headers, "deadletter-timestamp", time.Now().Format(time.RFC3339))
-
-	log.Warnf("发送到死信队列: key=%s, reason=%s", string(msg.Key), errorInfo)
-
+	//log.Warnf("发送到死信队列: key=%s, reason=%s", string(msg.Key), errorInfo)
 	// 使用增强的同步发送
-	return p.sendMessageWithRetry(ctx, deadLetterMsg, UserDeadLetterTopic)
+	sendErr = p.sendMessageWithRetry(ctx, deadLetterMsg, UserDeadLetterTopic)
+	return sendErr
+}
+
+// recordDeadLetterOperation 记录死信队列操作指标
+func (p *UserProducer) recordDeadLetterOperation(topic, operation string, start time.Time, err error, errorInfo, messageKey string) {
+	duration := time.Since(start).Seconds()
+
+	// 记录死信消息计数
+	metrics.DeadLetterMessages.WithLabelValues(topic, operation).Inc()
+
+	// 记录处理时间
+	status := "dead_letter_success"
+	if err != nil {
+		status = "dead_letter_failure"
+		// 记录死信发送失败的错误
+		errorType := metrics.GetKafkaErrorType(err)
+		metrics.ProducerFailures.WithLabelValues(topic, operation, errorType).Inc()
+	}
+	metrics.MessageProcessingTime.WithLabelValues(topic, operation, status).Observe(duration)
+
+	// 记录日志
+	if err != nil {
+		log.Errorf("死信队列发送失败: key=%s, reason=%s, error=%v", messageKey, errorInfo, err)
+	} else {
+		log.Warnf("发送到死信队列成功: key=%s, reason=%s, 耗时=%v", messageKey, errorInfo, duration)
+	}
 }
 
 func (p *UserProducer) Close() error {

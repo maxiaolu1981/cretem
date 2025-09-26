@@ -70,8 +70,8 @@ func (u *UserService) tryGetFromCache(ctx context.Context, cacheKey string) (*v1
 
 	if isCached {
 		if cachedUser != nil {
-			metrics.CacheErrors.WithLabelValues("query_failed", "get").Inc()
-			metrics.CacheHits.WithLabelValues("null_hit").Inc()
+			//	metrics.CacheErrors.WithLabelValues("query_failed", "get").Inc()
+			//	metrics.CacheHits.WithLabelValues("null_hit").Inc()
 			metrics.CacheHits.WithLabelValues("hit").Inc()
 			return cachedUser, true, nil
 		}
@@ -115,3 +115,4 @@ func (u *UserService) recordCacheError(err error, operation string) {
 	// 使用 WithLabelValues 来记录
 	metrics.CacheErrors.WithLabelValues(errorType, operation).Inc()
 }
+

@@ -12,7 +12,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
@@ -184,7 +183,7 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 }
 
 func (g *GenericAPIServer) installApiRoutes() error {
-	auto, err := g.newAutoAuth()
+	_, err := g.newAutoAuth()
 	if err != nil {
 		return err
 	}
@@ -207,7 +206,7 @@ func (g *GenericAPIServer) installApiRoutes() error {
 			if err != nil {
 				return err
 			}
-			userv1.Use(auto.AuthFunc(), middleware.Validation(g.options))
+			//	userv1.Use(auto.AuthFunc(), middleware.Validation(g.options))
 			userv1.DELETE(":name", userController.Delete)
 			userv1.DELETE(":name/force", userController.ForceDelete)
 			userv1.POST("", userController.Create)

@@ -32,24 +32,9 @@ func (u *UserController) Create(ctx *gin.Context) {
 		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "传入的CreateOptions参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
 		return
 	}
-	if m.Kind == "" {
-		m.Kind = "CreateUserOption"
-	}
-	if m.APIVersion == "" {
-		m.APIVersion = u.options.MetaOptions.CreateOptions.APIVersion
-	}
 
-	logger := log.L(ctx).WithValues(
-		"controller", "UserController",
-		"action", "Create",
-		"client_ip", ctx.ClientIP(), // 客户端IP
-		"method", ctx.Request.Method, // 请求方法
-		"kind", m.Kind,
-		"apiVersion", m.APIVersion,
-		"path", ctx.FullPath(), // 请求路径 操作的资源ID
-		"user_agent", ctx.Request.UserAgent(), // 用户代理
-	)
-	logger.Info("开始处理用户创建请求")
+
+	log.Info("开始处理用户创建请求")
 
 	errs := u.validateCreateOptions(&m)
 	if len(errs) > 0 {

@@ -57,8 +57,17 @@ type UserSrv interface {
 
 // getFromCache 从Redis获取缓存数据
 func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.User, bool, error) {
+	startTime := time.Now()
+	var operationErr error
+	var cacheHit bool
+
+	defer func() {
+		metrics.RecordRedisOperation("get", time.Since(startTime).Seconds(), operationErr)
+	}()
+
 	data, err := u.Redis.GetKey(ctx, cacheKey)
 	if err != nil {
+		operationErr = err
 		if errors.Is(err, redis.Nil) {
 			log.Infof("未进行缓存缓 key=%s", cacheKey)
 			return nil, false, nil
@@ -66,18 +75,31 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 		log.Errorf("redis服务失败: key=%s, err=%v", cacheKey, err)
 		return nil, false, err
 	}
-	var user = v1.User{}
+
+	// 初始化完整的 User 对象
+	user := v1.User{
+		ObjectMeta: metav1.ObjectMeta{},
+	}
 	//查找到防穿透记录
 	if data == RATE_LIMIT_PREVENTION {
 		log.Infof("空值缓存命中: key=%s", cacheKey)
 		user.Name = RATE_LIMIT_PREVENTION
+		user.Status = -1
+		cacheHit = true
 	} else {
 		if err := json.Unmarshal([]byte(data), &user); err != nil {
+			operationErr = err
 			return nil, false, errors.WithCode(code.ErrDecodingFailed, "数据解码失败")
 		}
 		log.Infof("从缓存中查询到用户:%s: key=%s", user.Name, cacheKey)
+		cacheHit = true
 	}
-	return &user, true, nil
+
+	// 确保返回的对象是有效的
+	if user.Name == "" {
+		return nil, cacheHit, errors.New("无效的用户数据")
+	}
+	return &user, cacheHit, nil
 }
 
 // getUserFromDBAndSetCache 带缓存的用户查询核心逻辑
@@ -105,23 +127,25 @@ func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, ca
 	}
 
 	//写入缓存（带随机过期时间防雪崩）
-	if err := u.setUserCache(ctx, cacheKey, user); err != nil {
-		logger.Warnw("写入缓存失败", "error", err.Error())
-	}
+	u.setUserCache(ctx, cacheKey, user)
+
 	logger.Infof("为用户%s设置缓存成功", username)
 	return user, nil
 }
 
 // setUserCache 设置用户缓存
 func (u *UserService) setUserCache(ctx context.Context, cacheKey string, user *v1.User) error {
+	startTime := time.Now()
+	var operationErr error
+
 	defer func() {
-		if r := recover(); r != nil {
-			log.L(ctx).Errorw("缓存设置发生panic", "recover", r)
-		}
+		metrics.RecordRedisOperation("set", float64(time.Since(startTime).Seconds()), operationErr)
 	}()
 
 	data, err := json.Marshal(user)
 	if err != nil {
+		operationErr = err
+		log.L(ctx).Errorf("用户数据序列化失败", "error", err.Error())
 		return errors.Wrap(err, "用户数据序列化失败")
 	}
 
@@ -130,8 +154,10 @@ func (u *UserService) setUserCache(ctx context.Context, cacheKey string, user *v
 	randomExpire := time.Duration(rand.Intn(300)) * time.Second
 	expireTime := baseExpire + randomExpire
 
-	if err := u.Redis.SetKey(ctx, cacheKey, string(data), expireTime); err != nil {
-		log.L(ctx).Errorf("缓存写入失败", "error", err.Error())
+	operationErr = u.Redis.SetKey(ctx, cacheKey, string(data), expireTime)
+	if operationErr != nil {
+		log.L(ctx).Errorf("缓存写入失败", "error", operationErr.Error())
+		return operationErr
 	}
 	return nil
 }
