@@ -8,7 +8,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	gindump "github.com/tpkeeper/gin-dump"
 )
@@ -49,12 +48,12 @@ func EmptyMiddleware() gin.HandlerFunc {
 
 // 基础中间件（所有环境共用）
 var baseMiddlewares = map[string]gin.HandlerFunc{
-	"recovery":        gin.Recovery(),
-	"requestid":       RequestID(),
-	"context":         Context(),
-	"secure":          Secure,
-	"nocache":         NoCache,
-	"businessmetrics": business.BusinessMetricsMiddleware("user_service"),
+	"recovery":  gin.Recovery(),
+	"requestid": RequestID(),
+	"context":   Context(),
+	"secure":    Secure,
+	"nocache":   NoCache,
+	// "businessmetrics": business.BusinessMetricsMiddleware("user_service"),
 }
 
 // 开发环境特定中间件
@@ -161,7 +160,7 @@ func GetMiddlewareStack(opt *options.Options) []gin.HandlerFunc {
 
 	// 统一的执行顺序
 	executionOrder := []string{
-		"recovery", "secure", "cors", "metrics", "businessmetrics", "requestid", "context", "logger", "nocache", "dump",
+		"recovery", "secure", "cors", "metrics", "requestid", "context", "logger", "nocache", "dump",
 	}
 
 	var stack []gin.HandlerFunc
