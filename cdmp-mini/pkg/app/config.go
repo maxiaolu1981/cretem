@@ -126,7 +126,7 @@ import (
 
 	// 用于生成格式化表格
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/homedir"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/system"
 
 	// 获取用户主目录
 	// 命令行参数解析
@@ -158,7 +158,7 @@ func addConfigFlag(basename string, fs *pflag.FlagSet) {
 		} else {
 			viper.AddConfigPath(".")
 			if name := strings.Split(basename, "-"); len(name) > 1 {
-				viper.AddConfigPath(filepath.Join(homedir.HomeDir(), "."+name[0]))
+				viper.AddConfigPath(filepath.Join(system.HomeDir(), "."+name[0]))
 				viper.AddConfigPath(filepath.Join("/etc", name[0]))
 			}
 			viper.SetConfigName(basename)

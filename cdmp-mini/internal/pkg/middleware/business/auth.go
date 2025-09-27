@@ -11,6 +11,7 @@ type AuthStrategy interface {
 type AuthOperator struct {
 	strategy AuthStrategy
 	username string
+	isAdmin  string
 }
 
 func (operator *AuthOperator) SetUsername(name string) {

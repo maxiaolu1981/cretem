@@ -33,20 +33,7 @@ func (u *UserController) Create(ctx *gin.Context) {
 		return
 	}
 
-
 	log.Info("开始处理用户创建请求")
-
-	errs := u.validateCreateOptions(&m)
-	if len(errs) > 0 {
-		errDetails := make(map[string]string, len(errs))
-		for _, fieldErr := range errs {
-			errDetails[fieldErr.Field] = fieldErr.ErrorBody()
-		}
-		detailStr := fmt.Sprintf("参数错误:%+v", errDetails)
-		err := errors.WrapC(nil, code.ErrInvalidParameter, "%s", detailStr)
-		core.WriteResponse(ctx, err, nil)
-		return
-	}
 
 	var r v1.User
 	if err := ctx.ShouldBindJSON(&r); err != nil {

@@ -7,6 +7,7 @@ package middleware
 import (
 	"net/http"
 
+	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
@@ -30,7 +31,7 @@ const (
 func Validation(opt *options.Options) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 调用 isAdmin 检查当前用户是否为管理员
-		err := isAdmin(c, opt)
+		err := isAdmin(c)
 
 		// 区分错误类型处理
 		if err != nil {
@@ -61,12 +62,12 @@ func Validation(opt *options.Options) gin.HandlerFunc {
 			}
 		} else {
 			// 管理员：执行管理员特殊限制后放行
-			// 管理员特殊限制（如禁止删除超级管理员）
-			if c.Request.Method == http.MethodDelete && isSuperAdmin(c, opt) {
-				core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "超级管理员不允许删除自己"), nil)
-				c.Abort()
-				return
-			}
+			// // 管理员特殊限制（如禁止删除超级管理员）
+			// if c.Request.Method == http.MethodDelete && isSuperAdmin(c, opt) {
+			// 	core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "超级管理员不允许删除自己"), nil)
+			// 	c.Abort()
+			// 	return
+			// }
 			// 管理员权限校验通过，放行
 			c.Next()
 			return
@@ -127,26 +128,19 @@ func checkNormalUserPermission(c *gin.Context) bool {
 }
 
 // isAdmin 判断当前用户是否为管理员（纯判断逻辑，不处理响应）
-func isAdmin(c *gin.Context, opt *options.Options) error {
-	// 获取当前用户名
-	usernameVal, exists := c.Get(common.UsernameKey)
-	if !exists {
+func isAdmin(c *gin.Context) error {
+
+	// 从 claims 获取用户状态和角色
+	claims := jwt.ExtractClaims(c)
+	username, _ := claims["username"].(string)
+	isadmin, _ := claims["isadmin"].(string)
+
+	if username == "" {
 		return errors.WithCode(code.ErrUnauthorized, "判断管理员失败：未获取到当前用户名")
-	}
-	username, ok := usernameVal.(string)
-	if !ok || username == "" {
-		return errors.WithCode(code.ErrUnauthorized, "判断管理员失败：用户名类型非法或为空")
-	}
-	// 查询用户信息
-	user, err := interfaces.Client().Users().
-		Get(c, username, metav1.GetOptions{},
-			opt)
-	if err != nil {
-		return err
 	}
 
 	// 判断是否为管理员
-	if user.IsAdmin != 1 {
+	if isadmin != "1" {
 		return errors.WithCode(code.ErrNotAdministrator, "当前用户（%s）非管理员", username)
 	}
 

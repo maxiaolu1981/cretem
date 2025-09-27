@@ -151,7 +151,7 @@ func init() {
 			Help:    "Time taken for business logic processing",
 			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1},
 		},
-		[]string{"operation"},
+		[]string{"service", "operation"}, // 统一标签
 	)
 
 	BusinessSuccess = prometheus.NewCounterVec(
@@ -159,7 +159,7 @@ func init() {
 			Name: "business_operations_success_total",
 			Help: "Total number of successful business operations",
 		},
-		[]string{"operation"},
+		[]string{"service", "operation", "type"}, // 增加service标签
 	)
 
 	BusinessFailures = prometheus.NewCounterVec(
@@ -167,16 +167,15 @@ func init() {
 			Name: "business_operations_failures_total",
 			Help: "Total number of failed business operations",
 		},
-		[]string{"operation", "error_type"},
+		[]string{"service", "operation", "error_type"}, // 增加service标签
 	)
 
-	// -------------------------- 初始化：新增业务吞吐量指标 --------------------------
 	BusinessOperationsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "business_operations_total",
 			Help: "Total number of business operations",
 		},
-		[]string{"service", "operation", "source"}, // service: user_service, source: http/kafka
+		[]string{"service", "operation", "source"}, // ✅ 正确
 	)
 
 	BusinessOperationsRate = prometheus.NewGaugeVec(
@@ -184,7 +183,7 @@ func init() {
 			Name: "business_operations_rate_per_second",
 			Help: "Business operations processing rate per second",
 		},
-		[]string{"service", "operation"},
+		[]string{"service", "operation"}, // ✅ 正确
 	)
 
 	BusinessInProgress = prometheus.NewGaugeVec(
@@ -192,7 +191,7 @@ func init() {
 			Name: "business_operations_in_progress",
 			Help: "Number of business operations currently in progress",
 		},
-		[]string{"service", "operation"},
+		[]string{"service", "operation"}, // ✅ 正确
 	)
 
 	BusinessThroughputStats = prometheus.NewSummaryVec(
@@ -201,7 +200,7 @@ func init() {
 			Help:       "Business throughput statistics in seconds",
 			Objectives: map[float64]float64{0.5: 0.05, 0.9: 0.01, 0.99: 0.001},
 		},
-		[]string{"service", "operation"},
+		[]string{"service", "operation"}, // ✅ 正确
 	)
 
 	BusinessErrorRate = prometheus.NewGaugeVec(
@@ -209,7 +208,7 @@ func init() {
 			Name: "business_error_rate",
 			Help: "Business operation error rate percentage",
 		},
-		[]string{"service", "operation"},
+		[]string{"service", "operation"}, // ✅ 正确
 	)
 
 	// -------------------------- 初始化：Kafka消费者指标 --------------------------
@@ -852,7 +851,7 @@ func GetBusinessErrorType(err error) string {
 
 // -------------------------- 新增业务监控辅助函数 --------------------------
 
-// MonitorBusinessOperation 完整的业务操作监控包装函数
+// MonitorBusinessOperation 函数也需要检查
 func MonitorBusinessOperation(service, operation, source string, fn func() error) error {
 	start := time.Now()
 
@@ -867,7 +866,7 @@ func MonitorBusinessOperation(service, operation, source string, fn func() error
 	err := fn()
 	duration := time.Since(start).Seconds()
 
-	// 记录处理时长
+	// 记录处理时长（使用统一的标签）
 	BusinessProcessingTime.WithLabelValues(service, operation).Observe(duration)
 	BusinessThroughputStats.WithLabelValues(service, operation).Observe(duration)
 
@@ -878,9 +877,6 @@ func MonitorBusinessOperation(service, operation, source string, fn func() error
 	} else {
 		BusinessSuccess.WithLabelValues(service, operation, "success").Inc()
 	}
-
-	// 更新QPS（简化版本，实际应该用更复杂的计算）
-	updateBusinessRate(service, operation)
 
 	return err
 }
@@ -931,17 +927,17 @@ func StartBusinessOperation(service, operation, source string) *BusinessOperatio
 	}
 }
 
-// EndBusinessOperation 结束业务操作监控
+// EndBusinessOperation 方法需要统一标签调用
 func (t *BusinessOperationTimer) EndBusinessOperation(err error) {
 	defer BusinessInProgress.WithLabelValues(t.service, t.operation).Dec()
 
 	duration := time.Since(t.start).Seconds()
 
-	// 记录处理时长
+	// 统一使用 [service, operation] 标签
 	BusinessProcessingTime.WithLabelValues(t.service, t.operation).Observe(duration)
 	BusinessThroughputStats.WithLabelValues(t.service, t.operation).Observe(duration)
 
-	// 记录成功/失败
+	// 记录成功/失败（现在标签一致了）
 	if err != nil {
 		errorType := GetBusinessErrorType(err)
 		BusinessFailures.WithLabelValues(t.service, t.operation, errorType).Inc()

@@ -53,7 +53,6 @@ var baseMiddlewares = map[string]gin.HandlerFunc{
 	"context":   Context(),
 	"secure":    Secure,
 	"nocache":   NoCache,
-	// "businessmetrics": business.BusinessMetricsMiddleware("user_service"),
 }
 
 // 开发环境特定中间件
@@ -72,10 +71,9 @@ var testMiddlewares = map[string]gin.HandlerFunc{
 
 // 生产环境特定中间件
 var prodMiddlewares = map[string]gin.HandlerFunc{
-	"logger":  productionLogger(),
-	"cors":    ProductionCors(),
-	"dump":    EmptyMiddleware(),      // 生产环境使用空中间件
-	"metrics": PrometheusMiddleware(), // 直接引用已经定义好的中间件
+	"logger": productionLogger(),
+	"cors":   ProductionCors(),
+	"dump":   EmptyMiddleware(), // 生产环境使用空中间件
 }
 
 // devLogger 开发环境日志（彩色输出）

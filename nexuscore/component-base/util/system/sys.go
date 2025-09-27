@@ -1,10 +1,12 @@
 // 这是一个跨平台的用户主目录获取函数，特别针对 Windows 系统进行了复杂处理，以确保在各种环境下都能可靠地获取到用户主目录。
-package homedir
+package system
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // HomeDir returns the home directory for the current user.
@@ -77,4 +79,22 @@ func HomeDir() string {
 
 	// We've got nothing
 	return ""
+}
+
+// 通用的调用者信息获取
+func GetCallerInfo(skip int) string {
+	pc, file, line, ok := runtime.Caller(skip)
+	if !ok {
+		return "unknown"
+	}
+
+	funcName := runtime.FuncForPC(pc).Name()
+
+	// 简化路径显示
+	parts := strings.Split(file, "/")
+	if len(parts) > 2 {
+		file = strings.Join(parts[len(parts)-2:], "/")
+	}
+
+	return fmt.Sprintf("%s@%s:%d", funcName, file, line)
 }

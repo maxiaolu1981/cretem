@@ -67,35 +67,36 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 
 	//初始化mysql
-	log.Info("正在初始化mysql服务器")
 	storeIns, dbIns, err := mysql.GetMySQLFactoryOr(opts.MysqlOptions)
 	if err != nil {
+		log.Error("mysql服务器启动失败")
 		return nil, err
 	}
 	interfaces.SetClient(storeIns)
 	log.Info("mysql服务器初始化成功")
 
 	//初始化redis
-	log.Info("正在初始化redis服务器")
 	if err := g.initRedisStore(); err != nil {
-		log.Error("初始化redis服务器失败")
+		log.Error("redis服务器启动失败")
 		return nil, err
 	}
-	log.Info("redis服务器初始化成功")
+	log.Info("redis服务器启动成功")
 
 	// 初始化Kafka生产者和消费者
 	if err := InitKafkaWithRetry(opts); err != nil {
+		log.Error("kafka测试连通失败")
 		return nil, errors.WithCode(code.ErrKafkaFailed, "kafka服务未启动")
 	}
 
 	if err := g.initKafkaComponents(dbIns); err != nil {
+		log.Error("kafka服务启动失败")
 		return nil, err
 	}
+	log.Info("kafka服务器启动成功")
 	// 启动消费者
 	ctx, cancel := context.WithCancel(context.Background())
 	g.consumerCtx = ctx
 	g.consumerCancel = cancel
-
 	go g.createConsumer.StartConsuming(ctx, MainConsumerWorkers)
 	go g.updateConsumer.StartConsuming(ctx, MainConsumerWorkers)
 	go g.deleteConsumer.StartConsuming(ctx, MainConsumerWorkers)
@@ -103,10 +104,15 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 
 	log.Info("所有Kafka消费者已启动")
 
+	//延迟3秒
+	time.Sleep(3 * time.Second)
+
 	//安装中间件
 	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
+		log.Error("中间件安装失败")
 		return nil, err
 	}
+	log.Info("中间件安装成功")
 
 	//. 安装路由
 	g.installRoutes()

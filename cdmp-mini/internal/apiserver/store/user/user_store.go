@@ -2,6 +2,8 @@ package user
 
 import (
 	"context"
+	"fmt"
+	"runtime"
 
 	"strings"
 	"time"
@@ -215,4 +217,23 @@ func (u *Users) createTimeoutContext(ctx context.Context,
 	}
 
 	return context.WithTimeout(ctx, totalTimeout)
+}
+
+
+// 通用的调用者信息获取
+func GetCallerInfo(skip int) string {
+    pc, file, line, ok := runtime.Caller(skip)
+    if !ok {
+        return "unknown"
+    }
+    
+    funcName := runtime.FuncForPC(pc).Name()
+    
+    // 简化路径显示
+    parts := strings.Split(file, "/")
+    if len(parts) > 2 {
+        file = strings.Join(parts[len(parts)-2:], "/")
+    }
+    
+    return fmt.Sprintf("%s@%s:%d", funcName, file, line)
 }

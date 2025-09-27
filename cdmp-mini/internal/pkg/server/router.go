@@ -11,6 +11,8 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/control/v1/user"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
@@ -110,7 +112,7 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 }
 
 func (g *GenericAPIServer) installApiRoutes() error {
-	_, err := g.newAutoAuth()
+	auto, err := g.newAutoAuth()
 	if err != nil {
 		return err
 	}
@@ -126,24 +128,27 @@ func (g *GenericAPIServer) installApiRoutes() error {
 	v1 := g.Group("/v1")
 	{
 		userv1 := v1.Group("/users")
-		//注册用户服务
-		v1.Use(business.UserServiceMiddleware())
-		{
-			userController, err := user.NewUserController(storeIns,
-				g.redis, g.options,
-				g.producer)
-			if err != nil {
-				return err
-			}
-			//	userv1.Use(auto.AuthFunc(), middleware.Validation(g.options))
-			userv1.DELETE(":name", userController.Delete)
-			userv1.DELETE(":name/force", userController.ForceDelete)
-			userv1.POST("", userController.Create)
-			userv1.GET(":name", userController.Get)
-			userv1.GET("", userController.List)
-		}
+		// 先认证，再业务监控
+		userv1.Use(
+			auto.AuthFunc(),
+			middleware.Validation(g.options),
+			business.UserServiceMiddleware(),
+		)
 
+		userController, err := user.NewUserController(storeIns,
+			g.redis, g.options,
+			g.producer)
+		if err != nil {
+			log.Error("NewUserController初始化失败")
+			return err
+		}
+		userv1.DELETE(":name", userController.Delete)
+		userv1.DELETE(":name/force", userController.ForceDelete)
+		userv1.POST("", userController.Create)
+		userv1.GET(":name", userController.Get)
+		userv1.GET("", userController.List)
 	}
+
 	return nil
 }
 

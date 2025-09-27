@@ -8,7 +8,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 
-	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
@@ -44,12 +43,4 @@ func (u *UserController) validateListOptions(opts *v1.ListOptions) field.ErrorLi
 		log.Warnw("目前查询模式是非超时模式")
 	}
 	return validation.ValidateListOptionsBase(opts)
-}
-
-func (u *UserController) validateGetOptions(opts *metav1.GetOptions) field.ErrorList {
-	return validation.ValidateGetOptionsBase(opts)
-}
-
-func (u *UserController) validateCreateOptions(opts *metav1.CreateOptions) field.ErrorList {
-	return validation.ValidateCreateOptionsBase(opts)
 }

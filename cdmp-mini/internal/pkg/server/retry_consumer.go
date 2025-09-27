@@ -185,14 +185,14 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 
 	log.Infof("开始第%d次重试创建: username=%s", currentRetryCount+1, user.Name)
 
-	exists, err := rc.checkUserExists(ctx, user.Name)
-	if err != nil {
-		return rc.handleProcessingError(ctx, msg, currentRetryCount, "检查用户存在性失败: "+err.Error())
-	}
-	if exists {
-		log.Debugf("用户已存在，重试创建成功: username=%s", user.Name)
-		return nil
-	}
+	// exists, err := rc.checkUserExists(ctx, user.Name)
+	// if err != nil {
+	// 	return rc.handleProcessingError(ctx, msg, currentRetryCount, "检查用户存在性失败: "+err.Error())
+	// }
+	// if exists {
+	// 	log.Debugf("用户已存在，重试创建成功: username=%s", user.Name)
+	// 	return nil
+	// }
 
 	if err := rc.createUserInDB(ctx, &user); err != nil {
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "检查用户存在性失败: "+err.Error())

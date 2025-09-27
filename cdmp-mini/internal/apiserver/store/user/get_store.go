@@ -6,14 +6,25 @@ import (
 
 	"github.com/bytedance/gopkg/util/logger"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/db"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/system"
 )
 
 // Get 查询用户（按用户名）- 生产级大并发版本
 func (u *Users) Get(ctx context.Context, username string,
 	opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
+
+	caller := system.GetCallerInfo(2) // 跳过2层
+
+	log.L(ctx).WithValues(
+		"store", "userStore",
+		"method", "Get",
+		"caller", caller,
+		"username", username,
+	).Debug("store层:get方法")
 
 	// 设置包含重试时间预算的超时上下文
 	totalCtx, cancel := u.createTimeoutContext(ctx, opt.ServerRunOptions.CtxTimeout, 3)

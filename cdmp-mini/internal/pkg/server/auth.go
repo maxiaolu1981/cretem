@@ -95,7 +95,7 @@ func (g *GenericAPIServer) newJWTAuth() (middleware.AuthStrategy, error) {
 		TokenHeadName:    tokenHeadName,
 		SendCookie:       true,
 		TimeFunc:         time.Now,
-
+		//login
 		Authenticator: func(c *gin.Context) (interface{}, error) {
 			return g.authenticate(c)
 		},
@@ -531,6 +531,8 @@ func (g *GenericAPIServer) generateAccessTokenClaims(data interface{}) jwt.MapCl
 		claims["user_id"] = userID
 		claims["session_id"] = sessionID
 		claims["type"] = "access"
+		claims["user_status"] = u.Status
+		claims["isadmin"] = strconv.Itoa(u.IsAdmin)
 	}
 
 	return claims
@@ -538,35 +540,38 @@ func (g *GenericAPIServer) generateAccessTokenClaims(data interface{}) jwt.MapCl
 
 func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context) bool {
 	return func(data interface{}, c *gin.Context) bool {
-		u, ok := data.(string)
-		if !ok {
-			log.L(c).Info("无效的user data")
-			return false
-		}
 
 		start := time.Now()
 		path := c.Request.URL.Path
-		user, err := interfaces.Client().Users().Get(c, u, metav1.GetOptions{}, g.options)
-		if err != nil {
+
+		//user, err := interfaces.Client().Users().Get(c, u, metav1.GetOptions{}, g.options)
+		// 从 claims 获取用户状态和角色
+		claims := jwt.ExtractClaims(c)
+		status, _ := claims["user_status"].(float64)
+		username, _ := claims["username"].(string)
+		role, _ := claims["role"].(string)
+
+		if username == "" {
 			elapsed := time.Since(start)
 			targetDelay := 150 * time.Millisecond
 			if elapsed < targetDelay {
 				time.Sleep(targetDelay - elapsed)
 			}
-			log.L(c).Warnf("用户%s没有查询到", u)
-			return false
-		}
-		if user.Status != 1 {
-			log.L(c).Warnf("用户%s没有激活", user.Name)
+			log.L(c).Warnf("用户%s没有查询到", username)
 			return false
 		}
 
-		if strings.HasPrefix(path, "/admin/") && user.Role != "admin" {
-			log.L(c).Warnf("用户%s无权访问%s(需要管理员校色)", user.Name, path)
+		if status != 1 {
+			log.L(c).Warnf("用户%s没有激活", username)
+			return false
+		}
+
+		if strings.HasPrefix(path, "/admin/") && role != "admin" {
+			log.L(c).Warnf("用户%s无权访问%s(需要管理员校色)", username, path)
 			return false
 		}
 		//	log.Info("用户认证通过") // 添加参数
-		c.Set(common.UsernameKey, user.Name)
+		c.Set(common.UsernameKey, username)
 
 		return true
 	}
@@ -995,7 +1000,7 @@ func (g *GenericAPIServer) getLoginFailCount(ctx *gin.Context, username string) 
 	val, err := g.redis.GetKey(ctx, key)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			log.Infof("缓存键不存在: key=%s", key)
+			//log.Infof("缓存键不存在: key=%s", key)
 			return 0, nil
 		} else {
 			log.Errorf("redis服务错误:err=%v", err)

@@ -207,7 +207,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	defer func() {
 		duration := time.Since(startTime).Seconds()
 		metrics.RecordDatabaseQuery("create", "users", duration, operationErr)
-	
+
 	}()
 
 	var user v1.User
@@ -218,21 +218,13 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 
 	log.Debugf("处理用户创建: username=%s", user.Name)
 
-	// 2. 幂等性检查
-	exists, err := c.checkUserExists(ctx, user.Name)
-	if err != nil {
-		operationErr = fmt.Errorf("check_exists_error: %w", err)
-		return c.sendToRetry(ctx, msg, "检查用户存在性失败: "+err.Error())
-	}
-	if exists {
-		log.Debugf("用户已存在，跳过创建: username=%s", user.Name)
-		return nil
-	}
-
 	// 创建用户
 	if err := c.createUserInDB(ctx, &user); err != nil {
-		operationErr = fmt.Errorf("create_error: %w", err)
-		return c.sendToRetry(ctx, msg, "创建用户失败: "+err.Error())
+		if shouldRetry(err) {
+			operationErr = fmt.Errorf("create_error: %w", err)
+			return c.sendToRetry(ctx, msg, "创建用户失败: "+err.Error())
+		}
+		return err
 	}
 
 	// 设置缓存
@@ -243,6 +235,28 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 
 	log.Infof("用户创建成功: username=%s", user.Name)
 	return nil
+}
+
+func shouldRetry(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+
+	// 这些错误不应该重试，应该返回 false
+	if strings.Contains(errStr, "Duplicate entry") ||
+		strings.Contains(errStr, "1062") ||
+		strings.Contains(errStr, "23000") ||
+		strings.Contains(errStr, "duplicate key value") ||
+		strings.Contains(errStr, "23505") ||
+		strings.Contains(errStr, "用户已存在") ||
+		strings.Contains(errStr, "UserAlreadyExist") {
+		return false // ✅ 重复错误不需要重试
+	}
+
+	// 其他错误（如网络超时、数据库连接问题等）需要重试
+	return true
 }
 
 func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Message) error {
