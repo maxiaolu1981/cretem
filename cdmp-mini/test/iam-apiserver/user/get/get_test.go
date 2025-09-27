@@ -151,9 +151,9 @@ const (
 	RespCodeValidation = 100400
 
 	ConcurrentUsers       = 10000
-	RequestsPerUser       = 5
+	RequestsPerUser       = 10000
 	RequestInterval       = 2 * time.Millisecond
-	BatchSize             = 50
+	BatchSize             = 1000
 	HotUserRequestPercent = 50 // 热点用户请求百分比
 	InvalidRequestPercent = 10 //无效请求百分比
 
