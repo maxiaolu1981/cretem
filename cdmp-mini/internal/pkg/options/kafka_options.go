@@ -48,24 +48,30 @@ type KafkaOptions struct {
 
 	// SSL证书路径
 	SSLCertFile string `json:"sslCertFile" mapstructure:"sslCertFile"`
+
+	BaseRetryDelay time.Duration `json:"baseretrydelay" mapstructure:"baseretrydelay"`
+
+	MaxRetryDelay time.Duration `json:"maxretrydelay" mapstructure:"maxretrydelay"`
 }
 
 // NewKafkaOptions 创建带有默认值的Kafka配置
 func NewKafkaOptions() *KafkaOptions {
 	return &KafkaOptions{
-		Brokers:       []string{"localhost:9092"},
-		Topic:         "default-topic",
-		ConsumerGroup: "default-consumer-group",
-		RequiredAcks:  1, // leader确认
-		Async:         true,
-		BatchSize:     1,
-		BatchTimeout:  0,
-		MaxRetries:    3,
-		MinBytes:      10 * 1024,        // 10KB
-		MaxBytes:      10 * 1024 * 1024, // 10MB
-		WorkerCount:   5,
-		EnableSSL:     false,
-		SSLCertFile:   "",
+		Brokers:        []string{"127.0.0.1:9092", "127.0.0.1:9093", "127.0.0.1:9094"},
+		Topic:          "default-topic",
+		ConsumerGroup:  "default-consumer-group",
+		RequiredAcks:   -1, // leader确认
+		Async:          true,
+		BatchSize:      100,
+		BatchTimeout:   100 * time.Millisecond,
+		MaxRetries:     6,
+		MinBytes:       10 * 1024,        // 10KB
+		MaxBytes:       10 * 1024 * 1024, // 10MB
+		WorkerCount:    8,
+		EnableSSL:      false,
+		SSLCertFile:    "",
+		BaseRetryDelay: 10 * time.Second,
+		MaxRetryDelay:  5 * time.Minute,
 	}
 }
 

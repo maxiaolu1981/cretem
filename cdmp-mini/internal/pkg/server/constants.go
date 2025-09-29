@@ -1,7 +1,5 @@
 package server
 
-import "time"
-
 // Redis键名常量（统一前缀避免冲突）
 const (
 	redisGenericapiserverPrefix = "genericapiserver:"
@@ -55,9 +53,9 @@ const (
 	OperationDelete = "delete"
 
 	// 重试配置
-	MaxRetryCount  = 5
-	BaseRetryDelay = 10 * time.Second
-	MaxRetryDelay  = 5 * time.Minute
+	// MaxRetryCount  = 5
+	// BaseRetryDelay = 10 * time.Second
+	// MaxRetryDelay  = 5 * time.Minute
 
 	// Consumer 配置
 	MainConsumerWorkers  = 8

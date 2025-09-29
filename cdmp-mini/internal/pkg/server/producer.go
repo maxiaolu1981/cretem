@@ -12,6 +12,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -23,24 +24,25 @@ var _ producer.MessageProducer = (*UserProducer)(nil)
 var KafkaBrokers = []string{"127.0.0.1:9092"}
 
 type UserProducer struct {
-	writer      *kafka.Writer
-	retryWriter *kafka.Writer
-	maxRetries  int
+	writer       *kafka.Writer
+	retryWriter  *kafka.Writer
+	kafkaOptions *options.KafkaOptions
+	maxRetries   int
 }
 
 // internal/pkg/server/producer.go
 
-func NewUserProducer(brokers []string, batchSize int, batchTimeout time.Duration) *UserProducer {
+func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 	// 主Writer（高性能配置）
 	mainWriter := &kafka.Writer{
-		Addr: kafka.TCP(brokers...),
+		Addr: kafka.TCP(options.Brokers...),
 		// 注意：这里不设置 Topic，在发送时动态设置
 		MaxAttempts:     3,
 		WriteBackoffMin: 100 * time.Millisecond,
 		WriteBackoffMax: 1 * time.Second,
 		BatchBytes:      1048576,
-		BatchSize:       batchSize,
-		BatchTimeout:    batchTimeout,
+		BatchSize:       options.BatchSize,
+		BatchTimeout:    options.BatchTimeout,
 		WriteTimeout:    30 * time.Second,
 		Balancer:        &kafka.LeastBytes{},
 		Compression:     kafka.Snappy,
@@ -50,7 +52,7 @@ func NewUserProducer(brokers []string, batchSize int, batchTimeout time.Duration
 
 	// 重试Writer（高可靠配置）- 不设置 Topic
 	reliableWriter := &kafka.Writer{
-		Addr: kafka.TCP(brokers...),
+		Addr: kafka.TCP(options.Brokers...),
 		// 注意：这里不设置 Topic，在发送时动态设置
 		MaxAttempts:     10,
 		WriteBackoffMin: 500 * time.Millisecond,
@@ -65,7 +67,7 @@ func NewUserProducer(brokers []string, batchSize int, batchTimeout time.Duration
 	return &UserProducer{
 		writer:      mainWriter,
 		retryWriter: reliableWriter,
-		maxRetries:  MaxRetryCount,
+		maxRetries:  options.MaxRetries,
 	}
 }
 
@@ -266,10 +268,10 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 // 新增：计算下次重试时间（指数退避策略）
 func (p *UserProducer) calcNextRetryTS(retryCount int) time.Time {
 	// 基础延迟 * 2^(重试次数-1)，避免短期内频繁重试
-	delay := BaseRetryDelay * time.Duration(1<<(retryCount-1))
+	delay := p.kafkaOptions.BaseRetryDelay * time.Duration(1<<(retryCount-1))
 	// 限制最大延迟，避免重试间隔过长
-	if delay > MaxRetryDelay {
-		delay = MaxRetryDelay
+	if delay > p.kafkaOptions.MaxRetryDelay {
+		delay = p.kafkaOptions.MaxRetryDelay
 	}
 	return time.Now().Add(delay)
 }

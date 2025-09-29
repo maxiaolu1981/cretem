@@ -21,31 +21,35 @@ type RedisOptions struct {
 	EnableCluster         bool          `json:"enable-cluster"           mapstructure:"enable-cluster"`
 	UseSSL                bool          `json:"use-ssl"                  mapstructure:"use-ssl"`
 	SSLInsecureSkipVerify bool          `json:"ssl-insecure-skip-verify" mapstructure:"ssl-insecure-skip-verify"`
-	IdleTimeout           int           `json:"idle-timeout"             mapstructure:"idle-timeout"             description:"Idle connection timeout in seconds"`
-	MaxConnLifetime       int           `json:"max-conn-lifetime"        mapstructure:"max-conn-lifetime"        description:"Maximum connection lifetime in seconds"`
+	IdleTimeout           time.Duration `json:"idle-timeout"             mapstructure:"idle-timeout"             description:"Idle connection timeout in seconds"`
+	MaxConnLifetime       time.Duration `json:"max-conn-lifetime"        mapstructure:"max-conn-lifetime"        description:"Maximum connection lifetime in seconds"`
 	Wait                  bool          `json:"wait"                     mapstructure:"wait"                     description:"Wait for available connection when pool is exhausted"`
 	PoolSize              int           `json:"pool-size"                mapstructure:"pool-size"                description:"Connection pool size per node (cluster mode)"`
 }
 
 func NewRedisOptions() *RedisOptions {
 	return &RedisOptions{
-		Host:                  "127.0.0.1",
-		Port:                  6379,
-		Addrs:                 []string{},
+		Host: "127.0.0.1", // 单机模式备用
+		Port: 6379,        // 单机模式备用
+		Addrs: []string{
+			"127.0.0.1:6379",
+			"127.0.0.1:6380",
+			"127.0.0.1:6381",
+		},
 		Username:              "",
 		Password:              "",
 		Database:              0,
 		MasterName:            "",
-		MaxIdle:               800,             // 最大空闲连接数
-		MaxActive:             3000,            // 最大活跃连接数
-		Timeout:               5 * time.Second, // 连接超时30秒
-		EnableCluster:         false,
+		MaxIdle:               50,              //幅降低空闲连接数
+		MaxActive:             200,             // 最大活跃连接数
+		Timeout:               5 * time.Second, // 连接超时5秒
+		EnableCluster:         true,            // 启用集群模式
 		UseSSL:                false,
 		SSLInsecureSkipVerify: false,
-		IdleTimeout:           120,  // 空闲连接超时300秒
-		MaxConnLifetime:       3600, // 连接最大生命周期3600秒(1小时)
-		Wait:                  true, // 连接池耗尽时等待
-		PoolSize:              50,   // 每个节点的连接池大小
+		IdleTimeout:           120 * time.Second,  // 空闲连接超时120秒
+		MaxConnLifetime:       1800 * time.Second, // 连接最大生命周期
+		Wait:                  true,               // 连接池耗尽时等待
+		PoolSize:              10,                 // 每个节点的连接池大小
 	}
 }
 
@@ -183,8 +187,8 @@ func (r *RedisOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&r.Timeout, "redis.timeout", r.Timeout,
 		"Connection timeout in seconds (0 for no timeout)")
 	// 新增的连接池高级配置（针对高并发优化）
-	fs.IntVar(&r.IdleTimeout, "redis.idle-timeout", r.IdleTimeout, "Idle connection timeout in seconds (connections idle longer than this will be closed)")
-	fs.IntVar(&r.MaxConnLifetime, "redis.max-conn-lifetime", r.MaxConnLifetime, "Maximum connection lifetime in seconds (connections older than this will be recycled)")
+	fs.DurationVar(&r.IdleTimeout, "redis.idle-timeout", r.IdleTimeout, "Idle connection timeout in seconds (connections idle longer than this will be closed)")
+	fs.DurationVar(&r.MaxConnLifetime, "redis.max-conn-lifetime", r.MaxConnLifetime, "Maximum connection lifetime in seconds (connections older than this will be recycled)")
 	fs.BoolVar(&r.Wait, "redis.wait", r.Wait, "Wait for available connection when pool is exhausted (recommended for high concurrency scenarios)")
 	fs.IntVar(&r.PoolSize, "redis.pool-size", r.PoolSize, "Connection pool size per node (especially important for cluster mode, recommended: 50-100)")
 

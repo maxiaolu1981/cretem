@@ -9,7 +9,7 @@ import (
 )
 
 type PolicyStore interface {
-	Create(ctx context.Context, policy *v1.Policy, opts metav1.CreateOptions,opt *options.Options) error
+	Create(ctx context.Context, policy *v1.Policy, opts metav1.CreateOptions, opt *options.Options) error
 	Update(ctx context.Context, policy *v1.Policy, opts metav1.UpdateOptions) error
 	Delete(ctx context.Context, username string, name string, opts metav1.DeleteOptions) error
 	DeleteCollection(ctx context.Context, username string, names []string, opts metav1.DeleteOptions) error

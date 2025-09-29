@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -20,17 +22,18 @@ import (
 )
 
 type RetryConsumer struct {
-	reader     *kafka.Reader
-	db         *gorm.DB
-	redis      *storage.RedisCluster
-	producer   *UserProducer
-	maxRetries int
+	reader       *kafka.Reader
+	db           *gorm.DB
+	redis        *storage.RedisCluster
+	producer     *UserProducer
+	maxRetries   int
+	kafkaOptions *options.KafkaOptions
 }
 
-func NewRetryConsumer(brokers []string, db *gorm.DB, redis *storage.RedisCluster, producer *UserProducer) *RetryConsumer {
+func NewRetryConsumer(db *gorm.DB, redis *storage.RedisCluster, producer *UserProducer, kafkaOptions *options.KafkaOptions) *RetryConsumer {
 	return &RetryConsumer{
 		reader: kafka.NewReader(kafka.ReaderConfig{
-			Brokers:        brokers,
+			Brokers:        kafkaOptions.Brokers,
 			Topic:          UserRetryTopic,
 			GroupID:        "user-retry-group",
 			MinBytes:       10e3,
@@ -41,7 +44,7 @@ func NewRetryConsumer(brokers []string, db *gorm.DB, redis *storage.RedisCluster
 		db:         db,
 		redis:      redis,
 		producer:   producer,
-		maxRetries: MaxRetryCount,
+		maxRetries: kafkaOptions.MaxRetries,
 	}
 }
 
@@ -345,7 +348,7 @@ func (rc *RetryConsumer) prepareNextRetry(ctx context.Context, msg kafka.Message
 		// 数据库连接问题：指数退避 + 随机抖动
 		// 策略：指数退避+随机抖动（失败次数越多，等越久，且加随机值避免“重试风暴”）
 		// 2^current * 基础延迟（如基础1秒，第1次2秒，第2次4秒...）
-		baseDelay := time.Duration(1<<currentRetryCount) * BaseRetryDelay
+		baseDelay := time.Duration(1<<currentRetryCount) * rc.kafkaOptions.BaseRetryDelay
 		// 加0~50%的随机延迟（比如4秒基础延迟，加0~2秒随机值）
 		jitter := time.Duration(rand.Int63n(int64(baseDelay / 2))) // 最多50%的抖动
 		nextRetryDelay = baseDelay + jitter
@@ -365,18 +368,18 @@ func (rc *RetryConsumer) prepareNextRetry(ctx context.Context, msg kafka.Message
 	case isTemporaryError(errorInfo):
 		// 临时性错误：线性增长
 		// 策略：线性增长（第1次1秒，第2次2秒...比指数平缓）
-		nextRetryDelay = time.Duration(currentRetryCount+1) * BaseRetryDelay
+		nextRetryDelay = time.Duration(currentRetryCount+1) * rc.kafkaOptions.BaseRetryDelay
 		retryStrategy = "线性增长(临时错误)"
 
 	default:
 		// 其他错误：默认指数退避
-		nextRetryDelay = time.Duration(1<<currentRetryCount) * BaseRetryDelay
+		nextRetryDelay = time.Duration(1<<currentRetryCount) * rc.kafkaOptions.BaseRetryDelay
 		retryStrategy = "指数退避(默认)"
 	}
 
 	// 应用最大延迟限制
-	if nextRetryDelay > MaxRetryDelay {
-		nextRetryDelay = MaxRetryDelay
+	if nextRetryDelay > rc.kafkaOptions.MaxRetryDelay {
+		nextRetryDelay = rc.kafkaOptions.MaxRetryDelay
 	}
 
 	nextRetryTime := time.Now().Add(nextRetryDelay)

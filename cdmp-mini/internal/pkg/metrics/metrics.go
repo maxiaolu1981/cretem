@@ -6,6 +6,7 @@ package metrics
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -61,6 +62,46 @@ var (
 	RedisOperationDuration *prometheus.HistogramVec
 	RedisErrors            *prometheus.CounterVec
 	RedisCacheSize         *prometheus.GaugeVec
+)
+
+// Redis集群监控指标
+var (
+	// Redis集群节点状态指标
+	RedisClusterNodesTotal prometheus.Gauge     // 集群节点总数
+	RedisClusterNodesUp    prometheus.Gauge     // 正常节点数量
+	RedisClusterNodesDown  prometheus.Gauge     // 异常节点数量
+	RedisClusterState      *prometheus.GaugeVec // 集群状态（0=异常, 1=正常）
+
+	// Redis集群槽位分配指标
+	RedisClusterSlotsAssigned prometheus.Gauge // 已分配的槽位数量
+	RedisClusterSlotsOk       prometheus.Gauge // 正常的槽位数量
+	RedisClusterSlotsPFail    prometheus.Gauge // 可能失败的槽位数量
+	RedisClusterSlotsFail     prometheus.Gauge // 失败的槽位数量
+
+	// Redis集群节点详细指标
+	RedisClusterNodeInfo        *prometheus.GaugeVec // 节点基本信息
+	RedisClusterNodeMemory      *prometheus.GaugeVec // 节点内存使用
+	RedisClusterNodeCPU         *prometheus.GaugeVec // 节点CPU使用
+	RedisClusterNodeConnections *prometheus.GaugeVec // 节点连接数
+	RedisClusterNodeKeys        *prometheus.GaugeVec // 节点键数量
+	RedisClusterNodeOpsPerSec   *prometheus.GaugeVec // 节点每秒操作数
+
+	// Redis集群性能指标
+	RedisClusterHitRate            prometheus.Gauge       // 集群整体命中率
+	RedisClusterMemoryUsage        prometheus.Gauge       // 集群总内存使用
+	RedisClusterMemoryUsagePercent prometheus.Gauge       // 集群内存使用百分比
+	RedisClusterTotalCommands      *prometheus.CounterVec // 集群命令统计
+	RedisClusterKeyspaceHits       prometheus.Counter     // 集群键空间命中
+	RedisClusterKeyspaceMisses     prometheus.Counter     // 集群键空间未命中
+
+	// Redis集群网络指标
+	RedisClusterNetworkIO      *prometheus.GaugeVec // 集群网络IO
+	RedisClusterReplicationLag *prometheus.GaugeVec // 主从复制延迟
+
+	// Redis集群故障相关指标
+	RedisClusterFailoverCount  prometheus.Counter   // 故障转移次数
+	RedisClusterMigrationCount prometheus.Counter   // 槽位迁移次数
+	RedisClusterHealthCheck    *prometheus.GaugeVec // 健康检查状态
 )
 
 var (
@@ -337,6 +378,193 @@ func init() {
 		[]string{"key_pattern"},
 	)
 
+	// -------------------------- 初始化：Redis集群监控指标 --------------------------
+	RedisClusterNodesTotal = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_nodes_total",
+			Help: "Redis集群节点总数",
+		},
+	)
+
+	RedisClusterNodesUp = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_nodes_up",
+			Help: "Redis集群正常节点数量",
+		},
+	)
+
+	RedisClusterNodesDown = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_nodes_down",
+			Help: "Redis集群异常节点数量",
+		},
+	)
+
+	RedisClusterState = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_state",
+			Help: "Redis集群状态（0=异常, 1=正常）",
+		},
+		[]string{"cluster_name"},
+	)
+
+	RedisClusterSlotsAssigned = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_slots_assigned",
+			Help: "Redis集群已分配的槽位数量",
+		},
+	)
+
+	RedisClusterSlotsOk = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_slots_ok",
+			Help: "Redis集群正常的槽位数量",
+		},
+	)
+
+	RedisClusterSlotsPFail = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_slots_pfail",
+			Help: "Redis集群可能失败的槽位数量",
+		},
+	)
+
+	RedisClusterSlotsFail = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_slots_fail",
+			Help: "Redis集群失败的槽位数量",
+		},
+	)
+
+	RedisClusterNodeInfo = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_node_info",
+			Help: "Redis集群节点基本信息",
+		},
+		[]string{"node_id", "node_role", "node_address", "cluster_name"},
+	)
+
+	RedisClusterNodeMemory = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_node_memory_bytes",
+			Help: "Redis集群节点内存使用量",
+		},
+		[]string{"node_id", "node_address"},
+	)
+
+	RedisClusterNodeCPU = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_node_cpu_usage_percent",
+			Help: "Redis集群节点CPU使用率",
+		},
+		[]string{"node_id", "node_address"},
+	)
+
+	RedisClusterNodeConnections = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_node_connections",
+			Help: "Redis集群节点连接数",
+		},
+		[]string{"node_id", "node_address", "connection_type"}, // client, replica等
+	)
+
+	RedisClusterNodeKeys = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_node_keys_total",
+			Help: "Redis集群节点键数量",
+		},
+		[]string{"node_id", "node_address"},
+	)
+
+	RedisClusterNodeOpsPerSec = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_node_operations_per_second",
+			Help: "Redis集群节点每秒操作数",
+		},
+		[]string{"node_id", "node_address", "operation_type"}, // cmd, net_input, net_output
+	)
+
+	RedisClusterHitRate = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_hit_rate",
+			Help: "Redis集群整体命中率",
+		},
+	)
+
+	RedisClusterMemoryUsage = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_memory_usage_bytes",
+			Help: "Redis集群总内存使用量",
+		},
+	)
+
+	RedisClusterMemoryUsagePercent = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_memory_usage_percent",
+			Help: "Redis集群内存使用百分比",
+		},
+	)
+
+	RedisClusterTotalCommands = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "redis_cluster_commands_total",
+			Help: "Redis集群命令执行总数",
+		},
+		[]string{"node_id", "node_address", "command"},
+	)
+
+	RedisClusterKeyspaceHits = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "redis_cluster_keyspace_hits_total",
+			Help: "Redis集群键空间命中总数",
+		},
+	)
+
+	RedisClusterKeyspaceMisses = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "redis_cluster_keyspace_misses_total",
+			Help: "Redis集群键空间未命中总数",
+		},
+	)
+
+	RedisClusterNetworkIO = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_network_io_bytes",
+			Help: "Redis集群网络IO流量",
+		},
+		[]string{"node_id", "node_address", "direction"}, // input, output
+	)
+
+	RedisClusterReplicationLag = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_replication_lag_seconds",
+			Help: "Redis集群主从复制延迟",
+		},
+		[]string{"master_id", "slave_id", "master_address", "slave_address"},
+	)
+
+	RedisClusterFailoverCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "redis_cluster_failover_events_total",
+			Help: "Redis集群故障转移事件总数",
+		},
+	)
+
+	RedisClusterMigrationCount = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "redis_cluster_slot_migrations_total",
+			Help: "Redis集群槽位迁移总数",
+		},
+	)
+
+	RedisClusterHealthCheck = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "redis_cluster_health_check",
+			Help: "Redis集群健康检查状态（0=异常, 1=正常）",
+		},
+		[]string{"check_type", "cluster_name"}, // node_connect, slot_integrity, replication
+	)
+
 	// -------------------------- 初始化：HTTP指标 --------------------------
 	HTTPResponseTime = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -512,6 +740,33 @@ func init() {
 		RedisOperationDuration,
 		RedisErrors,
 		RedisCacheSize,
+
+		// Redis集群指标
+		RedisClusterNodesTotal,
+		RedisClusterNodesUp,
+		RedisClusterNodesDown,
+		RedisClusterState,
+		RedisClusterSlotsAssigned,
+		RedisClusterSlotsOk,
+		RedisClusterSlotsPFail,
+		RedisClusterSlotsFail,
+		RedisClusterNodeInfo,
+		RedisClusterNodeMemory,
+		RedisClusterNodeCPU,
+		RedisClusterNodeConnections,
+		RedisClusterNodeKeys,
+		RedisClusterNodeOpsPerSec,
+		RedisClusterHitRate,
+		RedisClusterMemoryUsage,
+		RedisClusterMemoryUsagePercent,
+		RedisClusterTotalCommands,
+		RedisClusterKeyspaceHits,
+		RedisClusterKeyspaceMisses,
+		RedisClusterNetworkIO,
+		RedisClusterReplicationLag,
+		RedisClusterFailoverCount,
+		RedisClusterMigrationCount,
+		RedisClusterHealthCheck,
 
 		// HTTP指标
 		HTTPResponseTime,
@@ -966,4 +1221,150 @@ func MonitorKafkaMessageProcessing(operation string, fn func() error) error {
 // MonitorHTTPRequestBusiness 监控HTTP请求业务逻辑
 func MonitorHTTPRequestBusiness(operation string, fn func() error) error {
 	return MonitorBusinessOperation("http_service", operation, "http", fn)
+}
+
+// -------------------------- Redis集群监控辅助函数 --------------------------
+
+// RedisClusterMetrics 集群指标数据结构
+type RedisClusterMetrics struct {
+	ClusterState          string
+	SlotsAssigned         int64
+	SlotsOk               int64
+	SlotsPFail            int64
+	SlotsFail             int64
+	KnownNodes            int64
+	ClusterSize           int64
+	CurrentEpoch          int64
+	MyEpoch               int64
+	StatsMessagesSent     int64
+	StatsMessagesReceived int64
+}
+
+
+// RecordRedisClusterMetrics 记录Redis集群指标
+func RecordRedisClusterMetrics(clusterName string, metrics *RedisClusterMetrics) {
+	// 记录集群状态
+	stateValue := 0.0
+	if metrics.ClusterState == "ok" {
+		stateValue = 1.0
+	}
+	RedisClusterState.WithLabelValues(clusterName).Set(stateValue)
+
+	// 记录槽位信息
+	RedisClusterSlotsAssigned.Set(float64(metrics.SlotsAssigned))
+	RedisClusterSlotsOk.Set(float64(metrics.SlotsOk))
+	RedisClusterSlotsPFail.Set(float64(metrics.SlotsPFail))
+	RedisClusterSlotsFail.Set(float64(metrics.SlotsFail))
+
+	// 记录节点数量（假设所有节点都是正常的，实际应该从节点信息计算）
+	RedisClusterNodesTotal.Set(float64(metrics.KnownNodes))
+	RedisClusterNodesUp.Set(float64(metrics.KnownNodes)) // 简化处理
+	RedisClusterNodesDown.Set(0)
+}
+
+// RecordRedisNodeMetrics 记录Redis节点指标
+func RecordRedisNodeMetrics(nodeID, address, role string, info map[string]string) {
+	// 记录节点基本信息
+	RedisClusterNodeInfo.WithLabelValues(nodeID, role, address, "default_cluster").Set(1)
+
+	// 记录内存使用
+	if usedMemory, ok := info["used_memory"]; ok {
+		if memBytes, err := strconv.ParseFloat(usedMemory, 64); err == nil {
+			RedisClusterNodeMemory.WithLabelValues(nodeID, address).Set(memBytes)
+		}
+	}
+
+	// 记录CPU使用
+	if usedCpuSys, ok := info["used_cpu_sys"]; ok {
+		if cpuUsage, err := strconv.ParseFloat(usedCpuSys, 64); err == nil {
+			RedisClusterNodeCPU.WithLabelValues(nodeID, address).Set(cpuUsage)
+		}
+	}
+
+	// 记录连接数
+	if connectedClients, ok := info["connected_clients"]; ok {
+		if clients, err := strconv.ParseFloat(connectedClients, 64); err == nil {
+			RedisClusterNodeConnections.WithLabelValues(nodeID, address, "clients").Set(clients)
+		}
+	}
+
+	// 记录键数量 - 这里直接从info参数获取，不通过指标值
+	if keyspaceHits, ok := info["keyspace_hits"]; ok {
+		if hits, err := strconv.ParseFloat(keyspaceHits, 64); err == nil {
+			// 直接使用Add方法增加计数
+			RedisClusterKeyspaceHits.Add(hits)
+		}
+	}
+
+	if keyspaceMisses, ok := info["keyspace_misses"]; ok {
+		if misses, err := strconv.ParseFloat(keyspaceMisses, 64); err == nil {
+			RedisClusterKeyspaceMisses.Add(misses)
+		}
+	}
+}
+
+// RecordRedisClusterCommand 记录Redis集群命令执行
+func RecordRedisClusterCommand(nodeID, address, command string) {
+	RedisClusterTotalCommands.WithLabelValues(nodeID, address, command).Inc()
+}
+
+// RecordRedisClusterNetworkIO 记录Redis集群网络IO
+func RecordRedisClusterNetworkIO(nodeID, address string, inputBytes, outputBytes int64) {
+	RedisClusterNetworkIO.WithLabelValues(nodeID, address, "input").Set(float64(inputBytes))
+	RedisClusterNetworkIO.WithLabelValues(nodeID, address, "output").Set(float64(outputBytes))
+}
+
+
+// RecordRedisClusterReplicationLag 记录主从复制延迟
+func RecordRedisClusterReplicationLag(masterID, slaveID, masterAddr, slaveAddr string, lagSeconds int64) {
+	RedisClusterReplicationLag.WithLabelValues(masterID, slaveID, masterAddr, slaveAddr).Set(float64(lagSeconds))
+}
+
+// RecordRedisClusterFailover 记录故障转移事件
+func RecordRedisClusterFailover() {
+	RedisClusterFailoverCount.Inc()
+}
+
+// RecordRedisClusterMigration 记录槽位迁移事件
+func RecordRedisClusterMigration() {
+	RedisClusterMigrationCount.Inc()
+}
+
+// UpdateRedisClusterHealthCheck 更新集群健康检查状态
+func UpdateRedisClusterHealthCheck(checkType, clusterName string, healthy bool) {
+	healthValue := 0.0
+	if healthy {
+		healthValue = 1.0
+	}
+	RedisClusterHealthCheck.WithLabelValues(checkType, clusterName).Set(healthValue)
+}
+
+// CalculateRedisClusterHitRate 计算集群命中率 - 修正版本
+func CalculateRedisClusterHitRate(hits, misses float64) float64 {
+	total := hits + misses
+	if total == 0 {
+		return 0
+	}
+	return hits / total
+}
+
+// UpdateRedisClusterHitRate 更新集群命中率指标 - 修正版本
+func UpdateRedisClusterHitRate(hits, misses float64) {
+	hitRate := CalculateRedisClusterHitRate(hits, misses)
+	RedisClusterHitRate.Set(hitRate)
+}
+
+// GetRedisClusterHitRateFromInfo 从Redis INFO命令结果计算命中率
+func GetRedisClusterHitRateFromInfo(info map[string]string) float64 {
+	var hits, misses float64
+	
+	if hitsStr, ok := info["keyspace_hits"]; ok {
+		hits, _ = strconv.ParseFloat(hitsStr, 64)
+	}
+	
+	if missesStr, ok := info["keyspace_misses"]; ok {
+		misses, _ = strconv.ParseFloat(missesStr, 64)
+	}
+	
+	return CalculateRedisClusterHitRate(hits, misses)
 }

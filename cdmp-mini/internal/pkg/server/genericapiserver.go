@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,10 +14,12 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	mysql "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -27,12 +28,6 @@ import (
 	"golang.org/x/sync/errgroup"
 	"gorm.io/gorm"
 )
-
-// 全局变量存储Redis客户端（用于监控）
-var redisClient redis.UniversalClient
-
-// 新增：存储分布式锁开关状态
-var distributedLockEnabled bool
 
 type GenericAPIServer struct {
 	insecureServer *http.Server
@@ -97,15 +92,22 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	g.consumerCtx = ctx
 	g.consumerCancel = cancel
-	go g.createConsumer.StartConsuming(ctx, MainConsumerWorkers)
-	go g.updateConsumer.StartConsuming(ctx, MainConsumerWorkers)
-	go g.deleteConsumer.StartConsuming(ctx, MainConsumerWorkers)
+	// 启动消费者，使用配置的WorkerCount
+	mainWorkers := opts.KafkaOptions.WorkerCount
+	if mainWorkers <= 0 {
+		mainWorkers = MainConsumerWorkers // 使用默认值
+	}
+
+	go g.createConsumer.StartConsuming(ctx, mainWorkers)
+	go g.updateConsumer.StartConsuming(ctx, mainWorkers)
+	go g.deleteConsumer.StartConsuming(ctx, mainWorkers)
 	go g.retryConsumer.StartConsuming(ctx, RetryConsumerWorkers)
 
 	log.Info("所有Kafka消费者已启动")
 
 	//延迟3秒
 	time.Sleep(3 * time.Second)
+	g.printKafkaConfigInfo()
 
 	//安装中间件
 	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
@@ -253,221 +255,83 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 }
 
 // 初始化Kafka组件
-// 初始化Kafka组件
-func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
-	brokers := g.options.KafkaOptions.Brokers
-	batchSize := g.options.KafkaOptions.BatchSize
-	batchTimeout := g.options.KafkaOptions.BatchTimeout
+// internal/apiserver/server/server.go
 
+// 初始化Kafka组件 - 使用options中的完整配置
+func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
+	kafkaOpts := g.options.KafkaOptions
+
+	log.Infof("初始化Kafka组件，最大重试: %d, Worker数量: %d",
+		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount)
+
+	// 1. 初始化生产者
 	log.Info("初始化Kafka生产者...")
-	userProducer := NewUserProducer(brokers, batchSize, batchTimeout)
+	userProducer := NewUserProducer(kafkaOpts)
+
+	// 2. 初始化各个主题的消费者
+	consumerGroupPrefix := "user-service"
+	if g.options.ServerRunOptions.Mode == gin.ReleaseMode {
+		consumerGroupPrefix = "user-service-prod"
+	}
 
 	log.Info("初始化创建消费者...")
-	createConsumer := NewUserConsumer(brokers, UserCreateTopic, "user-create-group", db, g.redis)
+	createConsumer := NewUserConsumer(kafkaOpts.Brokers, UserCreateTopic,
+		consumerGroupPrefix+"-create", db, g.redis)
+	//createConsumer.SetKafkaOptions(kafkaOpts) // 传递完整配置
 	createConsumer.SetProducer(userProducer)
 
 	log.Info("初始化更新消费者...")
-	updateConsumer := NewUserConsumer(brokers, UserUpdateTopic, "user-update-group", db, g.redis)
+	updateConsumer := NewUserConsumer(kafkaOpts.Brokers, UserUpdateTopic,
+		consumerGroupPrefix+"-update", db, g.redis)
+	//updateConsumer.SetKafkaOptions(kafkaOpts)
 	updateConsumer.SetProducer(userProducer)
 
 	log.Info("初始化删除消费者...")
-	deleteConsumer := NewUserConsumer(brokers, UserDeleteTopic, "user-delete-group", db, g.redis)
+	deleteConsumer := NewUserConsumer(kafkaOpts.Brokers, UserDeleteTopic,
+		consumerGroupPrefix+"-delete", db, g.redis)
+	//deleteConsumer.SetKafkaOptions(kafkaOpts)
 	deleteConsumer.SetProducer(userProducer)
 
 	log.Info("初始化重试消费者...")
-	retryConsumer := NewRetryConsumer(brokers, db, g.redis, userProducer)
+	retryConsumer := NewRetryConsumer(db, g.redis, userProducer, kafkaOpts)
+	//retryConsumer.SetKafkaOptions(kafkaOpts) // 传递配置给重试消费者
 
+	// 3. 赋值到服务器实例
 	g.producer = userProducer
 	g.createConsumer = createConsumer
 	g.updateConsumer = updateConsumer
 	g.deleteConsumer = deleteConsumer
 	g.retryConsumer = retryConsumer
 
+	log.Infof("✅ Kafka组件初始化完成，配置: 重试%d次, Worker%d个, 批量%d, 超时%v",
+		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount, kafkaOpts.BatchSize, kafkaOpts.BatchTimeout)
 	return nil
-}
-
-// initRedisStore 初始化Redis存储，根据分布式锁开关状态调整初始化策略
-// 在initRedisStore函数中正确初始化RedisCluster
-func (g *GenericAPIServer) initRedisStore() error {
-	ctx, cancel := context.WithCancel(context.Background())
-	g.redisCancel = cancel
-	defer func() {
-		if r := recover(); r != nil {
-			cancel()
-			log.Errorf("Redis初始化异常: %v", r)
-		}
-	}()
-
-	// 初始化RedisCluster
-	g.redis = &storage.RedisCluster{
-		KeyPrefix: "genericapiserver:",
-		HashKeys:  false,
-		IsCache:   false,
-	}
-
-	// 启动Redis异步连接任务
-	go func() {
-		log.Info("启动Redis异步连接任务")
-		storage.ConnectToRedis(ctx, g.options.RedisOptions)
-		log.Warn("Redis异步连接任务退出（可能上下文已取消）")
-	}()
-
-	// 等待初始连接尝试完成
-	log.Info("等待Redis初始连接尝试...")
-	time.Sleep(3 * time.Second)
-
-	// 等待Redis客户端就绪（带重试机制）
-	const (
-		maxRetries    = 30
-		retryInterval = 2 * time.Second
-	)
-
-	for retryCount := 0; retryCount < maxRetries; retryCount++ {
-		// 1. 检查连接状态
-		if !storage.Connected() {
-			log.Warnf("Redis未连接（尝试 %d/%d）", retryCount+1, maxRetries)
-			if retryCount == maxRetries-1 {
-				return fmt.Errorf("Redis连接失败：storage未标记为已连接（重试%d次后）", maxRetries)
-			}
-			time.Sleep(retryInterval)
-			continue
-		}
-
-		// 2. 获取客户端
-		redisClient = g.redis.GetClient()
-		if redisClient == nil {
-			log.Warnf("Redis客户端为空（尝试 %d/%d）", retryCount+1, maxRetries)
-			if retryCount == maxRetries-1 {
-				return fmt.Errorf("Redis连接失败：GetClient()返回空客户端（重试%d次后）", maxRetries)
-			}
-			time.Sleep(retryInterval)
-			continue
-		}
-
-		// 3. 验证连接
-		if err := pingRedis(ctx, redisClient); err != nil {
-			log.Warnf("Redis连接验证失败（尝试 %d/%d）: %v", retryCount+1, maxRetries, err)
-			redisClient = nil
-			if retryCount == maxRetries-1 {
-				return fmt.Errorf("Redis连接失败：PING验证失败（重试%d次后）: %v", maxRetries, err)
-			}
-			time.Sleep(retryInterval)
-			continue
-		}
-
-		// 4. 所有检查通过，连接成功
-		log.Info("✅ Redis连接成功且验证可用")
-		go g.monitorRedisConnection(ctx)
-		return nil
-	}
-
-	// 如果循环结束仍未成功，返回错误
-	return fmt.Errorf("Redis连接失败，已达最大重试次数(%d)", maxRetries)
 }
 
 // monitorRedisConnection 监控Redis连接状态，根据分布式锁开关决定是否影响主进程
 func (g *GenericAPIServer) monitorRedisConnection(ctx context.Context) {
-	lastConnected := true
-	monitorTicker := time.NewTicker(3 * time.Second)
-	defer monitorTicker.Stop()
-
-	// 根据锁开关状态输出监控启动日志
-	if distributedLockEnabled {
-		log.Info("🔍 Redis运行期监控协程已启动（分布式锁启用，连接中断将导致进程退出）")
-	} else {
-		log.Info("🔍 Redis运行期监控协程已启动（分布式锁禁用，连接中断不影响主进程）")
-	}
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info("📌 Redis监控协程因上下文取消而退出")
+			log.Info("Redis集群监控退出")
 			return
-		case <-monitorTicker.C:
-			err := pingRedis(ctx, redisClient)
-			current := err == nil
+		case <-ticker.C:
+			client := g.redis.GetClient()
+			if client == nil {
+				log.Error("Redis集群客户端丢失")
+				continue
+			}
 
-			// 处理连接状态变化
-			if current && !lastConnected {
-				log.Info("📈 Redis连接已恢复")
-				lastConnected = current
-			} else if !current && lastConnected {
-				log.Error("📉 Redis连接已断开，尝试重连...")
-
-				// 尝试重连3次
-				reconnectSuccess := false
-				for i := 0; i < 3; i++ {
-					time.Sleep(1 * time.Second)
-					if err := pingRedis(ctx, redisClient); err == nil {
-						reconnectSuccess = true
-						break
-					}
-				}
-
-				if !reconnectSuccess {
-					if distributedLockEnabled {
-						log.Fatal("❌ Redis多次重连失败（分布式锁启用，核心依赖不可用），主进程将退出")
-						os.Exit(137)
-					} else {
-						log.Warn("⚠️ Redis多次重连失败（分布式锁禁用，非核心依赖），继续监控")
-						lastConnected = false
-					}
-				} else {
-					log.Info("📈 Redis重连成功")
-					lastConnected = true
-				}
+			if err := g.pingRedis(ctx, client); err != nil {
+				log.Errorf("Redis集群健康检查失败: %v", err)
+				// 这里可以添加重连逻辑
+			} else {
+				log.Debug("Redis集群健康检查通过")
 			}
 		}
-	}
-}
-
-// 修正：添加 ctx context.Context 参数，适配 v8 的 Ping 方法签名
-func pingRedis(ctx context.Context, client redis.UniversalClient) error {
-	if client == nil {
-		return fmt.Errorf("Redis客户端未初始化")
-	}
-
-	resultChan := make(chan error, 1)
-
-	// 异步执行PING命令，避免阻塞
-	go func() {
-		var pingCmd *redis.StatusCmd
-
-		// 类型断言，适配不同客户端类型（v8 需传 ctx）
-		switch c := client.(type) {
-		case *redis.Client:
-			pingCmd = c.Ping(ctx) // 修正：传入 ctx
-		case *redis.ClusterClient:
-			pingCmd = c.Ping(ctx) // 修正：传入 ctx
-		default:
-			resultChan <- fmt.Errorf("不支持的Redis客户端类型: %T", client)
-			return
-		}
-
-		// 检查命令执行结果
-		if pingCmd.Err() != nil {
-			resultChan <- handlePingError(pingCmd.Err())
-			return
-		}
-
-		// 验证响应内容
-		if pingCmd.Val() != "PONG" {
-			resultChan <- fmt.Errorf("redis ping响应异常: %s", pingCmd.Val())
-			return
-		}
-
-		resultChan <- nil
-	}()
-
-	// 超时控制（2秒）：结合外部ctx和超时
-	timeoutCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	select {
-	case err := <-resultChan:
-		return err
-	case <-timeoutCtx.Done():
-		return fmt.Errorf("PING命令超时（超过2秒）: %w", timeoutCtx.Err())
 	}
 }
 
@@ -536,4 +400,171 @@ func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
 			// 继续重试
 		}
 	}
+}
+
+func (g *GenericAPIServer) initRedisStore() error {
+	ctx, cancel := context.WithCancel(context.Background())
+	g.redisCancel = cancel
+	defer func() {
+		if r := recover(); r != nil {
+			cancel()
+			log.Errorf("Redis初始化异常: %v", r)
+		}
+	}()
+
+	// 初始化RedisCluster
+	g.redis = &storage.RedisCluster{
+		KeyPrefix: "genericapiserver:",
+		HashKeys:  false,
+		IsCache:   false,
+	}
+
+	// 启动Redis异步连接任务
+	go func() {
+		log.Info("启动Redis集群异步连接任务")
+		storage.ConnectToRedis(ctx, g.options.RedisOptions)
+		log.Warn("Redis集群异步连接任务退出（可能上下文已取消）")
+	}()
+
+	// 等待初始连接尝试完成
+	log.Info("等待Redis集群初始连接尝试...")
+	time.Sleep(5 * time.Second)
+
+	const (
+		maxRetries    = 30
+		retryInterval = 3 * time.Second
+	)
+
+	for retryCount := 0; retryCount < maxRetries; retryCount++ {
+		// 1. 检查连接状态
+		if !storage.Connected() {
+			log.Warnf("Redis集群未连接（尝试 %d/%d）", retryCount+1, maxRetries)
+			if retryCount == maxRetries-1 {
+				return fmt.Errorf("Redis集群连接失败：storage未标记为已连接（重试%d次后）", maxRetries)
+			}
+			time.Sleep(retryInterval)
+			continue
+		}
+
+		// 2. 获取客户端 - 使用GetClient()方法
+		redisClient := g.redis.GetClient()
+		if redisClient == nil {
+			log.Warnf("Redis客户端为空（尝试 %d/%d）", retryCount+1, maxRetries)
+			if retryCount == maxRetries-1 {
+				return fmt.Errorf("Redis连接失败：GetClient()返回空客户端（重试%d次后）", maxRetries)
+			}
+			time.Sleep(retryInterval)
+			continue
+		}
+
+		// 3. 验证连接
+		if err := g.pingRedis(ctx, redisClient); err != nil {
+			log.Warnf("Redis连接验证失败（尝试 %d/%d）: %v", retryCount+1, maxRetries, err)
+			if retryCount == maxRetries-1 {
+				return fmt.Errorf("Redis连接失败：PING验证失败（重试%d次后）: %v", maxRetries, err)
+			}
+			time.Sleep(retryInterval)
+			continue
+		}
+
+		// 4. 所有检查通过，连接成功
+		log.Info("✅ Redis集群连接成功且验证可用")
+		go g.monitorRedisConnection(ctx)
+
+		// 5. 启动Redis集群监控
+		g.setupRedisClusterMonitoring()
+
+		go g.monitorRedisConnection(ctx)
+
+		return nil
+	}
+
+	return fmt.Errorf("Redis连接失败，已达最大重试次数(%d)", maxRetries)
+}
+
+// setupRedisClusterMonitoring 设置Redis集群监控
+func (g *GenericAPIServer) setupRedisClusterMonitoring() {
+	// 从Redis配置中获取集群节点地址
+	nodes := g.options.RedisOptions.Addrs
+	if len(nodes) == 0 {
+		// 如果没有配置集群地址，使用默认的单节点地址
+		nodes = []string{fmt.Sprintf("%s:%d", g.options.RedisOptions.Host, g.options.RedisOptions.Port)}
+	}
+
+	log.Infof("启动Redis集群监控，节点: %v", nodes)
+
+	// 创建集群监控器
+	monitor := metrics.NewRedisClusterMonitor(
+		"generic_api_server_cluster", // 集群名称
+		nodes,                        // 集群节点地址
+		30*time.Second,               // 每30秒采集一次
+	)
+
+	// 启动监控
+	go monitor.Start(context.Background())
+
+	log.Info("✅ Redis集群监控已启动")
+}
+
+// pingRedis 支持redis.UniversalClient类型
+func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.UniversalClient) error {
+	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	// 检查集群状态
+	if clusterClient, ok := client.(*redis.ClusterClient); ok {
+		// 集群模式：检查集群信息
+		_, err := clusterClient.ClusterInfo(pingCtx).Result()
+		if err != nil {
+			return fmt.Errorf("集群状态检查失败: %v", err)
+		}
+
+		// 可选：对每个主节点执行PING（更严格的检查）
+		var lastError error
+		nodeCount := 0
+
+		err = clusterClient.ForEachMaster(pingCtx, func(ctx context.Context, nodeClient *redis.Client) error {
+			nodeCount++
+			if err := nodeClient.Ping(ctx).Err(); err != nil {
+				log.Warnf("集群节点 %d PING 失败: %v", nodeCount, err)
+				lastError = err
+				// 继续检查其他节点
+			}
+			return nil
+		})
+
+		if nodeCount == 0 {
+			return fmt.Errorf("未找到集群节点")
+		}
+
+		// 如果至少有一个节点正常，认为集群可用
+		if err != nil && lastError != nil {
+			return fmt.Errorf("集群节点检查异常: %v", lastError)
+		}
+
+		log.Debugf("Redis集群健康检查完成，共%d个节点", nodeCount)
+		return nil
+	}
+
+	// 单机模式或普通客户端
+	return client.Ping(pingCtx).Err()
+}
+
+// 打印Kafka配置信息
+func (g *GenericAPIServer) printKafkaConfigInfo() {
+	kafkaOpts := g.options.KafkaOptions
+	log.Infof("📊 Kafka配置信息:")
+	log.Infof("  运行模式: %s", g.options.ServerRunOptions.Mode)
+	log.Infof("  Brokers: %v", kafkaOpts.Brokers)
+	log.Infof("  主题配置:")
+	log.Infof("    - 创建: %s", UserCreateTopic)
+	log.Infof("    - 更新: %s", UserUpdateTopic)
+	log.Infof("    - 删除: %s", UserDeleteTopic)
+	log.Infof("    - 重试: %s", UserRetryTopic)
+	log.Infof("  配置参数:")
+	log.Infof("    - 最大重试: %d", kafkaOpts.MaxRetries)
+	log.Infof("    - Worker数量: %d", kafkaOpts.WorkerCount)
+	log.Infof("    - 批量大小: %d", kafkaOpts.BatchSize)
+	log.Infof("    - 批量超时: %v", kafkaOpts.BatchTimeout)
+	log.Infof("    - 确认机制: %d", kafkaOpts.RequiredAcks)
 }

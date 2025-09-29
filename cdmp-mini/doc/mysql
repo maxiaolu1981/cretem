@@ -1,0 +1,48 @@
+查看当前活跃的进程
+SELECT *
+FROM information_schema.processlist
+WHERE
+    COMMAND != 'Sleep'
+    AND INFO IS NOT NULL;
+
+各Handler的实际含义：
+read_key（使用索引查找）
+sql
+-- 使用索引的等值或范围查询
+SELECT * FROM users WHERE id = 1;
+-- 主键查找
+SELECT * FROM products WHERE category_id = 5;
+-- 索引查找
+read_rnd_next（全表或索引扫描）
+sql
+-- 没有使用索引或需要扫描多行
+SELECT * FROM users;
+-- 全表扫描
+SELECT * FROM orders WHERE amount > 100;
+-- 范围扫描
+read_rnd（随机位置读取）
+sql
+-- 排序操作或随机读取
+SELECT * FROM users ORDER BY RAND() LIMIT 10;
+-- 随机排序
+tmp_write（临时表写入）
+sql
+-- 复杂查询需要创建临时表
+SELECT * FROM users u JOIN orders o ON u.id = o.user_id 
+WHERE u.country = 'China' GROUP BY u.city;
+
+-- 可能用临时表sudo mysqldumpslow -s t /var/log/mysql/slow.log
+
+# 排除exporter用户的慢查询
+# 基础慢查询配置
+slow_query_log = 1
+slow_query_log_file = /var/log/mysql/slow.log
+long_query_time = 2
+
+# 高级过滤配置 - 排除监控查询
+
+
+# 其他优化
+log_slow_admin_statements = 0
+log_queries_not_using_indexes = 0
+log_slow_rate_limit = 100
