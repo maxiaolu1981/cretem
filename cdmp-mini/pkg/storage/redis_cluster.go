@@ -223,7 +223,7 @@ func NewRedisClusterPool(isCache bool, config *options.RedisOptions) redis.Unive
 		log.Errorf("新创建的Redis客户端验证失败: %v", err)
 		return nil
 	}
-	log.Info("新创建的Redis客户端验证成功")
+	//log.Info("新创建的Redis客户端验证成功")
 	return client
 }
 

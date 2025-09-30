@@ -27,11 +27,29 @@ for port in 6379 6380 6381; do
     sleep 2
 done
 
-
 sudo redis-cluster-ctl start
 ps aux | grep redis-server
 redis-cli -p 6379 ping
 
+sudo tee /usr/local/bin/redis-cluster-ctl
+
+使用NUMA优化的启动
  sudo systemctl restart redis_exporter.service
   检查服务文件语法
 sudo systemd-analyze verify /etc/systemd/system/redis-exporter.service
+
+在笔记本启动新的节点
+sudo /usr/local/bin/redis-node-ctl start
+sleep 3
+sudo /usr/local/bin/redis-node-ctl status
+
+# 检查所有节点状态
+sudo /usr/local/bin/redis-cluster-ctl status
+
+# 查看集群详细信息
+sudo /usr/local/bin/redis-cluster-ctl cluster-status
+
+# 管理远程节点
+sudo /usr/local/bin/redis-cluster-ctl remote-status
+sudo /usr/local/bin/redis-cluster-ctl remote-stop
+sudo /usr/local/bin/redis-cluster-ctl remote-start

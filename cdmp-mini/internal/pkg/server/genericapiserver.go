@@ -69,6 +69,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 	interfaces.SetClient(storeIns)
 	log.Info("mysql服务器初始化成功")
+	time.Sleep(3 * time.Second)
 
 	//初始化redis
 	if err := g.initRedisStore(); err != nil {
@@ -76,6 +77,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		return nil, err
 	}
 	log.Info("redis服务器启动成功")
+	time.Sleep(3 * time.Second)
 
 	// 初始化Kafka生产者和消费者
 	if err := InitKafkaWithRetry(opts); err != nil {
@@ -88,6 +90,8 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		return nil, err
 	}
 	log.Info("kafka服务器启动成功")
+	time.Sleep(3 * time.Second)
+
 	// 启动消费者
 	ctx, cancel := context.WithCancel(context.Background())
 	g.consumerCtx = ctx
@@ -104,10 +108,9 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	go g.retryConsumer.StartConsuming(ctx, RetryConsumerWorkers)
 
 	log.Info("所有Kafka消费者已启动")
-
-	//延迟3秒
-	time.Sleep(3 * time.Second)
 	g.printKafkaConfigInfo()
+	
+
 
 	//安装中间件
 	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
@@ -308,7 +311,6 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	return nil
 }
 
-// monitorRedisConnection 监控Redis连接状态，根据分布式锁开关决定是否影响主进程
 func (g *GenericAPIServer) monitorRedisConnection(ctx context.Context) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -325,28 +327,14 @@ func (g *GenericAPIServer) monitorRedisConnection(ctx context.Context) {
 				continue
 			}
 
+			// 减少日志输出，只在出错时记录
 			if err := g.pingRedis(ctx, client); err != nil {
 				log.Errorf("Redis集群健康检查失败: %v", err)
-				// 这里可以添加重连逻辑
-			} else {
-				log.Debug("Redis集群健康检查通过")
 			}
+			// 成功时不输出日志，或者改为Debug级别
+			// log.Debug("Redis集群健康检查通过")
 		}
 	}
-}
-
-// handlePingError 分类处理PING命令的错误
-func handlePingError(err error) error {
-	if err == nil {
-		return nil
-	}
-
-	if strings.Contains(err.Error(), "connection refused") ||
-		strings.Contains(err.Error(), "i/o timeout") ||
-		strings.Contains(err.Error(), "closed") {
-		return fmt.Errorf("连接失败: %v", err)
-	}
-	return fmt.Errorf("PING失败: %v", err)
 }
 
 func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
@@ -405,81 +393,96 @@ func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
 func (g *GenericAPIServer) initRedisStore() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	g.redisCancel = cancel
-	defer func() {
-		if r := recover(); r != nil {
-			cancel()
-			log.Errorf("Redis初始化异常: %v", r)
-		}
-	}()
 
-	// 初始化RedisCluster
+	// 🔥 必须先初始化 g.redis！
 	g.redis = &storage.RedisCluster{
 		KeyPrefix: "genericapiserver:",
 		HashKeys:  false,
 		IsCache:   false,
 	}
 
-	// 启动Redis异步连接任务
+	// 启动异步连接任务
 	go func() {
 		log.Info("启动Redis集群异步连接任务")
 		storage.ConnectToRedis(ctx, g.options.RedisOptions)
 		log.Warn("Redis集群异步连接任务退出（可能上下文已取消）")
 	}()
 
-	// 等待初始连接尝试完成
-	log.Info("等待Redis集群初始连接尝试...")
-	time.Sleep(5 * time.Second)
+	// 同步等待Redis完全启动
+	log.Info("等待Redis集群完全启动...")
 
-	const (
-		maxRetries    = 30
-		retryInterval = 3 * time.Second
-	)
-
-	for retryCount := 0; retryCount < maxRetries; retryCount++ {
-		// 1. 检查连接状态
-		if !storage.Connected() {
-			log.Warnf("Redis集群未连接（尝试 %d/%d）", retryCount+1, maxRetries)
-			if retryCount == maxRetries-1 {
-				return fmt.Errorf("Redis集群连接失败：storage未标记为已连接（重试%d次后）", maxRetries)
-			}
-			time.Sleep(retryInterval)
-			continue
-		}
-
-		// 2. 获取客户端 - 使用GetClient()方法
-		redisClient := g.redis.GetClient()
-		if redisClient == nil {
-			log.Warnf("Redis客户端为空（尝试 %d/%d）", retryCount+1, maxRetries)
-			if retryCount == maxRetries-1 {
-				return fmt.Errorf("Redis连接失败：GetClient()返回空客户端（重试%d次后）", maxRetries)
-			}
-			time.Sleep(retryInterval)
-			continue
-		}
-
-		// 3. 验证连接
-		if err := g.pingRedis(ctx, redisClient); err != nil {
-			log.Warnf("Redis连接验证失败（尝试 %d/%d）: %v", retryCount+1, maxRetries, err)
-			if retryCount == maxRetries-1 {
-				return fmt.Errorf("Redis连接失败：PING验证失败（重试%d次后）: %v", maxRetries, err)
-			}
-			time.Sleep(retryInterval)
-			continue
-		}
-
-		// 4. 所有检查通过，连接成功
-		log.Info("✅ Redis集群连接成功且验证可用")
-		go g.monitorRedisConnection(ctx)
-
-		// 5. 启动Redis集群监控
-		g.setupRedisClusterMonitoring()
-
-		go g.monitorRedisConnection(ctx)
-
-		return nil
+	// 第一阶段：等待基础连接
+	if err := g.waitForBasicConnection(10 * time.Second); err != nil {
+		return err
 	}
 
-	return fmt.Errorf("Redis连接失败，已达最大重试次数(%d)", maxRetries)
+	// 第二阶段：等待健康检查通过
+	if err := g.waitForHealthyCluster(ctx, 20*time.Second); err != nil {
+		return err
+	}
+
+	log.Info("✅ Redis集群完全启动并验证成功")
+
+	// 启动监控
+	go g.monitorRedisConnection(ctx)
+	g.setupRedisClusterMonitoring()
+
+	return nil
+}
+
+// 等待集群健康状态 - 添加 nil 检查
+func (g *GenericAPIServer) waitForHealthyCluster(ctx context.Context, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for attempt := 1; time.Now().Before(deadline); attempt++ {
+		// 🔥 添加 nil 检查
+		if g.redis == nil {
+			log.Warnf("RedisCluster实例为空（尝试 %d 次）", attempt)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+
+		redisClient := g.redis.GetClient()
+		if redisClient != nil {
+			if err := g.pingRedis(ctx, redisClient); err == nil {
+				log.Infof("✅ Redis集群健康检查通过（尝试 %d 次）", attempt)
+				return nil
+			}
+		}
+
+		if attempt%2 == 0 {
+			log.Infof("等待Redis集群健康检查...（尝试 %d 次）", attempt)
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	return fmt.Errorf("Redis集群健康检查超时（%v）", timeout)
+}
+
+// 等待基础连接建立 - 添加 nil 检查
+func (g *GenericAPIServer) waitForBasicConnection(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+
+	for attempt := 1; time.Now().Before(deadline); attempt++ {
+		// 🔥 添加 nil 检查
+		if g.redis == nil {
+			log.Warnf("RedisCluster实例为空（尝试 %d 次）", attempt)
+			time.Sleep(1 * time.Second)
+			continue
+		}
+
+		if storage.Connected() && g.redis.GetClient() != nil {
+			log.Infof("✅ Redis基础连接建立（尝试 %d 次）", attempt)
+			return nil
+		}
+
+		if attempt%3 == 0 {
+			log.Infof("等待Redis基础连接...（尝试 %d 次）", attempt)
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	return fmt.Errorf("Redis基础连接建立超时（%v）", timeout)
 }
 
 // setupRedisClusterMonitoring 设置Redis集群监控
@@ -514,27 +517,94 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 	// 检查集群状态
 	if clusterClient, ok := client.(*redis.ClusterClient); ok {
 		// 集群模式：检查集群信息
-		_, err := clusterClient.ClusterInfo(pingCtx).Result()
+		clusterInfo, err := clusterClient.ClusterInfo(pingCtx).Result()
 		if err != nil {
 			return fmt.Errorf("集群状态检查失败: %v", err)
 		}
 
-		// 可选：对每个主节点执行PING（更严格的检查）
-		var lastError error
-		nodeCount := 0
+		// 执行 CLUSTER NODES 命令获取完整集群信息
+		clusterNodes, err := clusterClient.ClusterNodes(pingCtx).Result()
+		if err != nil {
+			log.Warnf("执行CLUSTER NODES失败: %v", err)
+		} else {
+			//log.Infof("=== Redis集群节点详情 ===")
+			//log.Infof("配置的节点数量: %d", len(g.options.RedisOptions.Addrs))
+			//log.Infof("配置的节点列表: %v", g.options.RedisOptions.Addrs)
 
+			lines := strings.Split(clusterNodes, "\n")
+			actualNodeCount := 0
+			for _, line := range lines {
+				if strings.TrimSpace(line) != "" {
+					actualNodeCount++
+			//		log.Infof("节点 %d: %s", actualNodeCount, strings.TrimSpace(line))
+				}
+			}
+	//		log.Infof("实际发现的节点数量: %d", actualNodeCount)
+		}
+
+		// 解析集群信息
+		//log.Infof("=== Redis集群状态 ===")
+		infoLines := strings.Split(clusterInfo, "\n")
+		for _, line := range infoLines {
+			if strings.Contains(line, ":") {
+	//			log.Infof("  %s", strings.TrimSpace(line))
+			}
+		}
+
+		// 🔥 修改：同时检查主节点和从节点
+		var lastError error
+		masterCount := 0
+		slaveCount := 0
+		successCount := 0
+
+		// 检查所有主节点
 		err = clusterClient.ForEachMaster(pingCtx, func(ctx context.Context, nodeClient *redis.Client) error {
-			nodeCount++
+			masterCount++
 			if err := nodeClient.Ping(ctx).Err(); err != nil {
-				log.Warnf("集群节点 %d PING 失败: %v", nodeCount, err)
+				log.Warnf("主节点 %d PING 失败: %v", masterCount, err)
 				lastError = err
-				// 继续检查其他节点
+			} else {
+	//			log.Infof("✅ 主节点 %d PING 成功", masterCount)
+				successCount++
 			}
 			return nil
 		})
 
-		if nodeCount == 0 {
-			return fmt.Errorf("未找到集群节点")
+		// 检查所有从节点
+		err = clusterClient.ForEachSlave(pingCtx, func(ctx context.Context, nodeClient *redis.Client) error {
+			slaveCount++
+			if err := nodeClient.Ping(ctx).Err(); err != nil {
+				log.Warnf("从节点 %d PING 失败: %v", slaveCount, err)
+				lastError = err
+			} else {
+		//		log.Infof("✅ 从节点 %d PING 成功", slaveCount)
+				successCount++
+			}
+			return nil
+		})
+
+		totalNodes := masterCount + slaveCount
+
+		// log.Infof("=== Redis集群健康检查总结 ===")
+		// log.Infof("主节点数: %d, 从节点数: %d", masterCount, slaveCount)
+		// log.Infof("总节点数: %d, 成功节点: %d, 失败节点: %d", totalNodes, successCount, totalNodes-successCount)
+
+		if successCount == 0 {
+			return fmt.Errorf("所有集群节点PING检查失败")
+		}
+
+		// 🔥 修改：检查是否所有配置的节点都被发现
+		expectedNodes := len(g.options.RedisOptions.Addrs)
+		if totalNodes != expectedNodes {
+			log.Warnf("⚠️  节点数量不匹配: 配置%d个, 集群中发现%d个", expectedNodes, totalNodes)
+		} else {
+	//		log.Infof("✅ 节点数量匹配: %d个", totalNodes)
+		}
+
+		if successCount < totalNodes {
+			log.Warnf("部分节点连接异常 (%d/%d 成功)", successCount, totalNodes)
+		} else {
+	//		log.Infof("✅ 所有节点连接正常")
 		}
 
 		// 如果至少有一个节点正常，认为集群可用
@@ -542,13 +612,13 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 			return fmt.Errorf("集群节点检查异常: %v", lastError)
 		}
 
-		log.Debugf("Redis集群健康检查完成，共%d个节点", nodeCount)
 		return nil
 	}
 
 	// 单机模式或普通客户端
 	return client.Ping(pingCtx).Err()
 }
+
 
 // 打印Kafka配置信息
 func (g *GenericAPIServer) printKafkaConfigInfo() {

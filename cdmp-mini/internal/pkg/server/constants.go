@@ -58,6 +58,6 @@ const (
 	// MaxRetryDelay  = 5 * time.Minute
 
 	// Consumer 配置
-	MainConsumerWorkers  = 8
+	MainConsumerWorkers  = 3
 	RetryConsumerWorkers = 3
 )

@@ -1,0 +1,7 @@
+sudo tee /usr/local/bin/kafka-cluster-ctl
+
+sudo systemctl start kafka1.service
+sleep 10
+sudo systemctl start kafka2.service
+sleep 10
+sudo systemctl start kafka3.service
