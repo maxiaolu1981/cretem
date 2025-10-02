@@ -1,20 +1,22 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/policy"
 	policyaudit "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/policy_audit"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/secret"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/user"
-
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/logger"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	moptions "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
-
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
 )
@@ -31,14 +33,58 @@ type Datastore struct {
 	UseCluster bool          // 是否使用集群模式
 }
 
-// 新增：创建函数
 func newUsers(ds *Datastore) interfaces.UserStore {
 	policyStore := newPolices(ds)
 	if ds.UseCluster {
-		// 集群模式下，读操作使用负载均衡
-		return user.NewUsers(ds.DBManager.GetReadDB(), policyStore)
+		// 集群模式下传入读写两个DB
+		return &ClusterAwareUserStore{
+			readStore:  user.NewUsers(ds.DBManager.GetReadDB(), policyStore),
+			writeStore: user.NewUsers(ds.DBManager.GetWriteDB(), policyStore),
+		}
 	}
 	return user.NewUsers(ds.DB, policyStore)
+}
+
+// 新增：智能路由的UserStore包装器
+type ClusterAwareUserStore struct {
+	readStore  interfaces.UserStore // 用于读操作
+	writeStore interfaces.UserStore // 用于写操作
+}
+
+func (c *ClusterAwareUserStore) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
+	return c.readStore.Get(ctx, username, opts, opt) // 读操作用读库
+}
+
+func (c *ClusterAwareUserStore) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
+	return c.writeStore.Create(ctx, user, opts, opt) // 写操作用写库
+}
+
+func (c *ClusterAwareUserStore) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions, opt *options.Options) error {
+	return c.writeStore.Update(ctx, user, opts, opt) // 写操作用写库
+}
+
+func (c *ClusterAwareUserStore) Delete(ctx context.Context, username string, opts metav1.DeleteOptions, opt *options.Options) error {
+	return c.writeStore.Delete(ctx, username, opts, opt) // 写操作用写库
+}
+
+func (c *ClusterAwareUserStore) DeleteForce(ctx context.Context, username string, opts metav1.DeleteOptions, opt *options.Options) error {
+	return c.writeStore.DeleteForce(ctx, username, opts, opt) // 写操作用写库
+}
+
+func (c *ClusterAwareUserStore) DeleteCollection(ctx context.Context, usernames []string, opts metav1.DeleteOptions, opt *options.Options) error {
+	return c.writeStore.DeleteCollection(ctx, usernames, opts, opt) // 写操作用写库
+}
+
+func (c *ClusterAwareUserStore) List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
+	return c.readStore.List(ctx, opts, opt) // 读操作用读库
+}
+
+func (c *ClusterAwareUserStore) ListAllUsernames(ctx context.Context) ([]string, error) {
+	return c.readStore.ListAllUsernames(ctx) // 读操作用读库
+}
+
+func (c *ClusterAwareUserStore) ListAll(ctx context.Context, username string) (*v1.UserList, error) {
+	return c.readStore.ListAll(ctx, username) // 读操作用读库
 }
 
 func newPolices(ds *Datastore) interfaces.PolicyStore {
@@ -109,7 +155,7 @@ func (ds *Datastore) ClusterStatus() db.ClusterStatus {
 }
 
 // 判断是否使用集群模式
-func shouldUseCluster(opts *options.MySQLOptions) bool {
+func shouldUseCluster(opts *moptions.MySQLOptions) bool {
 	// 如果配置了副本节点且启用了负载均衡，则使用集群模式
 	return opts != nil &&
 		len(opts.ReplicaHosts) > 0 &&
@@ -117,7 +163,7 @@ func shouldUseCluster(opts *options.MySQLOptions) bool {
 		len(opts.ReplicaHosts) == len(opts.ReplicaPorts)
 }
 
-func GetMySQLFactoryOr(opts *options.MySQLOptions) (interfaces.Factory, *gorm.DB, error) {
+func GetMySQLFactoryOr(opts *moptions.MySQLOptions) (interfaces.Factory, *gorm.DB, error) {
 	if opts == nil && mysqlFactory == nil {
 		return nil, nil, fmt.Errorf("获取mysql store factory失败")
 	}

@@ -132,8 +132,8 @@ type MySQLOptions struct {
 	ReplicaPorts []int    `json:"replica-ports,omitempty"        mapstructure:"replica-ports"`
 
 	// 集群配置
-	LoadBalance        bool          `json:"load-balance,omitempty"           mapstructure:"load-balance"`
-	FailoverEnabled    bool          `json:"failover-enabled,omitempty"       mapstructure:"failover-enabled"`
+	LoadBalance         bool          `json:"load-balance,omitempty"           mapstructure:"load-balance"`
+	FailoverEnabled     bool          `json:"failover-enabled,omitempty"       mapstructure:"failover-enabled"`
 	HealthCheckInterval time.Duration `json:"health-check-interval,omitempty"  mapstructure:"health-check-interval"`
 
 	// Galera特定配置
@@ -144,20 +144,19 @@ func NewMySQLOptions() *MySQLOptions {
 	return &MySQLOptions{
 		AdminUsername: "root",
 		AdminPassword: "iam59!z$",
-		Host:          "127.0.0.1",
+		Host:          "192.168.10.14",
 		Port:          3306,
-		Username:      "iam",
 		Password:      "iam59!z$",
 		Database:      "iam",
 
 		// 连接池优化
-		MaxIdleConnections: 20,               // 增加到20个空闲连接
-		MaxOpenConnections: 60,               // 增加到60个最大连接
-		ConnMaxLifetime:    5 * time.Minute,  // 缩短到5分钟，促进连接轮换
-		ConnMaxIdleTime:    1 * time.Minute,  // 空闲1分钟释放
-		ReadTimeout:        3 * time.Second,  // 读超时
-		WriteTimeout:       3 * time.Second,  // 写超时
-		DialTimeout:        2 * time.Second,  // 连接建立超时
+		MaxIdleConnections: 20,              // 增加到20个空闲连接
+		MaxOpenConnections: 60,              // 增加到60个最大连接
+		ConnMaxLifetime:    5 * time.Minute, // 缩短到5分钟，促进连接轮换
+		ConnMaxIdleTime:    1 * time.Minute, // 空闲1分钟释放
+		ReadTimeout:        3 * time.Second, // 读超时
+		WriteTimeout:       3 * time.Second, // 写超时
+		DialTimeout:        2 * time.Second, // 连接建立超时
 
 		// 性能监控
 		LogLevel:           1,                      // 开启慢查询日志
@@ -168,28 +167,27 @@ func NewMySQLOptions() *MySQLOptions {
 		SSLMode: "disable", // 默认禁用SSL
 
 		// 重试配置
-		MaxRetryAttempts: 5,               // 增加重试次数
+		MaxRetryAttempts: 5,                      // 增加重试次数
 		RetryInterval:    500 * time.Millisecond, // 缩短重试间隔
 
 		// ========== 新增：Galera集群配置 ==========
 		// 主节点（写操作指向节点1）
-		PrimaryHost: "127.0.0.1",
+		PrimaryHost: "192.168.10.8",
 		PrimaryPort: 3306,
 
 		// 副本节点（所有节点都可用于读）
-		ReplicaHosts: []string{"127.0.0.1", "127.0.0.1", "127.0.0.1"},
+		ReplicaHosts: []string{"192.168.10.8", "192.168.10.8", "192.168.10.8"},
 		ReplicaPorts: []int{3306, 3307, 3308},
 
 		// 集群配置
-		LoadBalance:        true,            // 启用负载均衡
-		FailoverEnabled:    true,            // 启用故障转移
+		LoadBalance:         true,             // 启用负载均衡
+		FailoverEnabled:     true,             // 启用故障转移
 		HealthCheckInterval: 10 * time.Second, // 健康检查间隔
 
 		// Galera配置
 		WSREPSyncWait: true, // 等待集群同步
 	}
 }
-
 
 func (m *MySQLOptions) Complete() error {
 	// ---------------- 第一步：加载环境变量 ----------------
