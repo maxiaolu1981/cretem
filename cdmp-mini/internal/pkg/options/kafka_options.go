@@ -75,7 +75,7 @@ func NewKafkaOptions() *KafkaOptions {
 		BaseRetryDelay:       10 * time.Second,
 		MaxRetryDelay:        5 * time.Minute,
 		AutoCreateTopic:      true,
-		DesiredPartitions:    16, // 期望的分区数
+		DesiredPartitions:    48, // 期望的分区数
 		AutoExpandPartitions: true,
 	}
 }

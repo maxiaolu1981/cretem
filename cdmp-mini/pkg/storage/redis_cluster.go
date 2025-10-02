@@ -243,7 +243,9 @@ type RedisOpts redis.UniversalOptions
 
 func (o *RedisOpts) cluster() *redis.ClusterOptions {
 	if len(o.Addrs) == 0 {
-		o.Addrs = []string{"127.0.0.1:6379"}
+		o.Addrs = []string{"192.168.10.14:6379",
+			"192.168.10.14:6380",
+			"192.168.10.14:6381"}
 	}
 	return &redis.ClusterOptions{
 		Addrs:     o.Addrs,
@@ -275,7 +277,7 @@ func (o *RedisOpts) cluster() *redis.ClusterOptions {
 }
 
 func (o *RedisOpts) simple() *redis.Options {
-	addr := "127.0.0.1:6379"
+	addr := "192.168.10.14:6379"
 	if len(o.Addrs) > 0 {
 		addr = o.Addrs[0]
 	}
@@ -307,7 +309,9 @@ func (o *RedisOpts) simple() *redis.Options {
 
 func (o *RedisOpts) failover() *redis.FailoverOptions {
 	if len(o.Addrs) == 0 {
-		o.Addrs = []string{"127.0.0.1:26379"}
+		o.Addrs = []string{"192.168.10.14:6379",
+			"192.168.10.14:6380",
+			"192.168.10.14:6381"}
 	}
 	return &redis.FailoverOptions{
 		SentinelAddrs: o.Addrs,

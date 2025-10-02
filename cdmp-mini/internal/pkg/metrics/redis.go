@@ -67,7 +67,7 @@ func (m *RedisClusterMonitor) collectMetrics() {
 		"keyspace_misses":   "100",
 	}
 
-	RecordRedisNodeMetrics("node1", "127.0.0.1:6379", "master", nodeInfo)
+	RecordRedisNodeMetrics("node1", "192.168.10.14:6379", "master", nodeInfo)
 
 	// 更新健康检查状态
 	UpdateRedisClusterHealthCheck("node_connect", m.clusterName, true)

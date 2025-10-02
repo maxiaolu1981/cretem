@@ -29,12 +29,12 @@ type RedisOptions struct {
 
 func NewRedisOptions() *RedisOptions {
 	return &RedisOptions{
-		Host: "127.0.0.1", // 单机模式备用
-		Port: 6379,        // 单机模式备用
+		Host: "192.168.10.14", // 单机模式备用
+		Port: 6379,            // 单机模式备用
 		Addrs: []string{
-			"127.0.0.1:6379",
-			"127.0.0.1:6380",
-			"127.0.0.1:6381",
+			"192.168.10.14:6379",
+			"192.168.10.14:6380",
+			"192.168.10.14:6381",
 		},
 		Username:              "",
 		Password:              "",

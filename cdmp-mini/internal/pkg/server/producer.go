@@ -21,7 +21,7 @@ import (
 )
 
 var _ producer.MessageProducer = (*UserProducer)(nil)
-var KafkaBrokers = []string{"127.0.0.1:9092"}
+var KafkaBrokers = []string{"192.168.10.8:9092", "192.168.10.8:9093", "192.168.10.8:9094"}
 
 type UserProducer struct {
 	writer       *kafka.Writer
