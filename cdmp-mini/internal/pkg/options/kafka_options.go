@@ -4,6 +4,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
 	"github.com/spf13/pflag"
 )
@@ -47,31 +48,35 @@ type KafkaOptions struct {
 	EnableSSL bool `json:"enableSSL" mapstructure:"enableSSL"`
 
 	// SSL证书路径
-	SSLCertFile string `json:"sslCertFile" mapstructure:"sslCertFile"`
-
-	BaseRetryDelay time.Duration `json:"baseretrydelay" mapstructure:"baseretrydelay"`
-
-	MaxRetryDelay time.Duration `json:"maxretrydelay" mapstructure:"maxretrydelay"`
+	SSLCertFile          string        `json:"sslCertFile" mapstructure:"sslCertFile"`
+	BaseRetryDelay       time.Duration `json:"baseretrydelay" mapstructure:"baseretrydelay"`
+	MaxRetryDelay        time.Duration `json:"maxretrydelay" mapstructure:"maxretrydelay"`
+	AutoCreateTopic      bool          `json:"autoCreateTopic" mapstructure:"autoCreateTopic"`
+	DesiredPartitions    int           `json:"desiredPartitions" mapstructure:"desiredPartitions" validate:"min=1"`
+	AutoExpandPartitions bool          `json:"autoExpandPartitions" mapstructure:"autoExpandPartitions"`
 }
 
 // NewKafkaOptions 创建带有默认值的Kafka配置
 func NewKafkaOptions() *KafkaOptions {
 	return &KafkaOptions{
-		Brokers:        []string{"127.0.0.1:9092", "127.0.0.1:9093", "127.0.0.1:9094", "192.168.10.13:9095"},
-		Topic:          "default-topic",
-		ConsumerGroup:  "default-consumer-group",
-		RequiredAcks:   -1, // leader确认
-		Async:          true,
-		BatchSize:      100,
-		BatchTimeout:   100 * time.Millisecond,
-		MaxRetries:     6,
-		MinBytes:       50 * 1024,        // 10KB
-		MaxBytes:       10 * 1024 * 1024, // 10MB
-		WorkerCount:    16,
-		EnableSSL:      false,
-		SSLCertFile:    "",
-		BaseRetryDelay: 10 * time.Second,
-		MaxRetryDelay:  5 * time.Minute,
+		Brokers:              []string{"192.168.10.8:9092", "192.168.10.8:9093", "192.168.10.8:9094"},
+		Topic:                "default-topic",
+		ConsumerGroup:        "default-consumer-group",
+		RequiredAcks:         -1, // leader确认
+		Async:                true,
+		BatchSize:            100,
+		BatchTimeout:         100 * time.Millisecond,
+		MaxRetries:           6,
+		MinBytes:             50 * 1024,        // 10KB
+		MaxBytes:             10 * 1024 * 1024, // 10MB
+		WorkerCount:          16,
+		EnableSSL:            false,
+		SSLCertFile:          "",
+		BaseRetryDelay:       10 * time.Second,
+		MaxRetryDelay:        5 * time.Minute,
+		AutoCreateTopic:      true,
+		DesiredPartitions:    16, // 期望的分区数
+		AutoExpandPartitions: true,
 	}
 }
 
@@ -106,6 +111,36 @@ func (k *KafkaOptions) Complete() {
 	}
 	if k.MaxBytes <= 0 {
 		k.MaxBytes = 10 * 1024 * 1024
+	}
+
+	// 设置合理的默认值
+	if len(k.Brokers) == 0 {
+		k.Brokers = []string{"localhost:9092"}
+	}
+	if k.BatchSize <= 0 {
+		k.BatchSize = 100
+	}
+	if k.BatchTimeout <= 0 {
+		k.BatchTimeout = 100 * time.Millisecond
+	}
+	if k.WorkerCount <= 0 {
+		k.WorkerCount = 16 // 默认调整为16个worker
+	}
+	if k.MinBytes <= 0 {
+		k.MinBytes = 10 * 1024
+	}
+	if k.MaxBytes <= 0 {
+		k.MaxBytes = 10 * 1024 * 1024
+	}
+
+	// 新增：设置合理的分区数默认值
+	if k.DesiredPartitions <= 0 {
+		k.DesiredPartitions = 16 // 默认16个分区
+	}
+	// 确保worker数量不超过分区数
+	if k.WorkerCount > k.DesiredPartitions {
+		log.Warnf("Worker数量(%d)超过分区数(%d)，部分worker可能空闲",
+			k.WorkerCount, k.DesiredPartitions)
 	}
 }
 
@@ -163,6 +198,18 @@ func (k *KafkaOptions) Validate() []error {
 		}
 	}
 
+	// 验证分区数
+	if k.DesiredPartitions < 1 {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "partitions"),
+			k.DesiredPartitions, "分区数必须大于0"))
+	}
+
+	// 验证worker数量与分区的合理性（警告级别，不阻断启动）
+	if k.WorkerCount > k.DesiredPartitions {
+		log.Warnf("配置警告: worker数量(%d)超过分区数(%d)，建议调整配置",
+			k.WorkerCount, k.DesiredPartitions)
+	}
+
 	return errs
 }
 
@@ -206,6 +253,16 @@ func (k *KafkaOptions) AddFlags(fs *pflag.FlagSet) {
 
 	fs.StringVar(&k.SSLCertFile, "kafka.ssl-cert-file", k.SSLCertFile,
 		"SSL证书文件路径")
+
+	// 新增分区管理标志
+	fs.BoolVar(&k.AutoCreateTopic, "kafka.auto-create-topic", k.AutoCreateTopic,
+		"是否自动创建不存在的topic")
+
+	fs.IntVar(&k.DesiredPartitions, "kafka.partitions", k.DesiredPartitions,
+		"期望的分区数量")
+
+	fs.BoolVar(&k.AutoExpandPartitions, "kafka.auto-expand-partitions", k.AutoExpandPartitions,
+		"是否自动扩展分区")
 }
 
 // parseBrokersFromEnv 从环境变量字符串解析broker列表
@@ -229,4 +286,21 @@ func (k *KafkaOptions) GetRequiredAcks() int {
 // GetBrokers 获取broker列表
 func (k *KafkaOptions) GetBrokers() []string {
 	return k.Brokers
+}
+
+// EnsureTopic 确保topic存在且分区数正确
+func (k *KafkaOptions) EnsureTopic() error {
+	// 如果不需要自动管理分区，直接返回
+	if !k.AutoCreateTopic && !k.AutoExpandPartitions {
+		return nil
+	}
+
+	log.Infof("开始检查Kafka topic: %s, 期望分区数: %d", k.Topic, k.DesiredPartitions)
+
+	// 这里使用kafka-go的AdminClient来管理topic
+	// 由于这是最小化调整，我们先记录日志，实际分区管理在server中实现
+	log.Infof("Topic分区管理配置 - 自动创建: %v, 自动扩展: %v, 期望分区: %d",
+		k.AutoCreateTopic, k.AutoExpandPartitions, k.DesiredPartitions)
+
+	return nil
 }

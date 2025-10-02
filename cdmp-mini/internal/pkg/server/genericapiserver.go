@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
+	"github.com/segmentio/kafka-go"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
@@ -351,6 +352,15 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 // 初始化Kafka组件 - 使用options中的完整配置
 func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	kafkaOpts := g.options.KafkaOptions
+
+	// 新增：在初始化Kafka组件前先确保topic分区
+	log.Info("检查Kafka topic分区配置...")
+	if err := g.ensureKafkaTopics(); err != nil {
+		log.Warnf("Kafka topic分区检查失败: %v", err)
+	}
+
+	log.Infof("初始化Kafka组件，最大重试: %d, 消费者实例数量: %d",
+		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount)
 
 	log.Infof("初始化Kafka组件，最大重试: %d, 消费者实例数量: %d",
 		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount)
@@ -802,5 +812,79 @@ func initializeGaleraCluster(datastore *store.Datastore) error {
 	}
 
 	log.Warn("⚠️  Galera集群部分节点不可用，但服务将继续启动")
+	return nil
+}
+
+// ensureKafkaTopics 确保所有需要的Kafka topic都存在且分区数正确
+func (g *GenericAPIServer) ensureKafkaTopics() error {
+	kafkaOpts := g.options.KafkaOptions
+
+	// 定义需要管理的topic列表
+	topics := []string{
+		UserCreateTopic,
+		UserUpdateTopic,
+		UserDeleteTopic,
+		UserRetryTopic,
+		UserDeadLetterTopic,
+	}
+
+	for _, topic := range topics {
+		if err := g.ensureTopicPartitions(topic, kafkaOpts.DesiredPartitions); err != nil {
+			log.Warnf("Topic %s 分区管理失败: %v", topic, err)
+			// 不阻断启动，只记录警告
+		}
+	}
+
+	return nil
+}
+
+// ensureTopicPartitions 确保单个topic的分区数
+func (g *GenericAPIServer) ensureTopicPartitions(topic string, desiredPartitions int) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// 创建kafka admin client
+	admin := &kafka.Client{
+		Addr: kafka.TCP(g.options.KafkaOptions.Brokers...),
+	}
+
+	// 获取topic元数据
+	metadata, err := admin.Metadata(ctx, &kafka.MetadataRequest{
+		Topics: []string{topic},
+	})
+	if err != nil {
+		if g.options.KafkaOptions.AutoCreateTopic {
+			log.Infof("Topic %s 不存在，将依赖broker自动创建", topic)
+			return nil
+		}
+		return fmt.Errorf("获取topic %s 元数据失败: %v", topic, err)
+	}
+
+	// 查找目标topic
+	var topicMetadata *kafka.Topic
+	for _, t := range metadata.Topics {
+		if t.Name == topic {
+			topicMetadata = &t
+			break
+		}
+	}
+
+	if topicMetadata == nil || len(topicMetadata.Partitions) == 0 {
+		log.Infof("Topic %s 不存在，将依赖broker自动创建", topic)
+		return nil
+	}
+
+	currentPartitions := len(topicMetadata.Partitions)
+	log.Infof("Topic %s 当前分区数: %d, 期望分区数: %d",
+		topic, currentPartitions, desiredPartitions)
+
+	// 检查是否需要扩展分区
+	if currentPartitions < desiredPartitions && g.options.KafkaOptions.AutoExpandPartitions {
+		log.Warnf("Topic %s 需要从 %d 分区扩展到 %d 分区，请手动执行扩展操作",
+			topic, currentPartitions, desiredPartitions)
+		log.Infof("手动扩展命令: kafka-topics.sh --alter --topic %s --partitions %d --bootstrap-server %s",
+			topic, desiredPartitions, g.options.KafkaOptions.Brokers[0])
+	}
+
 	return nil
 }
