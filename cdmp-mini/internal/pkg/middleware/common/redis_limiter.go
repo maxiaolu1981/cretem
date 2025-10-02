@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -13,8 +13,65 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 )
 
-// 本地计数器减少Redis压力
-var localLoginCounter int64
+// 优化的本地限流器
+type localRateLimiter struct {
+	sync.RWMutex
+	counters map[string]*localCounter
+}
+
+type localCounter struct {
+	count    int64
+	lastTime time.Time
+}
+
+var (
+	localLimiter = &localRateLimiter{
+		counters: make(map[string]*localCounter),
+	}
+	
+	// 定期清理过期的本地计数器
+	cleanupTicker = time.NewTicker(5 * time.Minute)
+)
+
+func init() {
+	go cleanupExpiredCounters()
+}
+
+func cleanupExpiredCounters() {
+	for range cleanupTicker.C {
+		localLimiter.Lock()
+		now := time.Now()
+		for key, counter := range localLimiter.counters {
+			if now.Sub(counter.lastTime) > 10*time.Minute {
+				delete(localLimiter.counters, key)
+			}
+		}
+		localLimiter.Unlock()
+	}
+}
+
+// 优化的Lua脚本 - 使用INCR和EXPIRE组合
+const optimizedLuaScript = `
+local key = KEYS[1]
+local limit = tonumber(ARGV[1])
+local window = tonumber(ARGV[2])
+
+-- 使用INCR，如果key不存在会自动创建为1
+local current = redis.call('INCR', key)
+
+-- 如果是第一次设置，设置过期时间
+if current == 1 then
+    redis.call('EXPIRE', key, window)
+end
+
+-- 如果超过限制，返回剩余时间
+if current > limit then
+    local ttl = redis.call('TTL', key)
+    return {1, ttl}
+else
+    return {0, limit - current}
+end
+`
 
 // buildRedisKey 构建完整的Redis键（处理前缀）
 func buildRedisKey(redisCluster *storage.RedisCluster, key string) string {
@@ -28,89 +85,54 @@ func buildRedisKey(redisCluster *storage.RedisCluster, key string) string {
 func LoginRateLimiter(redisCluster *storage.RedisCluster, limit int, window time.Duration) gin.HandlerFunc {
 	windowSec := int64(window.Seconds())
 
-	// 优化的Lua脚本 - 使用计数器算法，性能更好
-	luaScript := `
-local key = KEYS[1]
-local limit = tonumber(ARGV[1])
-local window = tonumber(ARGV[2])
-local current_time = tonumber(ARGV[3])
-
--- 使用计数器算法
-local count = redis.call('GET', key)
-if count == false then
-    -- Key不存在，设置新计数器和过期时间
-    redis.call('SETEX', key, window, 1)
-    return 0
-else
-    count = tonumber(count)
-    if count < limit then
-        -- 计数增加
-        redis.call('INCR', key)
-        return 0
-    else
-        -- 超过限制
-        return 1
-    end
-end
-`
-
 	return func(c *gin.Context) {
-		// 第一层：本地快速检查（减少Redis压力）
-		currentCount := atomic.AddInt64(&localLoginCounter, 1)
-		defer atomic.AddInt64(&localLoginCounter, -1)
+		identifier := "ip:" + c.ClientIP()
+		rateLimitKey := buildRedisKey(redisCluster, "ratelimit:login:"+identifier)
 
-		// 本地粗略限流，避免过多请求打到Redis
-		if currentCount > int64(limit*3) {
+		// 第一层：本地内存限流（按IP）
+		if !localRateCheck(identifier, limit, window) {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": "Rate limit exceeded (local protection)",
+				"code":    100209,
+				"message": "请求过于频繁，请稍后再试（本地限流）",
+				"data":    nil,
 			})
 			return
 		}
 
-		identifier := "ip:" + c.ClientIP()
-		rateLimitKey := buildRedisKey(redisCluster, "ratelimit:login:"+identifier)
-
-		// 设置更短的超时时间（100ms）
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		// 第二层：Redis限流（增加超时时间到200ms）
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
 
-		// 执行Lua脚本
-		result := redisCluster.GetClient().Eval(ctx, luaScript,
+		result, err := redisCluster.GetClient().Eval(ctx, optimizedLuaScript,
 			[]string{rateLimitKey},
-			limit, windowSec, time.Now().Unix(),
-		)
+			limit, windowSec,
+		).Result()
 
-		val, err := result.Int()
 		if err != nil {
-			// Redis操作失败时的降级策略
-			if errors.Is(err, context.DeadlineExceeded) {
-				log.Warnf("Redis限流操作超时，降级处理: %v", err)
-				// 超时时根据本地计数决定是否限流
-				if currentCount > int64(limit) {
-					c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-						"error": "Rate limit exceeded (degraded mode)",
-					})
-					return
-				}
-				// 超时但本地计数未超限，放行
-				c.Next()
-				return
-			}
-
-			// 其他Redis错误
-			log.Errorf("Redis限流错误: %v", err)
-			// 错误时放行，避免影响正常业务（安全考虑）
-			c.Next()
+			handleRedisError(c, err, identifier, limit)
 			return
 		}
 
-		// 根据Lua脚本返回值判断是否限流
-		if val == 1 {
+		// 解析Lua脚本返回结果
+		results, ok := result.([]interface{})
+		if !ok || len(results) != 2 {
+			log.Errorf("限流Lua脚本返回格式错误: %v", result)
+			c.Next() // 格式错误时放行
+			return
+		}
+
+		limited, _ := results[0].(int64)
+		remaining, _ := results[1].(int64)
+
+		if limited == 1 {
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error":       "Rate limit exceeded",
-				"limit":       limit,
-				"window":      window.String(),
-				"retry_after": fmt.Sprintf("%.0f seconds", window.Seconds()),
+				"code":    100209,
+				"message": "请求过于频繁，请稍后再试",
+				"data": gin.H{
+					"limit":       limit,
+					"window":      window.String(),
+					"retry_after": fmt.Sprintf("%d秒", remaining),
+				},
 			})
 			return
 		}
@@ -120,65 +142,157 @@ end
 	}
 }
 
+// 本地限流检查
+func localRateCheck(identifier string, limit int, window time.Duration) bool {
+	localLimiter.Lock()
+	defer localLimiter.Unlock()
+
+	now := time.Now()
+	counter, exists := localLimiter.counters[identifier]
+	
+	if !exists {
+		localLimiter.counters[identifier] = &localCounter{
+			count:    1,
+			lastTime: now,
+		}
+		return true
+	}
+
+	// 检查时间窗口
+	if now.Sub(counter.lastTime) > window {
+		// 重置计数器
+		counter.count = 1
+		counter.lastTime = now
+		return true
+	}
+
+	// 增加计数
+	counter.count++
+	counter.lastTime = now
+	
+	// 本地限制可以比Redis宽松一些，避免误限流
+	localLimit := limit * 2
+	return counter.count <= int64(localLimit)
+}
+
+// 统一的Redis错误处理
+func handleRedisError(c *gin.Context, err error, identifier string, limit int) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		log.Warnf("Redis限流操作超时，降级处理: %v", err)
+		// 超时时使用更严格的本地限流
+		if !strictLocalRateCheck(identifier, limit) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"code":    100209,
+				"message": "系统繁忙，请稍后再试（降级模式）",
+				"data":    nil,
+			})
+			return
+		}
+		// 超时但本地检查通过，放行
+		c.Next()
+		return
+	}
+
+	// 其他Redis错误
+	log.Errorf("Redis限流错误: %v", err)
+	// Redis不可用时，使用宽松的本地限流
+	if !lenientLocalRateCheck(identifier, limit) {
+		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+			"code":    100209, 
+			"message": "系统繁忙，请稍后再试",
+			"data":    nil,
+		})
+		return
+	}
+	c.Next()
+}
+
+// 严格的本地限流（用于超时降级）
+func strictLocalRateCheck(identifier string, limit int) bool {
+	localLimiter.Lock()
+	defer localLimiter.Unlock()
+
+	counter, exists := localLimiter.counters[identifier]
+	if !exists {
+		return true
+	}
+	
+	// 严格模式：使用原始限制
+	return counter.count <= int64(limit)
+}
+
+// 宽松的本地限流（用于其他错误降级）
+func lenientLocalRateCheck(identifier string, limit int) bool {
+	localLimiter.Lock()
+	defer localLimiter.Unlock()
+
+	counter, exists := localLimiter.counters[identifier]
+	if !exists {
+		return true
+	}
+	
+	// 宽松模式：使用2倍限制
+	return counter.count <= int64(limit*2)
+}
+
 // LoginRateLimiterByUser 按用户ID限流的优化版本
 func LoginRateLimiterByUser(redisCluster *storage.RedisCluster, limit int, window time.Duration) gin.HandlerFunc {
 	windowSec := int64(window.Seconds())
-
-	luaScript := `
-local key = KEYS[1]
-local limit = tonumber(ARGV[1])
-local window = tonumber(ARGV[2])
-
-local count = redis.call('GET', key)
-if count == false then
-    redis.call('SETEX', key, window, 1)
-    return 0
-else
-    count = tonumber(count)
-    if count < limit then
-        redis.call('INCR', key)
-        return 0
-    else
-        return 1
-    end
-end
-`
 
 	return func(c *gin.Context) {
 		// 从上下文中获取用户ID
 		userID, exists := c.Get("userID")
 		if !exists {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+				"code":    100401,
+				"message": "用户未认证",
+				"data":    nil,
+			})
 			return
 		}
 
 		identifier := fmt.Sprintf("user:%v", userID)
 		rateLimitKey := buildRedisKey(redisCluster, "ratelimit:login:"+identifier)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		// 本地限流检查
+		if !localRateCheck(identifier, limit, window) {
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"code":    100209,
+				"message": "操作过于频繁，请稍后再试",
+				"data":    nil,
+			})
+			return
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
 
-		result := redisCluster.GetClient().Eval(ctx, luaScript,
+		result, err := redisCluster.GetClient().Eval(ctx, optimizedLuaScript,
 			[]string{rateLimitKey},
 			limit, windowSec,
-		)
+		).Result()
 
-		val, err := result.Int()
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				log.Warnf("用户限流Redis超时: %v", err)
-				// 超时放行，避免影响用户体验
-				c.Next()
-				return
-			}
-			log.Errorf("用户限流Redis错误: %v", err)
+			handleRedisError(c, err, identifier, limit)
+			return
+		}
+
+		results, ok := result.([]interface{})
+		if !ok || len(results) != 2 {
+			log.Errorf("用户限流Lua脚本返回格式错误: %v", result)
 			c.Next()
 			return
 		}
 
-		if val == 1 {
+		limited, _ := results[0].(int64)
+		if limited == 1 {
+			remaining, _ := results[1].(int64)
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-				"error": "User rate limit exceeded",
+				"code":    100209,
+				"message": "操作过于频繁，请稍后再试",
+				"data": gin.H{
+					"retry_after": fmt.Sprintf("%d秒", remaining),
+				},
 			})
 			return
 		}
@@ -187,14 +301,30 @@ end
 	}
 }
 
-// CleanupRateLimit 清理限流数据（用于测试后清理）
+// CleanupRateLimit 清理限流数据
 func CleanupRateLimit(redisCluster *storage.RedisCluster) {
-	ctx := context.Background()
-	// 清理所有限流相关的key
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	
 	pattern := buildRedisKey(redisCluster, "ratelimit:login:*")
 	keys, err := redisCluster.GetClient().Keys(ctx, pattern).Result()
-	if err == nil && len(keys) > 0 {
-		redisCluster.GetClient().Del(ctx, keys...)
+	if err != nil {
+		log.Errorf("清理限流key失败: %v", err)
+		return
 	}
-	log.Infof("清理了 %d 个限流key", len(keys))
+	
+	if len(keys) > 0 {
+		_, err = redisCluster.GetClient().Del(ctx, keys...).Result()
+		if err != nil {
+			log.Errorf("删除限流key失败: %v", err)
+			return
+		}
+	}
+	
+	// 同时清理本地计数器
+	localLimiter.Lock()
+	localLimiter.counters = make(map[string]*localCounter)
+	localLimiter.Unlock()
+	
+	log.Infof("清理了 %d 个Redis限流key和本地计数器", len(keys))
 }

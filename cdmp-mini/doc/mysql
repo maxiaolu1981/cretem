@@ -46,3 +46,68 @@ long_query_time = 2
 log_slow_admin_statements = 0
 log_queries_not_using_indexes = 0
 log_slow_rate_limit = 100
+
+//启动脚本
+sudo chmod +x /usr/local/bin/galera-manager.sh
+
+# 检查系统资源使用
+echo "=== System Resource Usage ==="
+echo "Memory:"
+free -h
+echo ""
+echo "Disk Space:"
+df -h /mnt/mariadb/
+echo ""
+echo "MySQL Processes:"
+ps aux | grep mysqld | grep -v grep
+
+部署总结：
+
+✅ 3节点Galera集群正常运行
+
+✅ 所有节点同步状态正常
+
+✅ 数据复制功能正常
+
+✅ Socket和TCP连接都可用
+
+✅ 管理脚本已配置
+
+关键信息：
+
+节点1: 端口3306, Socket: /var/run/mysqld/mysqld-node1.sock
+
+节点2: 端口3307, Socket: /var/run/mysqld/mysqld-node2.sock
+
+节点3: 端口3308, Socket: /var/run/mysqld/mysqld-node3.sock
+
+管理脚本: galera-manager.sh
+
+# 检查集群状态
+galera-manager.sh status
+
+# 重启集群
+galera-manager.sh restart
+
+# 停止集群
+galera-manager.sh stop
+
+# 启动集群
+galera-manager.sh start
+
+
+向后兼容：原有的 New() 函数保持不变，仍然可以创建单节点连接
+
+集群支持：新增的 NewDBManager() 函数支持 Galera 集群配置
+
+读写分离：GetReadDB() 和 GetWriteDB() 方法实现读写分离
+
+负载均衡：读操作在副本节点间轮询
+
+健康检查：自动检测节点健康状态
+
+故障转移：当副本节点故障时自动切换到主节点
+
+连接池管理：完善的连接池配置
+
+您可以根据需要选择使用单节点模式或

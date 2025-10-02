@@ -65,9 +65,9 @@ func NewKafkaOptions() *KafkaOptions {
 		BatchSize:      100,
 		BatchTimeout:   100 * time.Millisecond,
 		MaxRetries:     6,
-		MinBytes:       10 * 1024,        // 10KB
+		MinBytes:       50 * 1024,        // 10KB
 		MaxBytes:       10 * 1024 * 1024, // 10MB
-		WorkerCount:    3,
+		WorkerCount:    16,
 		EnableSSL:      false,
 		SSLCertFile:    "",
 		BaseRetryDelay: 10 * time.Second,

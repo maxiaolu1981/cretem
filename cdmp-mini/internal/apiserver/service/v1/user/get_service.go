@@ -16,14 +16,13 @@ import (
 )
 
 func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
-	logger := log.L(ctx).WithValues("service", "UserService", "operation", "Get")
-	cacheKey := u.generateUserCacheKey(username)
+		cacheKey := u.generateUserCacheKey(username)
 
-	// 1. 先尝试无锁查询缓存（大部分请求应该在这里返回）
+	// 先尝试无锁查询缓存（大部分请求应该在这里返回）
 	user, found, err := u.tryGetFromCache(ctx, cacheKey)
 	if err != nil {
 		// 缓存查询错误，记录但继续流程
-		logger.Errorf("缓存查询异常，继续流程", "error", err.Error(), "username", username)
+		log.Errorf("缓存查询异常，继续流程", "error", err.Error(), "username", username)
 		// 使用 WithLabelValues 来记录错误
 		metrics.CacheErrors.WithLabelValues("query_failed", "get").Inc()
 	}
@@ -32,12 +31,12 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 		return user, nil
 	}
 
-	// 2. 缓存未命中，使用singleflight保护数据库查询
+	// 缓存未命中，使用singleflight保护数据库查询
 	result, err, shared := u.group.Do(cacheKey, func() (interface{}, error) {
 		return u.getUserFromDBAndSetCache(ctx, username, cacheKey, opts)
 	})
 	if shared {
-		logger.Infow("数据库查询被合并，共享结果", "username", username)
+		log.Infow("数据库查询被合并，共享结果", "username", username)
 		metrics.RequestsMerged.WithLabelValues("get").Inc()
 	}
 	if err != nil {
@@ -63,15 +62,13 @@ func (u *UserService) tryGetFromCache(ctx context.Context, cacheKey string) (*v1
 
 	cachedUser, isCached, err := u.getFromCache(redisCtx, cacheKey)
 	if err != nil {
-		u.recordCacheError(err, "get_from_cache") // 调用修正后的方法
+		u.recordCacheError(err, "get_from_cache") 
 		// 只返回错误，不处理降级
 		return nil, false, err
 	}
 
 	if isCached {
 		if cachedUser != nil {
-			//	metrics.CacheErrors.WithLabelValues("query_failed", "get").Inc()
-			//	metrics.CacheHits.WithLabelValues("null_hit").Inc()
 			metrics.CacheHits.WithLabelValues("hit").Inc()
 			return cachedUser, true, nil
 		}

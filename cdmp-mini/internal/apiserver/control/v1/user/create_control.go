@@ -13,6 +13,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -27,6 +28,7 @@ import (
 
 func (u *UserController) Create(ctx *gin.Context) {
 	// 从Gin上下文获取中间件设置的信息
+	operator := common.GetUsername(ctx.Request.Context())
 	var m metav1.CreateOptions
 	if err := ctx.ShouldBindQuery(&m); err != nil {
 		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "传入的CreateOptions参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
@@ -75,16 +77,35 @@ func (u *UserController) Create(ctx *gin.Context) {
 	r.Status = 1
 	r.LoginedAt = time.Now()
 
-	// 设置更长的超时时间
-	newCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer cancel()
-	if err := u.srv.Users().Create(newCtx, &r,
+	c := ctx.Request.Context()
+	// 使用HTTP请求的超时配置，而不是Redis超时
+	if _, hasDeadline := c.Deadline(); !hasDeadline {
+		var cancel context.CancelFunc
+		// 使用ServerRunOptions中的请求超时时间
+		requestTimeout := u.options.ServerRunOptions.CtxTimeout
+		if requestTimeout == 0 {
+			requestTimeout = 30 * time.Second // 默认30秒
+		}
+		c, cancel = context.WithTimeout(c, requestTimeout)
+		defer cancel()
+	}
+
+	if err := u.srv.Users().Create(c, &r,
 		metav1.CreateOptions{}, u.options); err != nil {
 		core.WriteResponse(ctx, err, nil)
 		return
 	}
-
 	publicUser := v1.ConvertToPublicUser(&r)
-	core.WriteResponse(ctx, nil, gin.H{"code": code.ErrSuccess, "message": "用户创建成功", "data": publicUser})
+
+	// 构建成功数据
+	successData := gin.H{
+		"create_user":    publicUser.Username,
+		"operator":       operator,
+		"operation_time": time.Now().Format(time.RFC3339),
+		"operation_type": "create",
+		"code":           code.ErrSuccess,
+	}
+
+	core.WriteResponse(ctx, nil, successData)
 
 }

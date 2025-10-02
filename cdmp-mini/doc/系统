@@ -1,0 +1,8 @@
+ top -p $(pgrep -f "create.test")
+ htop
+
+ sudo snap services docker
+ sudo snap remove docker
+ sudo rm -rf ~/docker
+
+ cat /proc/cpuinfo

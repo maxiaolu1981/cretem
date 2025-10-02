@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	sru "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/user"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
@@ -18,25 +19,8 @@ import (
 
 func (u *UserController) Get(ctx *gin.Context) {
 
+	operator := common.GetUsername(ctx.Request.Context())
 	username := ctx.Param("name")
-	var r metav1.GetOptions
-	if err := ctx.ShouldBindQuery(&r); err != nil {
-		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "传入的GetOptions参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
-		return
-	}
-
-	log.L(ctx).WithValues(
-		"controller", "UserController", // 标识当前控制器
-		"action", "Get", // 标识当前操作
-		"client_ip", ctx.ClientIP(), // 客户端IP
-		"method", ctx.Request.Method, // 请求方法
-		"kind", r.Kind,
-		"apiVersion", r.APIVersion,
-		"path", ctx.FullPath(), // 请求路径
-		"resource_id", username,
-		"user_agent", ctx.Request.UserAgent(),
-	)
-
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errMsg := strings.Join(errs, ":")
 		log.Errorf("用户名参数校验失败:", "error", errMsg)
@@ -45,7 +29,6 @@ func (u *UserController) Get(ctx *gin.Context) {
 	}
 
 	c := ctx.Request.Context()
-	// 如果没有设置超时，添加默认超时
 	// 使用HTTP请求的超时配置，而不是Redis超时
 	if _, hasDeadline := c.Deadline(); !hasDeadline {
 		var cancel context.CancelFunc
@@ -58,8 +41,8 @@ func (u *UserController) Get(ctx *gin.Context) {
 		defer cancel()
 	}
 
+	//从服务层查询用户
 	user, err := u.srv.Users().Get(c, username, metav1.GetOptions{}, u.options)
-
 	//数据库错误
 	if err != nil {
 		core.WriteResponse(ctx, err, nil)
@@ -73,6 +56,12 @@ func (u *UserController) Get(ctx *gin.Context) {
 	}
 
 	publicUser := v1.ConvertToPublicUser(user)
-	core.WriteResponse(ctx, nil, gin.H{"code": code.ErrSuccess, "message": "查询成功", "data": publicUser})
-
+	// 构建成功数据
+	successData := gin.H{
+		"get":            publicUser.Username,
+		"operator":       operator,
+		"operation_time": time.Now().Format(time.RFC3339),
+		"operation_type": "create",
+	}
+	core.WriteResponse(ctx, nil, successData)
 }

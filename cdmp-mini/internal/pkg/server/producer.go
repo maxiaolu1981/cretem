@@ -100,7 +100,6 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 			{Key: HeaderRetryCount, Value: []byte("0")},
 		},
 	}
-
 	return p.sendWithRetry(ctx, msg, UserDeleteTopic)
 }
 
@@ -292,7 +291,7 @@ func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Mess
 		Headers: p.updateOrAddHeader(msg.Headers, "deadletter-reason", errorInfo),
 	}
 	deadLetterMsg.Headers = p.updateOrAddHeader(deadLetterMsg.Headers, "deadletter-timestamp", time.Now().Format(time.RFC3339))
-	//log.Warnf("发送到死信队列: key=%s, reason=%s", string(msg.Key), errorInfo)
+	log.Warnf("发送到死信队列: key=%s, reason=%s", string(msg.Key), errorInfo)
 	// 使用增强的同步发送
 	sendErr = p.sendMessageWithRetry(ctx, deadLetterMsg, UserDeadLetterTopic)
 	return sendErr

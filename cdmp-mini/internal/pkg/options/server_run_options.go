@@ -103,7 +103,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		EnableMetrics:   true,
 		CookieDomain:    "",
 		CookieSecure:    false,
-		CtxTimeout:      50 * time.Second,
+		CtxTimeout:      30 * time.Second,
 		Env:             "development",
 		LoginRateLimit:  50000, // 5万/分钟
 		LoginWindow:     2 * time.Minute,

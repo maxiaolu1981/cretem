@@ -602,7 +602,13 @@ func (g *GenericAPIServer) generateRefreshTokenAndGetUserID(c *gin.Context, atTo
 
 func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire time.Time) {
 	//	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
+	currentUser, _ := c.Get("current_user")
+	user, _ := currentUser.(*v1.User)
 
+	var username string
+	if user != nil {
+		username = user.Name
+	}
 	// 获取刷新令牌
 	refreshToken, userID, err := g.generateRefreshTokenAndGetUserID(c, atToken)
 	if err != nil {
@@ -626,16 +632,18 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire 
 		log.Warnf("设置认证Cookie失败: %v", err)
 	}
 
-	core.WriteResponse(c, nil, gin.H{
-		"code":    code.ErrSuccess,
-		"message": "登录成功",
-		"data": map[string]string{
-			"access_token":  atToken,
-			"refresh_token": refreshToken,
-			"expire":        expire.Format(time.RFC3339),
-			"token_type":    "Bearer",
-		},
-	})
+	// 构建成功数据
+	successData := gin.H{
+		"login_user":     username,
+		"operator":       username,
+		"operation_time": time.Now().Format(time.RFC3339),
+		"operation_type": "login",
+		"access_token":   atToken,
+		"refresh_token":  refreshToken,
+		"expire":         expire.Format(time.RFC3339),
+		"token_type":     "Bearer",
+	}
+	core.WriteResponse(c, nil, successData)
 
 }
 

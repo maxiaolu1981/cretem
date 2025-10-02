@@ -517,7 +517,7 @@ func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, time
 		log.Errorf("Error trying to set value: %s", err.Error())
 		return err
 	}
-	//log.Errorf("存储成功:key=%v", r.fixKey(keyName))
+	log.Debugf("存储成功:key=%v", r.fixKey(keyName))
 	return nil
 }
 
@@ -753,9 +753,18 @@ func (r *RedisCluster) DeleteKey(ctx context.Context, keyName string) (bool, err
 	//log.Debugf("DEL Key became: %s", r.fixKey(keyName))
 	n, err := r.singleton().Del(ctx, r.fixKey(keyName)).Result()
 	if err != nil {
-		log.Errorf("Error trying to delete key: %s", err.Error())
-		return false, err
+		// 根据错误类型提供更具体的错误信息
+		if errors.Is(err, context.DeadlineExceeded) {
+			return false, fmt.Errorf("delete operation timeout for key %s: %w", keyName, err)
+		}
+		if errors.Is(err, context.Canceled) {
+			return false, fmt.Errorf("delete operation canceled for key %s: %w", keyName, err)
+		}
+
+		log.Errorf("Error trying to delete key %s: %s", keyName, err.Error())
+		return false, fmt.Errorf("redis delete failed for key %s: %w", keyName, err)
 	}
+
 	return n > 0, nil
 }
 

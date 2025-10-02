@@ -27,7 +27,6 @@ func Context() gin.HandlerFunc {
 		requestID := c.GetString(XRequestIDKey)
 		username := c.GetString(UsernameKey)
 		//	log.Debugf("common.Context：成功读取到 requestid 中间件的值 → RequestID=%s, Username=%s", requestID, username)
-
 		c.Set(log.KeyRequestID, requestID)
 		c.Set(log.KeyUsername, username)
 
@@ -42,7 +41,6 @@ func Context() gin.HandlerFunc {
 
 		// 3. 更新请求的上下文
 		c.Request = c.Request.WithContext(ctx)
-
 		c.Next()
 	}
 }

@@ -16,12 +16,14 @@ import (
 	"github.com/go-redis/redis/v8"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	mysql "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
@@ -61,7 +63,16 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		return nil, err
 	}
 
-	//初始化mysql
+	// //初始化mysql
+	// storeIns, dbIns, err := mysql.GetMySQLFactoryOr(opts.MysqlOptions)
+	// if err != nil {
+	// 	log.Error("mysql服务器启动失败")
+	// 	return nil, err
+	// }
+	// interfaces.SetClient(storeIns)
+	// log.Info("mysql服务器初始化成功")
+	// time.Sleep(3 * time.Second)
+	// 初始化mysql
 	storeIns, dbIns, err := mysql.GetMySQLFactoryOr(opts.MysqlOptions)
 	if err != nil {
 		log.Error("mysql服务器启动失败")
@@ -69,6 +80,25 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 	interfaces.SetClient(storeIns)
 	log.Info("mysql服务器初始化成功")
+
+	// ========== 新增：增强版集群状态检查和初始化 ==========
+	if datastore, ok := storeIns.(*store.Datastore); ok {
+		if datastore.IsClusterMode() {
+			log.Info("🚀 检测到Galera集群模式，正在初始化集群连接...")
+
+			// 执行集群健康检查
+			if err := initializeGaleraCluster(datastore); err != nil {
+				log.Errorf("Galera集群初始化警告: %v", err)
+				// 不阻止启动，但记录警告
+			}
+
+			// 定期监控集群状态（可选）
+			go monitorClusterHealth(datastore, opts.MysqlOptions.HealthCheckInterval)
+		} else {
+			log.Info("✅ 使用单节点MySQL模式")
+		}
+	}
+
 	time.Sleep(3 * time.Second)
 
 	//初始化redis
@@ -96,21 +126,38 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	g.consumerCtx = ctx
 	g.consumerCancel = cancel
-	// 启动消费者，使用配置的WorkerCount
-	mainWorkers := opts.KafkaOptions.WorkerCount
-	if mainWorkers <= 0 {
-		mainWorkers = MainConsumerWorkers // 使用默认值
+
+	// 获取所有消费者实例
+	instances := g.getConsumerInstances()
+	if instances != nil {
+		// 启动所有消费者实例（每个实例1个worker）
+		for i := 0; i < len(instances.createConsumers); i++ {
+			if instances.createConsumers[i] != nil {
+				go instances.createConsumers[i].StartConsuming(ctx, options.NewOptions().KafkaOptions.WorkerCount) // 每个实例1个worker
+			}
+			if instances.updateConsumers[i] != nil {
+				go instances.updateConsumers[i].StartConsuming(ctx, 1)
+			}
+			if instances.deleteConsumers[i] != nil {
+				go instances.deleteConsumers[i].StartConsuming(ctx, 1)
+			}
+		}
+		log.Infof("已启动 %d 个消费者实例", len(instances.createConsumers))
+	} else {
+		// 回退到原来的单个消费者模式
+		mainWorkers := opts.KafkaOptions.WorkerCount
+		if mainWorkers <= 0 {
+			mainWorkers = MainConsumerWorkers
+		}
+		go g.createConsumer.StartConsuming(ctx, mainWorkers)
+		go g.updateConsumer.StartConsuming(ctx, mainWorkers)
+		go g.deleteConsumer.StartConsuming(ctx, mainWorkers)
 	}
 
-	go g.createConsumer.StartConsuming(ctx, mainWorkers)
-	go g.updateConsumer.StartConsuming(ctx, mainWorkers)
-	go g.deleteConsumer.StartConsuming(ctx, mainWorkers)
 	go g.retryConsumer.StartConsuming(ctx, RetryConsumerWorkers)
 
 	log.Info("所有Kafka消费者已启动")
 	g.printKafkaConfigInfo()
-	
-
 
 	//安装中间件
 	if err := middleware.InstallMiddlewares(g.Engine, opts); err != nil {
@@ -123,6 +170,46 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	g.installRoutes()
 
 	return g, nil
+}
+
+// ========== 新增：集群健康监控 ==========
+func monitorClusterHealth(datastore *store.Datastore, interval time.Duration) {
+	if interval <= 0 {
+		interval = 30 * time.Second // 默认30秒
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	var lastStatus db.ClusterStatus
+	unhealthyCount := 0
+
+	for range ticker.C {
+		currentStatus := datastore.ClusterStatus()
+
+		// 只在状态变化时记录
+		if currentStatus.PrimaryHealthy != lastStatus.PrimaryHealthy ||
+			currentStatus.HealthyReplicas != lastStatus.HealthyReplicas {
+
+			if currentStatus.PrimaryHealthy && currentStatus.HealthyReplicas > 0 {
+				log.Infof("📊 集群状态: 主节点健康，%d/%d 副本可用",
+					currentStatus.HealthyReplicas, currentStatus.ReplicaCount)
+				unhealthyCount = 0
+			} else if !currentStatus.PrimaryHealthy {
+				unhealthyCount++
+				log.Errorf("🚨 集群告警: 主节点不可用 (连续%d次)", unhealthyCount)
+			} else if currentStatus.HealthyReplicas == 0 {
+				log.Warn("⚠️  集群警告: 无可用副本节点")
+			}
+		}
+
+		lastStatus = currentStatus
+
+		// 如果连续多次检测到主节点不可用，可能需要告警
+		if unhealthyCount >= 3 {
+			log.Error("🚨 严重: 集群主节点持续不可用，请立即检查!")
+		}
+	}
 }
 
 func (g *GenericAPIServer) configureGin() error {
@@ -150,9 +237,9 @@ func (g *GenericAPIServer) Run() error {
 		Addr:    address,
 		Handler: g,
 		// 服务器性能优化
-		ReadTimeout:       15 * time.Second,
+		ReadTimeout:       30 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      15 * time.Second,
+		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       30 * time.Second,
 
 		// 连接控制
@@ -264,47 +351,62 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	kafkaOpts := g.options.KafkaOptions
 
-	log.Infof("初始化Kafka组件，最大重试: %d, Worker数量: %d",
+	log.Infof("初始化Kafka组件，最大重试: %d, 消费者实例数量: %d",
 		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount)
 
-	// 1. 初始化生产者
+	// 1. 初始化生产者,消费者在处理消息时，可能需要将处理失败的消息发送到其他主题：
 	log.Info("初始化Kafka生产者...")
 	userProducer := NewUserProducer(kafkaOpts)
 
-	// 2. 初始化各个主题的消费者
-	consumerGroupPrefix := "user-service"
-	if g.options.ServerRunOptions.Mode == gin.ReleaseMode {
-		consumerGroupPrefix = "user-service-prod"
+	// 2. 初始化各个主题的消费者,创建多个实例
+	consumerGroupPrefix := "user-service-prod"
+	// 为每个主题创建多个消费者实例
+	consumerCount := kafkaOpts.WorkerCount
+	if consumerCount <= 0 {
+		consumerCount = 3 // 默认3个，匹配分区数
 	}
+	log.Infof("为每个主题创建 %d 个消费者实例", consumerCount)
 
-	log.Info("初始化创建消费者...")
-	createConsumer := NewUserConsumer(kafkaOpts.Brokers, UserCreateTopic,
-		consumerGroupPrefix+"-create", db, g.redis)
-	//createConsumer.SetKafkaOptions(kafkaOpts) // 传递完整配置
-	createConsumer.SetProducer(userProducer)
+	// 创建消费者实例切片
+	createConsumers := make([]*UserConsumer, consumerCount)
+	updateConsumers := make([]*UserConsumer, consumerCount)
+	deleteConsumers := make([]*UserConsumer, consumerCount)
 
-	log.Info("初始化更新消费者...")
-	updateConsumer := NewUserConsumer(kafkaOpts.Brokers, UserUpdateTopic,
-		consumerGroupPrefix+"-update", db, g.redis)
-	//updateConsumer.SetKafkaOptions(kafkaOpts)
-	updateConsumer.SetProducer(userProducer)
+	for i := 0; i < consumerCount; i++ {
+		// 所有实例使用相同的消费组ID（不加后缀）
+		createGroupID := consumerGroupPrefix + "-create" // 相同的组ID
+		updateGroupID := consumerGroupPrefix + "-update" // 相同的组ID
+		deleteGroupID := consumerGroupPrefix + "-delete" // 相同的组ID
 
-	log.Info("初始化删除消费者...")
-	deleteConsumer := NewUserConsumer(kafkaOpts.Brokers, UserDeleteTopic,
-		consumerGroupPrefix+"-delete", db, g.redis)
-	//deleteConsumer.SetKafkaOptions(kafkaOpts)
-	deleteConsumer.SetProducer(userProducer)
+		// 创建消费者实例 - 使用相同的消费组ID
+		createConsumers[i] = NewUserConsumer(kafkaOpts.Brokers, UserCreateTopic,
+			createGroupID, db, g.redis) // ✅ 相同的组ID
+		createConsumers[i].SetProducer(userProducer)
+		createConsumers[i].SetInstanceID(i)
+
+		updateConsumers[i] = NewUserConsumer(kafkaOpts.Brokers, UserUpdateTopic,
+			updateGroupID, db, g.redis) // ✅ 相同的组ID
+		updateConsumers[i].SetProducer(userProducer)
+		updateConsumers[i].SetInstanceID(i)
+
+		deleteConsumers[i] = NewUserConsumer(kafkaOpts.Brokers, UserDeleteTopic,
+			deleteGroupID, db, g.redis) // ✅ 相同的组ID
+		deleteConsumers[i].SetProducer(userProducer)
+		deleteConsumers[i].SetInstanceID(i)
+	}
 
 	log.Info("初始化重试消费者...")
 	retryConsumer := NewRetryConsumer(db, g.redis, userProducer, kafkaOpts)
-	//retryConsumer.SetKafkaOptions(kafkaOpts) // 传递配置给重试消费者
 
 	// 3. 赋值到服务器实例
 	g.producer = userProducer
-	g.createConsumer = createConsumer
-	g.updateConsumer = updateConsumer
-	g.deleteConsumer = deleteConsumer
+	g.createConsumer = createConsumers[0] // 保持兼容，使用第一个实例
+	g.updateConsumer = updateConsumers[0] // 保持兼容，使用第一个实例
+	g.deleteConsumer = deleteConsumers[0] // 保持兼容，使用第一个实例
 	g.retryConsumer = retryConsumer
+
+	// 5. 存储所有消费者实例（新增字段）
+	g.setConsumerInstances(createConsumers, updateConsumers, deleteConsumers)
 
 	log.Infof("✅ Kafka组件初始化完成，配置: 重试%d次, Worker%d个, 批量%d, 超时%v",
 		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount, kafkaOpts.BatchSize, kafkaOpts.BatchTimeout)
@@ -536,10 +638,10 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 			for _, line := range lines {
 				if strings.TrimSpace(line) != "" {
 					actualNodeCount++
-			//		log.Infof("节点 %d: %s", actualNodeCount, strings.TrimSpace(line))
+					//		log.Infof("节点 %d: %s", actualNodeCount, strings.TrimSpace(line))
 				}
 			}
-	//		log.Infof("实际发现的节点数量: %d", actualNodeCount)
+			//		log.Infof("实际发现的节点数量: %d", actualNodeCount)
 		}
 
 		// 解析集群信息
@@ -547,7 +649,7 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 		infoLines := strings.Split(clusterInfo, "\n")
 		for _, line := range infoLines {
 			if strings.Contains(line, ":") {
-	//			log.Infof("  %s", strings.TrimSpace(line))
+				//			log.Infof("  %s", strings.TrimSpace(line))
 			}
 		}
 
@@ -564,7 +666,7 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 				log.Warnf("主节点 %d PING 失败: %v", masterCount, err)
 				lastError = err
 			} else {
-	//			log.Infof("✅ 主节点 %d PING 成功", masterCount)
+				//			log.Infof("✅ 主节点 %d PING 成功", masterCount)
 				successCount++
 			}
 			return nil
@@ -577,7 +679,7 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 				log.Warnf("从节点 %d PING 失败: %v", slaveCount, err)
 				lastError = err
 			} else {
-		//		log.Infof("✅ 从节点 %d PING 成功", slaveCount)
+				//		log.Infof("✅ 从节点 %d PING 成功", slaveCount)
 				successCount++
 			}
 			return nil
@@ -598,13 +700,13 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 		if totalNodes != expectedNodes {
 			log.Warnf("⚠️  节点数量不匹配: 配置%d个, 集群中发现%d个", expectedNodes, totalNodes)
 		} else {
-	//		log.Infof("✅ 节点数量匹配: %d个", totalNodes)
+			//		log.Infof("✅ 节点数量匹配: %d个", totalNodes)
 		}
 
 		if successCount < totalNodes {
 			log.Warnf("部分节点连接异常 (%d/%d 成功)", successCount, totalNodes)
 		} else {
-	//		log.Infof("✅ 所有节点连接正常")
+			//		log.Infof("✅ 所有节点连接正常")
 		}
 
 		// 如果至少有一个节点正常，认为集群可用
@@ -619,22 +721,85 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 	return client.Ping(pingCtx).Err()
 }
 
-
 // 打印Kafka配置信息
 func (g *GenericAPIServer) printKafkaConfigInfo() {
 	kafkaOpts := g.options.KafkaOptions
+	instances := g.getConsumerInstances()
+	instanceCount := 1
+	if instances != nil {
+		instanceCount = len(instances.createConsumers)
+	}
+
 	log.Infof("📊 Kafka配置信息:")
 	log.Infof("  运行模式: %s", g.options.ServerRunOptions.Mode)
 	log.Infof("  Brokers: %v", kafkaOpts.Brokers)
 	log.Infof("  主题配置:")
-	log.Infof("    - 创建: %s", UserCreateTopic)
-	log.Infof("    - 更新: %s", UserUpdateTopic)
-	log.Infof("    - 删除: %s", UserDeleteTopic)
+	log.Infof("    - 创建: %s (%d个消费者实例)", UserCreateTopic, instanceCount)
+	log.Infof("    - 更新: %s (%d个消费者实例)", UserUpdateTopic, instanceCount)
+	log.Infof("    - 删除: %s (%d个消费者实例)", UserDeleteTopic, instanceCount)
 	log.Infof("    - 重试: %s", UserRetryTopic)
 	log.Infof("  配置参数:")
 	log.Infof("    - 最大重试: %d", kafkaOpts.MaxRetries)
-	log.Infof("    - Worker数量: %d", kafkaOpts.WorkerCount)
+	log.Infof("    - 消费者实例数量: %d", instanceCount)
 	log.Infof("    - 批量大小: %d", kafkaOpts.BatchSize)
 	log.Infof("    - 批量超时: %v", kafkaOpts.BatchTimeout)
-	log.Infof("    - 确认机制: %d", kafkaOpts.RequiredAcks)
+}
+
+// 新增：存储所有消费者实例
+type consumerInstances struct {
+	createConsumers []*UserConsumer
+	updateConsumers []*UserConsumer
+	deleteConsumers []*UserConsumer
+}
+
+var consumerInstancesStore = &consumerInstances{}
+
+func (g *GenericAPIServer) setConsumerInstances(create, update, delete []*UserConsumer) {
+	consumerInstancesStore.createConsumers = create
+	consumerInstancesStore.updateConsumers = update
+	consumerInstancesStore.deleteConsumers = delete
+}
+
+func (g *GenericAPIServer) getConsumerInstances() *consumerInstances {
+	return consumerInstancesStore
+}
+
+// ========== 新增：集群初始化函数 ==========
+func initializeGaleraCluster(datastore *store.Datastore) error {
+	maxRetries := 20                 // 最大重试次数
+	retryInterval := 2 * time.Second // 重试间隔
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		status := datastore.ClusterStatus()
+
+		log.Infof("🔍 集群健康检查 [%d/%d]: 主节点=%v, 副本=%d/%d 健康",
+			attempt, maxRetries, status.PrimaryHealthy, status.HealthyReplicas, status.ReplicaCount)
+
+		// 检查集群健康条件
+		if status.PrimaryHealthy {
+			if status.HealthyReplicas >= 1 {
+				// 理想状态：主节点健康且至少1个副本健康
+				log.Infof("✅ Galera集群状态良好: 主节点健康，%d个副本节点可用", status.HealthyReplicas)
+				return nil
+			} else if status.HealthyReplicas == 0 {
+				// 只有主节点健康（可能是单节点集群或副本节点故障）
+				log.Warn("⚠️  Galera集群主节点健康，但副本节点不可用")
+				return nil // 仍然继续启动
+			}
+		}
+
+		if attempt < maxRetries {
+			log.Infof("⏳ 集群未就绪，%v后重试...", retryInterval)
+			time.Sleep(retryInterval)
+		}
+	}
+
+	// 最终检查
+	finalStatus := datastore.ClusterStatus()
+	if !finalStatus.PrimaryHealthy {
+		return fmt.Errorf("Galera集群主节点不可用，请检查集群状态")
+	}
+
+	log.Warn("⚠️  Galera集群部分节点不可用，但服务将继续启动")
+	return nil
 }

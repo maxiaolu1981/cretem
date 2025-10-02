@@ -16,11 +16,6 @@ import (
 
 func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
 
-	logger := log.L(ctx).WithValues(
-		"service", "UserService",
-		"method", "Create",
-	)
-
 	// //判断用户是否存在
 	// rUser, err := u.Store.Users().Get(ctx, user.Name, metav1.GetOptions{}, u.Options)
 	// if err == nil && rUser != nil {
@@ -41,6 +36,6 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		return errors.WithCode(code.ErrKafkaFailed, "kafka生产者消息发送失败")
 	}
 	// 记录业务成功
-	logger.Infow("用户创建请求已发送到Kafka", "username", user.Name)
+	log.Infow("用户创建请求已发送到Kafka", "username", user.Name)
 	return nil
 }

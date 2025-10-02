@@ -14,6 +14,7 @@ package core
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -35,28 +36,31 @@ type ErrResponse struct {
 	Reference string `json:"reference,omitempty"`
 }
 
-// WriteResponse 将错误信息或响应数据写入 HTTP 响应体
-// 它通过 errors.ParseCoder 解析任意错误为 errors.Coder 接口
-// errors.Coder 包含错误码、用户安全的错误消息和对应的 HTTP 状态码
 func WriteResponse(c *gin.Context, err error, data interface{}) {
 	if err != nil {
-		// 将错误解析为自定义错误编码结构（包含业务码、HTTP状态码等）
+		// 错误处理保持不变
 		coder := errors.ParseCoderByErr(err)
-		//构建错误响应并返回（使用错误编码中定义的 HTTP 状态码）
 		c.JSON(coder.HTTPStatus(), ErrResponse{
-			Code:      coder.Code(),      // 业务错误码
-			Message:   coder.String(),    // 用户可见的错误消息
-			Reference: coder.Reference(), // 参考文档（可选）
+			Code:      coder.Code(),
+			Message:   coder.String(),
+			Reference: coder.Reference(),
 		})
 		return
 	}
-	// ✅ 根据请求路径和方法决定状态码
-	statusCode := determineStatusCode(c.Request)
-	c.JSON(statusCode, data)
 
+	// ✅ 根据请求动态生成成功消息
+	statusCode := determineStatusCode(c.Request)
+	successMessage := getSuccessMessage(c.Request, data)
+
+	// 构建统一成功响应
+	successResp := SuccessResponse{
+		Code:    100001, // 成功业务码
+		Message: successMessage,
+		Data:    data,
+	}
+	c.JSON(statusCode, successResp)
 }
 
-// ✅ 明确的状态码判断逻辑
 // ✅ 明确的状态码判断逻辑
 func determineStatusCode(req *http.Request) int {
 	path := req.URL.Path
@@ -69,7 +73,7 @@ func determineStatusCode(req *http.Request) int {
 
 	// 删除操作 - 返回204
 	if method == "DELETE" {
-		return http.StatusNoContent
+		return http.StatusOK // ✅ 改为200
 	}
 
 	// 真正的资源创建操作 - 返回201
@@ -93,4 +97,73 @@ func isResourceCreation(path string) bool {
 		}
 	}
 	return false
+}
+
+// 在 common 包或 response 包中定义
+type SuccessResponse struct {
+	Code    int         `json:"code"`
+	Message string      `json:"message"`
+	Data    interface{} `json:"data,omitempty"`
+}
+
+// 预定义成功消息
+const (
+	MsgUserCreated  = "用户创建成功"
+	MsgUserDeleted  = "用户删除成功"
+	MsgUserUpdated  = "用户更新成功"
+	MsgLoginSuccess = "登录成功"
+	// ... 其他成功消息
+)
+
+// 获取动态成功消息
+func getSuccessMessage(req *http.Request, data interface{}) string {
+	path := req.URL.Path
+	method := req.Method
+
+	// 基于路径和方法的动态消息
+	switch {
+	case path == "/login" && method == "POST":
+		return "登录成功"
+
+	case strings.HasPrefix(path, "/v1/users") && method == "POST":
+		return "用户创建成功"
+
+	case strings.HasPrefix(path, "/v1/users") && method == "DELETE":
+		// 如果是强制删除
+		if strings.Contains(path, "/force") {
+			return "用户强制删除成功"
+		}
+		return "用户删除成功"
+
+	case strings.HasPrefix(path, "/v1/users") && method == "PUT":
+		return "用户更新成功"
+
+	case strings.HasPrefix(path, "/v1/users") && method == "PATCH":
+		return "用户信息更新成功"
+
+	default:
+		// 基于数据内容进一步判断
+		if data != nil {
+			return getMessageFromData(data)
+		}
+		return "操作成功"
+	}
+}
+
+// 从数据中提取更精确的消息
+func getMessageFromData(data interface{}) string {
+	switch v := data.(type) {
+	case map[string]interface{}:
+		if operationType, ok := v["operation_type"].(string); ok {
+			switch operationType {
+			case "force_delete":
+				return "用户强制删除成功"
+			case "soft_delete":
+				return "用户已禁用"
+			case "restore":
+				return "用户恢复成功"
+			}
+		}
+	}
+	return "操作成功"
 }
