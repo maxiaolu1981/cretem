@@ -18,7 +18,7 @@ import (
 )
 
 func (u *UserController) Get(ctx *gin.Context) {
-
+	log.Infof("📞 Controller调用Store.Users(): %T", u.srv.Users())
 	operator := common.GetUsername(ctx.Request.Context())
 	username := ctx.Param("name")
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {

@@ -34,14 +34,17 @@ type Datastore struct {
 }
 
 func newUsers(ds *Datastore) interfaces.UserStore {
+	log.Infof("🔍 UserStore创建: 集群模式=%v", ds.UseCluster)
 	policyStore := newPolices(ds)
 	if ds.UseCluster {
+		log.Info("🚀 读写分离已启用 - 使用ClusterAwareUserStore")
 		// 集群模式下传入读写两个DB
 		return &ClusterAwareUserStore{
 			readStore:  user.NewUsers(ds.DBManager.GetReadDB(), policyStore),
 			writeStore: user.NewUsers(ds.DBManager.GetWriteDB(), policyStore),
 		}
 	}
+	log.Info("💾 单机模式 - 使用普通Users")
 	return user.NewUsers(ds.DB, policyStore)
 }
 
@@ -52,38 +55,47 @@ type ClusterAwareUserStore struct {
 }
 
 func (c *ClusterAwareUserStore) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
+	log.Infof("📖 读操作路由到从库: username=%s", username)
 	return c.readStore.Get(ctx, username, opts, opt) // 读操作用读库
 }
 
 func (c *ClusterAwareUserStore) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
+	log.Infof("✏️ 写操作路由到主库: username=%s", user.Name)
 	return c.writeStore.Create(ctx, user, opts, opt) // 写操作用写库
 }
 
 func (c *ClusterAwareUserStore) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions, opt *options.Options) error {
+	log.Infof("✏️ update操作路由到主库: username=%s", user.Name)
 	return c.writeStore.Update(ctx, user, opts, opt) // 写操作用写库
 }
 
 func (c *ClusterAwareUserStore) Delete(ctx context.Context, username string, opts metav1.DeleteOptions, opt *options.Options) error {
+	log.Infof("✏️ delete操作路由到主库: username=%s", username)
 	return c.writeStore.Delete(ctx, username, opts, opt) // 写操作用写库
 }
 
 func (c *ClusterAwareUserStore) DeleteForce(ctx context.Context, username string, opts metav1.DeleteOptions, opt *options.Options) error {
+	log.Infof("✏️ deleteforce操作路由到主库: username=%s", username)
 	return c.writeStore.DeleteForce(ctx, username, opts, opt) // 写操作用写库
 }
 
 func (c *ClusterAwareUserStore) DeleteCollection(ctx context.Context, usernames []string, opts metav1.DeleteOptions, opt *options.Options) error {
+	log.Infof("✏️ deletecollection操作路由到主库: username=%v", usernames)
 	return c.writeStore.DeleteCollection(ctx, usernames, opts, opt) // 写操作用写库
 }
 
 func (c *ClusterAwareUserStore) List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
+	log.Info("✏️ list操作路由到主库: username=")
 	return c.readStore.List(ctx, opts, opt) // 读操作用读库
 }
 
 func (c *ClusterAwareUserStore) ListAllUsernames(ctx context.Context) ([]string, error) {
+	log.Info("✏️ ListAllUsernames: username=")
 	return c.readStore.ListAllUsernames(ctx) // 读操作用读库
 }
 
 func (c *ClusterAwareUserStore) ListAll(ctx context.Context, username string) (*v1.UserList, error) {
+
 	return c.readStore.ListAll(ctx, username) // 读操作用读库
 }
 

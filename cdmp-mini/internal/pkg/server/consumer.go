@@ -25,7 +25,8 @@ type UserConsumer struct {
 	producer   *UserProducer
 	topic      string
 	groupID    string
-	instanceID int // 新增：实例ID
+	instanceID int    // 新增：实例ID
+	dbType     string // 新增：标识数据库类型
 }
 
 func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
@@ -53,6 +54,7 @@ func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis
 		redis:   redis,
 		topic:   topic,
 		groupID: groupID,
+		dbType:  "primary",
 	}
 	go consumer.startLagMonitor(context.Background())
 	return consumer
@@ -462,6 +464,8 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error 
 	start := time.Now()
 	defer func() {
 		duration := time.Since(start).Seconds()
+		// 添加数据库类型标签
+		metrics.DatabaseQueryDuration.WithLabelValues("create", "users", c.dbType).Observe(duration)
 		metrics.DatabaseQueryDuration.WithLabelValues("create", "users").Observe(duration)
 	}()
 
@@ -469,6 +473,8 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error 
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
+	// 注意：这里直接使用 c.db，在集群模式下这是主库连接
+	// 在单机模式下这是唯一数据库连接
 	if err := c.db.WithContext(ctx).Create(user).Error; err != nil {
 		metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
 		return fmt.Errorf("数据创建失败: %v", err)

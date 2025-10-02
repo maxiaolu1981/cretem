@@ -142,9 +142,9 @@ type MySQLOptions struct {
 
 func NewMySQLOptions() *MySQLOptions {
 	return &MySQLOptions{
-		AdminUsername: "root",
+		AdminUsername: "iam",
 		AdminPassword: "iam59!z$",
-		Host:          "192.168.10.14",
+		Host:          "192.168.10.8",
 		Port:          3306,
 		Password:      "iam59!z$",
 		Database:      "iam",

@@ -346,7 +346,7 @@ func setDefaultOptions(opts *Options) {
 
 	// 新增集群配置默认值
 	if opts.PrimaryHost == "" {
-		opts.PrimaryHost = "127.0.0.1"
+		opts.PrimaryHost = "192.168.10.8"
 	}
 	if opts.PrimaryPort == 0 {
 		opts.PrimaryPort = 3306
