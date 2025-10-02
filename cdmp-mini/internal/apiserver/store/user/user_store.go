@@ -11,7 +11,6 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
@@ -31,16 +30,15 @@ func NewUsers(db *gorm.DB, policyStore interfaces.PolicyStore) *Users {
 
 // executeSingleGet 执行单次查询
 func (u *Users) executeSingleGet(ctx context.Context, username string) (*v1.User, error) {
-	start := time.Now()
+	//start := time.Now()
 	user := &v1.User{}
 	// 先查询用户是否存在（不管状态）
 	err := u.db.WithContext(ctx).
 		Where("name = ?", username).
 		First(user).Error
 
-	duration := time.Since(start).Seconds()
 	// 记录数据库查询指标
-	metrics.RecordDatabaseQuery("get", "user", float64(duration), nil)
+	//metrics.RecordDatabaseQuery("get", "user", float64(duration), nil)
 
 	if err != nil {
 		// 检查是否是 gorm.ErrRecordNotFound

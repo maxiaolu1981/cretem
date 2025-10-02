@@ -331,7 +331,8 @@ func sendSingleRequestWithAuth(userID, requestID int) {
 	// 准备请求数据
 	userReq := CreateUserRequest{
 		Metadata: &UserMetadata{
-			Name: generateUniqueUsername(userID),
+			//Name: generateUniqueUsername(userID),
+			Name: "admin",
 		},
 		Nickname: fmt.Sprintf("测试用户%d", userID),
 		Password: "Test@123456",

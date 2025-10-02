@@ -25,8 +25,7 @@ type UserConsumer struct {
 	producer   *UserProducer
 	topic      string
 	groupID    string
-	instanceID int    // 新增：实例ID
-	dbType     string // 新增：标识数据库类型
+	instanceID int // 新增：实例ID
 }
 
 func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
@@ -54,7 +53,6 @@ func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis
 		redis:   redis,
 		topic:   topic,
 		groupID: groupID,
-		dbType:  "primary",
 	}
 	go consumer.startLagMonitor(context.Background())
 	return consumer
@@ -97,28 +95,37 @@ func (c *UserConsumer) worker(ctx context.Context, workerID int) {
 			log.Infof("Worker %d: 停止消费", workerID)
 			return
 		case <-healthCheckTicker.C:
-			log.Infof("Worker %d: 仍在运行，等待消息...", workerID)
-			// 检查消费者统计信息
 			stats := c.reader.Stats()
-			log.Infof("Worker %d: 消费者状态 - Lag: %d, 错误数: %d",
-				workerID, stats.Lag, stats.Errors)
+			log.Infof("Worker %d: 消费者状态 - Lag: %d, 错误数: %d", workerID, stats.Lag, stats.Errors)
+
+			// 添加告警
+			if stats.Lag > 1000 {
+				log.Errorf("Worker %d: 消费延迟过高! Lag: %d", workerID, stats.Lag)
+			}
+			if stats.Errors > 10 {
+				log.Errorf("Worker %d: 错误数过多! Errors: %d", workerID, stats.Errors)
+			}
 		default:
-			log.Debugf("Worker %d: 开始处理单条消息", workerID)
-			c.processSingleMessage(ctx, workerID)
-			log.Debugf("Worker %d: 单条消息处理完成", workerID)
+			log.Debugf("Worker %d: 开始处理消息", workerID)
+			err := c.processSingleMessage(ctx, workerID)
+
+			if err != nil {
+				log.Warnf("Worker %d: 处理消息失败: %v", workerID, err)
+				// 所有错误都只是休眠后继续，不停止worker
+				time.Sleep(100 * time.Millisecond)
+			} else {
+				log.Debugf("Worker %d: 消息处理完成", workerID)
+			}
 		}
 	}
 }
 
-func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) {
-	startTime := time.Now()
+func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) error {
+
 	var operation, messageKey string
 	var processingErr error
 	var msg kafka.Message
-
-	defer func() {
-		c.recordConsumerMetrics(operation, messageKey, startTime, processingErr, workerID)
-	}()
+	var processStart time.Time //用于记录真正的处理开始时间
 
 	// 从Kafka拉取消息，添加重试逻辑
 	var fetchErr error
@@ -132,11 +139,9 @@ func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) {
 		if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
 			log.Infof("Worker %d: 上下文已取消，停止获取消息", workerID)
 			processingErr = fetchErr
-			return
+			return fetchErr
 		}
-
 		log.Warnf("Worker %d: 获取消息失败 (重试 %d/3): %v", workerID, retry+1, fetchErr)
-
 		// 指数退避
 		backoff := time.Second * time.Duration(1<<uint(retry))
 		select {
@@ -145,33 +150,56 @@ func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) {
 		case <-ctx.Done():
 			log.Infof("Worker %d: 重试期间上下文取消", workerID)
 			processingErr = ctx.Err()
-			return
+			return processingErr
 		}
 	}
 
 	if fetchErr != nil {
 		log.Errorf("Worker %d: 获取消息最终失败: %v", workerID, fetchErr)
 		processingErr = fetchErr
-		return
+		return fetchErr
 	}
 
 	operation = c.getOperationFromHeaders(msg.Headers)
 	messageKey = string(msg.Key)
 
+	// 🔥 从这里开始计时真正的处理时间（不包括等待消息的时间
+	processStart = time.Now()
+	defer func() {
+		c.recordConsumerMetrics(operation, messageKey, processStart, processingErr, workerID)
+	}()
+
 	// 处理消息（包含业务逻辑重试）
 	processingErr = c.processMessageWithRetry(ctx, msg, 3)
 	if processingErr != nil {
 		log.Errorf("Worker %d: 消息处理最终失败: %v", workerID, processingErr)
-		return
+		return processingErr
 	}
 
 	// 提交偏移量（确认消费）
 	if err := c.reader.CommitMessages(ctx, msg); err != nil {
 		log.Errorf("Worker %d: 提交偏移量失败: %v", workerID, err)
 		metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, "commit", "commit_error").Inc()
+		return err
 	} else {
 		log.Debugf("Worker %d: 偏移量提交成功", workerID)
 	}
+	return nil
+
+}
+
+// 判断是否需要停止worker的严重错误
+func (c *UserConsumer) shouldStopWorker(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+	// 这些错误需要停止worker
+	return strings.Contains(errStr, "connection refused") ||
+		strings.Contains(errStr, "broker not available") ||
+		strings.Contains(errStr, "authentication failed") ||
+		strings.Contains(errStr, "authorization failed")
 }
 
 // processMessageWithRetry 带重试的消息处理
@@ -179,6 +207,7 @@ func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Me
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		log.Info("开始根据消息处理业务......")
 		err := c.processMessage(ctx, msg)
 		if err == nil {
 			return nil // 处理成功
@@ -227,9 +256,17 @@ func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Me
 	return nil // 重试主题发送成功，认为处理完成
 }
 
-// recordConsumerMetrics 记录消费者指标
-func (c *UserConsumer) recordConsumerMetrics(operation, messageKey string, startTime time.Time, processingErr error, workerID int) {
-	totalDuration := time.Since(startTime).Seconds()
+func (c *UserConsumer) recordConsumerMetrics(operation, messageKey string, processStart time.Time, processingErr error, workerID int) {
+	processingDuration := time.Since(processStart).Seconds()
+
+	// 添加详细的处理时间日志
+	if processingErr != nil {
+		log.Debugf("Worker %d 业务处理失败: topic=%s, key=%s, operation=%s, 处理耗时=%.3fs, 错误=%v",
+			workerID, c.topic, messageKey, operation, processingDuration, processingErr)
+	} else {
+		log.Infof("Worker %d 业务处理成功: topic=%s, operation=%s, 耗时=%.3fs",
+			workerID, c.topic, operation, processingDuration)
+	}
 
 	// 记录消息接收（无论成功失败）
 	if operation != "" {
@@ -241,7 +278,7 @@ func (c *UserConsumer) recordConsumerMetrics(operation, messageKey string, start
 		if operation != "" {
 			errorType := getErrorType(processingErr)
 			metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, operation, errorType).Inc()
-			metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "error").Observe(totalDuration)
+			metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "error").Observe(processingDuration)
 		}
 		return
 	}
@@ -249,11 +286,8 @@ func (c *UserConsumer) recordConsumerMetrics(operation, messageKey string, start
 	// 记录成功处理
 	if operation != "" {
 		metrics.ConsumerMessagesProcessed.WithLabelValues(c.topic, c.groupID, operation).Inc()
-		metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "success").Observe(totalDuration)
+		metrics.ConsumerProcessingTime.WithLabelValues(c.topic, c.groupID, operation, "success").Observe(processingDuration)
 	}
-
-	log.Debugf("Worker %d 消息处理完成: topic=%s, key=%s, operation=%s, 总耗时=%.3fs",
-		workerID, c.topic, messageKey, operation, totalDuration)
 }
 
 // 添加错误类型提取函数
@@ -305,36 +339,25 @@ func (c *UserConsumer) getOperationFromHeaders(headers []kafka.Header) string {
 }
 
 func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Message) error {
-	startTime := time.Now()
-	var operationErr error
-
-	defer func() {
-		duration := time.Since(startTime).Seconds()
-		metrics.RecordDatabaseQuery("create", "users", duration, operationErr)
-	}()
 
 	var user v1.User
 	if err := json.Unmarshal(msg.Value, &user); err != nil {
-		operationErr = fmt.Errorf("unmarshal_error: %w", err)
 		return fmt.Errorf("UNMARSHAL_ERROR: %w", err) // 返回错误，让上层决定重试或死信
 	}
 
-	log.Debugf("处理用户创建: username=%s", user.Name)
+	log.Debugf("开始建立用户: username=%s", user.Name)
 
 	// 前置检查：用户是否已存在（避免不必要的数据库插入）
 	exists, err := c.checkUserExists(ctx, user.Name)
 	if err != nil {
-		operationErr = fmt.Errorf("check_exists_error: %w", err)
 		return fmt.Errorf("检查用户存在性失败: %w", err) // 返回错误，可重试
 	}
 	if exists {
-		operationErr = fmt.Errorf("duplicate_user: 用户已存在")
-		return fmt.Errorf("用户已存在: %s", user.Name) // 返回错误，不可重试
+		log.Warnf("用户已存在，跳过创建: username=%s", user.Name)
+		return nil
 	}
-
 	// 创建用户
 	if err := c.createUserInDB(ctx, &user); err != nil {
-		operationErr = fmt.Errorf("create_error: %w", err)
 		return fmt.Errorf("创建用户失败: %w", err) // 返回错误，让上层根据错误类型决定
 	}
 
@@ -342,6 +365,8 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	if err := c.setUserCache(ctx, &user); err != nil {
 		log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
 		// 缓存失败不影响主流程，不返回错误
+	} else {
+		log.Infof("用户%s缓存成功", user.Name)
 	}
 
 	log.Infof("用户创建成功: username=%s", user.Name)
@@ -350,12 +375,12 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 
 // 删除
 func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Message) error {
-	startTime := time.Now()
-	var operationErr error
+	//startTime := time.Now()
+	//var operationErr error
 
 	defer func() {
-		duration := time.Since(startTime).Seconds()
-		metrics.RecordDatabaseQuery("deletet", "users", duration, operationErr)
+		//	duration := time.Since(startTime).Seconds()
+		//metrics.RecordDatabaseQuery("deletet", "users", duration, operationErr)
 	}()
 
 	var deleteRequest struct {
@@ -442,10 +467,10 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 
 // 数据库操作监控示例
 func (c *UserConsumer) checkUserExists(ctx context.Context, username string) (bool, error) {
-	start := time.Now()
+	//start := time.Now()
 	defer func() {
-		duration := time.Since(start).Seconds()
-		metrics.DatabaseQueryDuration.WithLabelValues("check_exists", "users").Observe(duration)
+		//duration := time.Since(start).Seconds()
+		//metrics.DatabaseQueryDuration.WithLabelValues("check_exists", "users").Observe(duration)
 	}()
 
 	var count int64
@@ -454,20 +479,13 @@ func (c *UserConsumer) checkUserExists(ctx context.Context, username string) (bo
 		Count(&count).Error
 
 	if err != nil {
-		metrics.DatabaseQueryErrors.WithLabelValues("check_exists", "users", getErrorType(err)).Inc()
+
 	}
 
 	return count > 0, err
 }
 
 func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error {
-	start := time.Now()
-	defer func() {
-		duration := time.Since(start).Seconds()
-		// 添加数据库类型标签
-		metrics.DatabaseQueryDuration.WithLabelValues("create", "users", c.dbType).Observe(duration)
-		metrics.DatabaseQueryDuration.WithLabelValues("create", "users").Observe(duration)
-	}()
 
 	now := time.Now()
 	user.CreatedAt = now
@@ -476,7 +494,7 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error 
 	// 注意：这里直接使用 c.db，在集群模式下这是主库连接
 	// 在单机模式下这是唯一数据库连接
 	if err := c.db.WithContext(ctx).Create(user).Error; err != nil {
-		metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
+		//	metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
 		return fmt.Errorf("数据创建失败: %v", err)
 	}
 	return nil

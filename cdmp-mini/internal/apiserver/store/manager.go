@@ -55,7 +55,6 @@ type ClusterAwareUserStore struct {
 }
 
 func (c *ClusterAwareUserStore) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
-	log.Infof("📖 读操作路由到从库: username=%s", username)
 	return c.readStore.Get(ctx, username, opts, opt) // 读操作用读库
 }
 
@@ -65,7 +64,6 @@ func (c *ClusterAwareUserStore) Create(ctx context.Context, user *v1.User, opts 
 }
 
 func (c *ClusterAwareUserStore) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions, opt *options.Options) error {
-	log.Infof("✏️ update操作路由到主库: username=%s", user.Name)
 	return c.writeStore.Update(ctx, user, opts, opt) // 写操作用写库
 }
 

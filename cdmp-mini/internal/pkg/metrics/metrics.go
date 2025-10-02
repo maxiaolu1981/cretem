@@ -5,15 +5,12 @@
 package metrics
 
 import (
-	"context"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"github.com/prometheus/client_golang/prometheus"
-	"gorm.io/gorm"
 )
 
 // -------------------------- 1. 先声明所有指标变量（仅声明，不初始化）--------------------------
@@ -50,10 +47,10 @@ var (
 	ConsumerLag                *prometheus.GaugeVec
 
 	// 数据库操作指标
-	DatabaseQueryDuration    *prometheus.HistogramVec
-	DatabaseQueryErrors      *prometheus.CounterVec
-	DatabaseConnectionsInUse *prometheus.GaugeVec
-	DatabaseConnectionsWait  *prometheus.CounterVec
+	// DatabaseQueryDuration    *prometheus.HistogramVec
+	// DatabaseQueryErrors      *prometheus.CounterVec
+	// DatabaseConnectionsInUse *prometheus.GaugeVec
+	// DatabaseConnectionsWait  *prometheus.CounterVec
 )
 
 // Redis操作指标
@@ -311,38 +308,38 @@ func init() {
 	)
 
 	// -------------------------- 初始化：数据库操作指标 --------------------------
-	DatabaseQueryDuration = prometheus.NewHistogramVec(
-		prometheus.HistogramOpts{
-			Name:    "database_query_duration_seconds",
-			Help:    "Time taken for database queries",
-			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2},
-		},
-		[]string{"operation", "table"},
-	)
+	// DatabaseQueryDuration = prometheus.NewHistogramVec(
+	// 	prometheus.HistogramOpts{
+	// 		Name:    "database_query_duration_seconds",
+	// 		Help:    "Time taken for database queries",
+	// 		Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2},
+	// 	},
+	// 	[]string{"operation", "table"},
+	// )
 
-	DatabaseQueryErrors = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "database_query_errors_total",
-			Help: "Total number of database query errors",
-		},
-		[]string{"operation", "table", "error_type"},
-	)
+	// DatabaseQueryErrors = prometheus.NewCounterVec(
+	// 	prometheus.CounterOpts{
+	// 		Name: "database_query_errors_total",
+	// 		Help: "Total number of database query errors",
+	// 	},
+	// 	[]string{"operation", "table", "error_type"},
+	// )
 
-	DatabaseConnectionsInUse = prometheus.NewGaugeVec(
-		prometheus.GaugeOpts{
-			Name: "database_connections_in_use",
-			Help: "Number of database connections currently in use",
-		},
-		[]string{"pool"},
-	)
+	// DatabaseConnectionsInUse = prometheus.NewGaugeVec(
+	// 	prometheus.GaugeOpts{
+	// 		Name: "database_connections_in_use",
+	// 		Help: "Number of database connections currently in use",
+	// 	},
+	// 	[]string{"pool"},
+	// )
 
-	DatabaseConnectionsWait = prometheus.NewCounterVec(
-		prometheus.CounterOpts{
-			Name: "database_connections_wait_total",
-			Help: "Total number of database connection waits",
-		},
-		[]string{"pool"},
-	)
+	// DatabaseConnectionsWait = prometheus.NewCounterVec(
+	// 	prometheus.CounterOpts{
+	// 		Name: "database_connections_wait_total",
+	// 		Help: "Total number of database connection waits",
+	// 	},
+	// 	[]string{"pool"},
+	// )
 
 	// -------------------------- 初始化：Redis操作指标 --------------------------
 	RedisOperations = prometheus.NewCounterVec(
@@ -730,10 +727,10 @@ func init() {
 		ConsumerLag,
 
 		// 数据库指标
-		DatabaseQueryDuration,
-		DatabaseQueryErrors,
-		DatabaseConnectionsInUse,
-		DatabaseConnectionsWait,
+		// DatabaseQueryDuration,
+		// DatabaseQueryErrors,
+		// DatabaseConnectionsInUse,
+		// DatabaseConnectionsWait,
 
 		// Redis指标
 		RedisOperations,
@@ -791,86 +788,86 @@ func init() {
 }
 
 // -------------------------- 以下辅助函数保持不变 --------------------------
-// 统一处理数据库查询的监控上报，包括查询错误计数和查询耗时统计
-func RecordDatabaseQuery(operation, table string, duration float64, err error) {
-	DatabaseQueryDuration.WithLabelValues(operation, table).Observe(duration)
-	if err != nil {
-		errorType := GetDatabaseErrorType(err)
-		DatabaseQueryErrors.WithLabelValues(operation, table, errorType).Inc()
-	}
-}
+// // 统一处理数据库查询的监控上报，包括查询错误计数和查询耗时统计
+// func RecordDatabaseQuery(operation, table string, duration float64, err error) {
+// 	//DatabaseQueryDuration.WithLabelValues(operation, table).Observe(duration)
+// 	if err != nil {
+// 	//	errorType := GetDatabaseErrorType(err)
+// 	//	DatabaseQueryErrors.WithLabelValues(operation, table, errorType).Inc()
+// 	}
+// }
 
-// GetDatabaseErrorType 数据库错误分类，仅用于监控指标
-func GetDatabaseErrorType(err error) string {
-	if err == nil {
-		return "success"
-	}
+// // GetDatabaseErrorType 数据库错误分类，仅用于监控指标
+// func GetDatabaseErrorType(err error) string {
+// 	if err == nil {
+// 		return "success"
+// 	}
 
-	// 1. 先检查是否是业务框架已知错误
-	coder := errors.ParseCoderByErr(err)
-	if coder != nil {
-		// 对于已知业务错误，返回通用分类
-		return "business_error"
-	}
+// 	// 1. 先检查是否是业务框架已知错误
+// 	coder := errors.ParseCoderByErr(err)
+// 	if coder != nil {
+// 		// 对于已知业务错误，返回通用分类
+// 		return "business_error"
+// 	}
 
-	// 2. 检查上下文相关错误
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return "timeout"
-	case errors.Is(err, context.Canceled):
-		return "cancelled"
-	}
+// 	// 2. 检查上下文相关错误
+// 	switch {
+// 	case errors.Is(err, context.DeadlineExceeded):
+// 		return "timeout"
+// 	case errors.Is(err, context.Canceled):
+// 		return "cancelled"
+// 	}
 
-	// 3. 检查GORM特定错误
-	switch {
-	case errors.Is(err, gorm.ErrRecordNotFound):
-		return "not_found"
-	case errors.Is(err, gorm.ErrDuplicatedKey):
-		return "duplicate_key"
-	case errors.Is(err, gorm.ErrForeignKeyViolated):
-		return "foreign_key_violation"
-	}
+// 	// 3. 检查GORM特定错误
+// 	switch {
+// 	case errors.Is(err, gorm.ErrRecordNotFound):
+// 		return "not_found"
+// 	case errors.Is(err, gorm.ErrDuplicatedKey):
+// 		return "duplicate_key"
+// 	case errors.Is(err, gorm.ErrForeignKeyViolated):
+// 		return "foreign_key_violation"
+// 	}
 
-	// 4. 检查MySQL驱动错误
-	var mysqlErr *mysql.MySQLError
-	if errors.As(err, &mysqlErr) {
-		switch mysqlErr.Number {
-		case 1213: // ER_LOCK_DEADLOCK
-			return "deadlock"
-		case 1205: // ER_LOCK_WAIT_TIMEOUT
-			return "lock_timeout"
-		case 1062: // ER_DUP_ENTRY
-			return "duplicate_entry"
-		case 1452: // ER_NO_REFERENCED_ROW
-			return "foreign_key_violation"
-		case 1045: // ER_ACCESS_DENIED_ERROR
-			return "access_denied"
-		case 2002, 2003: // 连接相关错误
-			return "connection_error"
-		default:
-			return "mysql_error"
-		}
-	}
+// 	// 4. 检查MySQL驱动错误
+// 	var mysqlErr *mysql.MySQLError
+// 	if errors.As(err, &mysqlErr) {
+// 		switch mysqlErr.Number {
+// 		case 1213: // ER_LOCK_DEADLOCK
+// 			return "deadlock"
+// 		case 1205: // ER_LOCK_WAIT_TIMEOUT
+// 			return "lock_timeout"
+// 		case 1062: // ER_DUP_ENTRY
+// 			return "duplicate_entry"
+// 		case 1452: // ER_NO_REFERENCED_ROW
+// 			return "foreign_key_violation"
+// 		case 1045: // ER_ACCESS_DENIED_ERROR
+// 			return "access_denied"
+// 		case 2002, 2003: // 连接相关错误
+// 			return "connection_error"
+// 		default:
+// 			return "mysql_error"
+// 		}
+// 	}
 
-	// 5. 基于错误消息的模式匹配
-	errMsg := strings.ToLower(err.Error())
-	switch {
-	case strings.Contains(errMsg, "timeout"):
-		return "timeout"
-	case strings.Contains(errMsg, "connection"):
-		return "connection_error"
-	case strings.Contains(errMsg, "deadlock"):
-		return "deadlock"
-	case strings.Contains(errMsg, "duplicate"):
-		return "duplicate"
-	case strings.Contains(errMsg, "constraint"):
-		return "constraint_violation"
-	case strings.Contains(errMsg, "full"):
-		return "disk_full"
-	default:
-		return "unknown"
-	}
-}
+// 	// 5. 基于错误消息的模式匹配
+// 	errMsg := strings.ToLower(err.Error())
+// 	switch {
+// 	case strings.Contains(errMsg, "timeout"):
+// 		return "timeout"
+// 	case strings.Contains(errMsg, "connection"):
+// 		return "connection_error"
+// 	case strings.Contains(errMsg, "deadlock"):
+// 		return "deadlock"
+// 	case strings.Contains(errMsg, "duplicate"):
+// 		return "duplicate"
+// 	case strings.Contains(errMsg, "constraint"):
+// 		return "constraint_violation"
+// 	case strings.Contains(errMsg, "full"):
+// 		return "disk_full"
+// 	default:
+// 		return "unknown"
+// 	}
+// }
 
 // 标记请求开始
 func HTTPMiddlewareStart() {
@@ -884,12 +881,7 @@ func HTTPMiddlewareEnd() {
 
 // 监控数据库连接池的实时活跃连接数
 func SetDatabaseConnectionsInUse(poolName string, count int) {
-	DatabaseConnectionsInUse.WithLabelValues(poolName).Set(float64(count))
-}
-
-// 统计数据库连接池的连接等待次数（即当连接池无空闲连接时，请求等待获取连接的次数
-func IncDatabaseConnectionsWait(poolName string) {
-	DatabaseConnectionsWait.WithLabelValues(poolName).Inc()
+	//DatabaseConnectionsInUse.WithLabelValues(poolName).Set(float64(count))
 }
 
 // HTTP 请求最核心的监控上报函数，一次性上报请求计数、耗时、大小、慢请求等多维度指标，关联 8 个 HTTP 相关指标（覆盖请求生命周期），支持多租户、用户级别的精细化监控。
@@ -1240,7 +1232,6 @@ type RedisClusterMetrics struct {
 	StatsMessagesReceived int64
 }
 
-
 // RecordRedisClusterMetrics 记录Redis集群指标
 func RecordRedisClusterMetrics(clusterName string, metrics *RedisClusterMetrics) {
 	// 记录集群状态
@@ -1314,7 +1305,6 @@ func RecordRedisClusterNetworkIO(nodeID, address string, inputBytes, outputBytes
 	RedisClusterNetworkIO.WithLabelValues(nodeID, address, "output").Set(float64(outputBytes))
 }
 
-
 // RecordRedisClusterReplicationLag 记录主从复制延迟
 func RecordRedisClusterReplicationLag(masterID, slaveID, masterAddr, slaveAddr string, lagSeconds int64) {
 	RedisClusterReplicationLag.WithLabelValues(masterID, slaveID, masterAddr, slaveAddr).Set(float64(lagSeconds))
@@ -1357,14 +1347,14 @@ func UpdateRedisClusterHitRate(hits, misses float64) {
 // GetRedisClusterHitRateFromInfo 从Redis INFO命令结果计算命中率
 func GetRedisClusterHitRateFromInfo(info map[string]string) float64 {
 	var hits, misses float64
-	
+
 	if hitsStr, ok := info["keyspace_hits"]; ok {
 		hits, _ = strconv.ParseFloat(hitsStr, 64)
 	}
-	
+
 	if missesStr, ok := info["keyspace_misses"]; ok {
 		misses, _ = strconv.ParseFloat(missesStr, 64)
 	}
-	
+
 	return CalculateRedisClusterHitRate(hits, misses)
 }
