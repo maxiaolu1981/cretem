@@ -58,17 +58,7 @@ func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis
 	return consumer
 }
 
-func (c *UserConsumer) SetProducer(producer *UserProducer) {
-	c.producer = producer
-}
-
-func (c *UserConsumer) Close() error {
-	if c.reader != nil {
-		return c.reader.Close()
-	}
-	return nil
-}
-
+// 消费
 func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 	var wg sync.WaitGroup
 	for i := 0; i < workerCount; i++ {
@@ -81,6 +71,7 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 	wg.Wait()
 }
 
+// 消息调度
 func (c *UserConsumer) worker(ctx context.Context, workerID int) {
 	log.Infof("启动消费者实例 %d, Worker %d, Topic: %s, 消费组: %s",
 		c.instanceID, workerID, c.topic, c.groupID)
@@ -120,6 +111,7 @@ func (c *UserConsumer) worker(ctx context.Context, workerID int) {
 	}
 }
 
+// 处理消息
 func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) error {
 
 	var operation, messageKey string
@@ -188,20 +180,139 @@ func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) e
 
 }
 
-// 判断是否需要停止worker的严重错误
-func (c *UserConsumer) shouldStopWorker(err error) bool {
-	if err == nil {
-		return false
-	}
+// 业务处理
+func (c *UserConsumer) processMessage(ctx context.Context, msg kafka.Message) error {
+	operation := c.getOperationFromHeaders(msg.Headers)
 
-	errStr := err.Error()
-	// 这些错误需要停止worker
-	return strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "broker not available") ||
-		strings.Contains(errStr, "authentication failed") ||
-		strings.Contains(errStr, "authorization failed")
+	switch operation {
+	case OperationCreate:
+		return c.processCreateOperation(ctx, msg)
+	case OperationUpdate:
+		return c.processUpdateOperation(ctx, msg)
+	case OperationDelete:
+		return c.processDeleteOperation(ctx, msg)
+	default:
+		log.Errorf("未知操作类型: %s", operation)
+		if c.producer != nil {
+			return c.producer.SendToDeadLetterTopic(ctx, msg, "UNKNOWN_OPERATION: "+operation)
+		}
+		return fmt.Errorf("未知操作类型: %s", operation)
+	}
 }
 
+func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Message) error {
+
+	var user v1.User
+	if err := json.Unmarshal(msg.Value, &user); err != nil {
+		return fmt.Errorf("UNMARSHAL_ERROR: %w", err) // 返回错误，让上层决定重试或死信
+	}
+
+	log.Debugf("开始建立用户: username=%s", user.Name)
+
+	// 创建用户
+	if err := c.createUserInDB(ctx, &user); err != nil {
+		return fmt.Errorf("创建用户失败: %w", err) // 返回错误，让上层根据错误类型决定
+	}
+
+	// 设置缓存
+	if err := c.setUserCache(ctx, &user); err != nil {
+		log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
+		// 缓存失败不影响主流程，不返回错误
+	} else {
+		log.Infof("用户%s缓存成功", user.Name)
+	}
+
+	log.Infof("用户创建成功: username=%s", user.Name)
+	return nil
+}
+
+// 删除
+func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Message) error {
+
+	var deleteRequest struct {
+		Username  string `json:"username"`
+		DeletedAt string `json:"deleted_at"`
+	}
+
+	if err := json.Unmarshal(msg.Value, &deleteRequest); err != nil {
+		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
+	}
+
+	log.Debugf("开始删除用户: username=%s", deleteRequest.Username)
+
+	if err := c.deleteUserFromDB(ctx, deleteRequest.Username); err != nil {
+		return c.sendToRetry(ctx, msg, "删除用户失败: "+err.Error())
+	}
+
+	if err := c.deleteUserCache(ctx, deleteRequest.Username); err != nil {
+		log.Errorw("缓存删除失败", "username", deleteRequest.Username, "error", err)
+	} else {
+		log.Infof("缓存删除成功: username=%s", deleteRequest.Username)
+	}
+	log.Infof("用户创建成功: username=%s", deleteRequest.Username)
+
+	return nil
+}
+
+func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Message) error {
+	var user v1.User
+	if err := json.Unmarshal(msg.Value, &user); err != nil {
+		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
+	}
+
+	log.Debugf("处理用户更新: username=%s", user.Name)
+
+	if err := c.updateUserInDB(ctx, &user); err != nil {
+		return c.sendToRetry(ctx, msg, "更新用户失败: "+err.Error())
+	}
+
+	c.setUserCache(ctx, &user)
+
+	log.Infof("用户更新成功: username=%s", user.Name)
+	return nil
+}
+
+func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error {
+
+	now := time.Now()
+	user.CreatedAt = now
+	user.UpdatedAt = now
+
+	// 注意：这里直接使用 c.db，在集群模式下这是主库连接
+	// 在单机模式下这是唯一数据库连接
+	if err := c.db.WithContext(ctx).Create(user).Error; err != nil {
+		//	metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
+		return fmt.Errorf("数据创建失败: %v", err)
+	}
+	return nil
+}
+
+func (c *UserConsumer) deleteUserFromDB(ctx context.Context, username string) error {
+	if err := c.db.WithContext(ctx).
+		Where("name = ? and state = 1", username).
+		Delete(&v1.User{}).Error; err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *UserConsumer) updateUserInDB(ctx context.Context, user *v1.User) error {
+	user.UpdatedAt = time.Now()
+
+	if err := c.db.WithContext(ctx).Model(&v1.User{}).
+		Where("name = ?", user.Name).
+		Updates(map[string]interface{}{
+			"email":      user.Email,
+			"password":   user.Password,
+			"status":     user.Status,
+			"updated_at": user.UpdatedAt,
+		}).Error; err != nil {
+		return fmt.Errorf("数据库更新失败: %v", err)
+	}
+	return nil
+}
+
+// 辅助函数
 // processMessageWithRetry 带重试的消息处理
 func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Message, maxRetries int) error {
 	var lastErr error
@@ -210,23 +321,14 @@ func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Me
 		log.Info("开始根据消息处理业务......")
 		err := c.processMessage(ctx, msg)
 		if err == nil {
-			return nil // 处理成功
+			return nil // 处理成功,跳出循环
 		}
 
 		lastErr = err
-		errorType := getErrorType(err)
 
 		// 检查是否应该重试
 		if !shouldRetry(err) {
-			log.Warnf("消息处理遇到不可重试错误 (尝试 %d/%d): %v", attempt, maxRetries, err)
-
-			// 不可重试错误：发送到死信主题
-			deadLetterErr := c.sendToDeadLetter(ctx, msg, fmt.Sprintf("不可重试错误[%s]: %v", errorType, err))
-			if deadLetterErr != nil {
-				return fmt.Errorf("发送死信失败: %v (原错误: %v)", deadLetterErr, err)
-			}
-
-			log.Infof("消息已发送到死信主题: %s", string(msg.Key))
+			log.Warn("用户名重复: %v")
 			return nil // 死信发送成功，认为处理完成
 		}
 
@@ -256,6 +358,7 @@ func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Me
 	return nil // 重试主题发送成功，认为处理完成
 }
 
+// 记录消费信息
 func (c *UserConsumer) recordConsumerMetrics(operation, messageKey string, processStart time.Time, processingErr error, workerID int) {
 	processingDuration := time.Since(processStart).Seconds()
 
@@ -310,25 +413,6 @@ func getErrorType(err error) string {
 	}
 }
 
-func (c *UserConsumer) processMessage(ctx context.Context, msg kafka.Message) error {
-	operation := c.getOperationFromHeaders(msg.Headers)
-
-	switch operation {
-	case OperationCreate:
-		return c.processCreateOperation(ctx, msg)
-	case OperationUpdate:
-		return c.processUpdateOperation(ctx, msg)
-	case OperationDelete:
-		return c.processDeleteOperation(ctx, msg)
-	default:
-		log.Errorf("未知操作类型: %s", operation)
-		if c.producer != nil {
-			return c.producer.SendToDeadLetterTopic(ctx, msg, "UNKNOWN_OPERATION: "+operation)
-		}
-		return fmt.Errorf("未知操作类型: %s", operation)
-	}
-}
-
 func (c *UserConsumer) getOperationFromHeaders(headers []kafka.Header) string {
 	for _, header := range headers {
 		if header.Key == HeaderOperation {
@@ -336,74 +420,6 @@ func (c *UserConsumer) getOperationFromHeaders(headers []kafka.Header) string {
 		}
 	}
 	return OperationCreate
-}
-
-func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Message) error {
-
-	var user v1.User
-	if err := json.Unmarshal(msg.Value, &user); err != nil {
-		return fmt.Errorf("UNMARSHAL_ERROR: %w", err) // 返回错误，让上层决定重试或死信
-	}
-
-	log.Debugf("开始建立用户: username=%s", user.Name)
-
-	// 前置检查：用户是否已存在（避免不必要的数据库插入）
-	exists, err := c.checkUserExists(ctx, user.Name)
-	if err != nil {
-		return fmt.Errorf("检查用户存在性失败: %w", err) // 返回错误，可重试
-	}
-	if exists {
-		log.Warnf("用户已存在，跳过创建: username=%s", user.Name)
-		return nil
-	}
-	// 创建用户
-	if err := c.createUserInDB(ctx, &user); err != nil {
-		return fmt.Errorf("创建用户失败: %w", err) // 返回错误，让上层根据错误类型决定
-	}
-
-	// 设置缓存
-	if err := c.setUserCache(ctx, &user); err != nil {
-		log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
-		// 缓存失败不影响主流程，不返回错误
-	} else {
-		log.Infof("用户%s缓存成功", user.Name)
-	}
-
-	log.Infof("用户创建成功: username=%s", user.Name)
-	return nil
-}
-
-// 删除
-func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Message) error {
-	//startTime := time.Now()
-	//var operationErr error
-
-	defer func() {
-		//	duration := time.Since(startTime).Seconds()
-		//metrics.RecordDatabaseQuery("deletet", "users", duration, operationErr)
-	}()
-
-	var deleteRequest struct {
-		Username  string `json:"username"`
-		DeletedAt string `json:"deleted_at"`
-	}
-
-	if err := json.Unmarshal(msg.Value, &deleteRequest); err != nil {
-		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
-	}
-
-	//	log.Debugf("处理用户删除: username=%s", deleteRequest.Username)
-
-	if err := c.deleteUserFromDB(ctx, deleteRequest.Username); err != nil {
-		return c.sendToRetry(ctx, msg, "删除用户失败: "+err.Error())
-	}
-
-	if err := c.deleteUserCache(ctx, deleteRequest.Username); err != nil {
-		log.Errorw("缓存删除失败", "username", deleteRequest.Username, "error", err)
-	}
-
-	log.Infof("缓存删除成功: username=%s", deleteRequest.Username)
-	return nil
 }
 
 func shouldRetry(err error) bool {
@@ -436,93 +452,6 @@ func shouldRetry(err error) bool {
 
 	// 默认情况下重试
 	return true
-}
-
-func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Message) error {
-	var user v1.User
-	if err := json.Unmarshal(msg.Value, &user); err != nil {
-		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
-	}
-
-	log.Debugf("处理用户更新: username=%s", user.Name)
-
-	exists, err := c.checkUserExists(ctx, user.Name)
-	if err != nil {
-		return c.sendToRetry(ctx, msg, "检查用户存在性失败: "+err.Error())
-	}
-	if !exists {
-		log.Warnf("要更新的用户不存在: username=%s", user.Name)
-		return c.sendToDeadLetter(ctx, msg, "USER_NOT_EXISTS")
-	}
-
-	if err := c.updateUserInDB(ctx, &user); err != nil {
-		return c.sendToRetry(ctx, msg, "更新用户失败: "+err.Error())
-	}
-
-	c.setUserCache(ctx, &user)
-
-	log.Infof("用户更新成功: username=%s", user.Name)
-	return nil
-}
-
-// 数据库操作监控示例
-func (c *UserConsumer) checkUserExists(ctx context.Context, username string) (bool, error) {
-	//start := time.Now()
-	defer func() {
-		//duration := time.Since(start).Seconds()
-		//metrics.DatabaseQueryDuration.WithLabelValues("check_exists", "users").Observe(duration)
-	}()
-
-	var count int64
-	err := c.db.WithContext(ctx).Model(&v1.User{}).
-		Where("name = ? and status = 1", username).
-		Count(&count).Error
-
-	if err != nil {
-
-	}
-
-	return count > 0, err
-}
-
-func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error {
-
-	now := time.Now()
-	user.CreatedAt = now
-	user.UpdatedAt = now
-
-	// 注意：这里直接使用 c.db，在集群模式下这是主库连接
-	// 在单机模式下这是唯一数据库连接
-	if err := c.db.WithContext(ctx).Create(user).Error; err != nil {
-		//	metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
-		return fmt.Errorf("数据创建失败: %v", err)
-	}
-	return nil
-}
-
-func (c *UserConsumer) updateUserInDB(ctx context.Context, user *v1.User) error {
-	user.UpdatedAt = time.Now()
-
-	if err := c.db.WithContext(ctx).Model(&v1.User{}).
-		Where("name = ?", user.Name).
-		Updates(map[string]interface{}{
-			"email":      user.Email,
-			"password":   user.Password,
-			"status":     user.Status,
-			"updated_at": user.UpdatedAt,
-		}).Error; err != nil {
-		return fmt.Errorf("数据库更新失败: %v", err)
-	}
-	return nil
-}
-
-func (c *UserConsumer) deleteUserFromDB(ctx context.Context, username string) error {
-	if err := c.db.WithContext(ctx).
-		Where("name = ?", username).
-		Delete(&v1.User{}).Error; err != nil {
-		return fmt.Errorf("数据库删除失败: %v", err)
-	}
-	return nil
 }
 
 func (c *UserConsumer) setUserCache(ctx context.Context, user *v1.User) error {
@@ -617,4 +546,15 @@ func (c *UserConsumer) startLagMonitor(ctx context.Context) {
 // 唯一新增的方法
 func (c *UserConsumer) SetInstanceID(id int) {
 	c.instanceID = id
+}
+
+func (c *UserConsumer) SetProducer(producer *UserProducer) {
+	c.producer = producer
+}
+
+func (c *UserConsumer) Close() error {
+	if c.reader != nil {
+		return c.reader.Close()
+	}
+	return nil
 }

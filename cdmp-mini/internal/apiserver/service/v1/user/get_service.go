@@ -16,7 +16,7 @@ import (
 )
 
 func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
-		cacheKey := u.generateUserCacheKey(username)
+	cacheKey := u.generateUserCacheKey(username)
 
 	// 先尝试无锁查询缓存（大部分请求应该在这里返回）
 	user, found, err := u.tryGetFromCache(ctx, cacheKey)
@@ -33,7 +33,7 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 
 	// 缓存未命中，使用singleflight保护数据库查询
 	result, err, shared := u.group.Do(cacheKey, func() (interface{}, error) {
-		return u.getUserFromDBAndSetCache(ctx, username, cacheKey, opts)
+		return u.getUserFromDBAndSetCache(ctx, username, cacheKey)
 	})
 	if shared {
 		log.Infow("数据库查询被合并，共享结果", "username", username)
@@ -62,7 +62,7 @@ func (u *UserService) tryGetFromCache(ctx context.Context, cacheKey string) (*v1
 
 	cachedUser, isCached, err := u.getFromCache(redisCtx, cacheKey)
 	if err != nil {
-		u.recordCacheError(err, "get_from_cache") 
+		u.recordCacheError(err, "get_from_cache")
 		// 只返回错误，不处理降级
 		return nil, false, err
 	}
@@ -112,4 +112,3 @@ func (u *UserService) recordCacheError(err error, operation string) {
 	// 使用 WithLabelValues 来记录
 	metrics.CacheErrors.WithLabelValues(errorType, operation).Inc()
 }
-

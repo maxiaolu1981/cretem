@@ -103,11 +103,11 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 }
 
 // getUserFromDBAndSetCache 带缓存的用户查询核心逻辑
-func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, cacheKey string, opts metav1.GetOptions) (*v1.User, error) {
+func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, cacheKey string) (*v1.User, error) {
 	logger := log.L(ctx).WithValues("operation", "getUserWithCache")
 
 	// 1. 查询数据库
-	user, err := u.Store.Users().Get(ctx, username, opts, u.Options)
+	user, err := u.Store.Users().Get(ctx, username, metav1.GetOptions{}, u.Options)
 	if err != nil {
 		if errors.IsCode(err, code.ErrUserNotFound) {
 			metrics.DBQueries.WithLabelValues("not_found").Inc()
@@ -174,4 +174,37 @@ func (u *UserService) cacheNullValue(cacheKey string) error {
 
 func (u *UserService) generateUserCacheKey(username string) string {
 	return fmt.Sprintf("user:v1:%s", username)
+}
+
+// 从缓存和数据库查询用户是否存在
+func (u *UserService) checkUserExist(ctx context.Context, username string) (*v1.User, error) {
+	// 先尝试无锁查询缓存（大部分请求应该在这里返回）
+	user, found, err := u.tryGetFromCache(ctx, username)
+	if err != nil {
+		// 缓存查询错误，记录但继续流程
+		log.Errorf("缓存查询异常，继续流程", "error", err.Error(), "username", username)
+		// 使用 WithLabelValues 来记录错误
+		metrics.CacheErrors.WithLabelValues("query_failed", "get").Inc()
+	}
+	// 缓存命中，直接返回
+	if found {
+		return user, nil
+	}
+
+	// 缓存未命中，使用singleflight保护数据库查询
+	result, err, shared := u.group.Do(username, func() (interface{}, error) {
+		return u.getUserFromDBAndSetCache(ctx, username, username)
+	})
+	if shared {
+		log.Infow("数据库查询被合并，共享结果", "username", username)
+		metrics.RequestsMerged.WithLabelValues("get").Inc()
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	if result == nil {
+		return nil, nil
+	}
+	return result.(*v1.User), nil
 }

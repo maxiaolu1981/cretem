@@ -135,7 +135,7 @@ func (k *KafkaOptions) Complete() {
 
 	// 新增：设置合理的分区数默认值
 	if k.DesiredPartitions <= 0 {
-		k.DesiredPartitions = 16 // 默认16个分区
+		k.DesiredPartitions = 48 // 默认16个分区
 	}
 	// 确保worker数量不超过分区数
 	if k.WorkerCount > k.DesiredPartitions {
@@ -286,21 +286,4 @@ func (k *KafkaOptions) GetRequiredAcks() int {
 // GetBrokers 获取broker列表
 func (k *KafkaOptions) GetBrokers() []string {
 	return k.Brokers
-}
-
-// EnsureTopic 确保topic存在且分区数正确
-func (k *KafkaOptions) EnsureTopic() error {
-	// 如果不需要自动管理分区，直接返回
-	if !k.AutoCreateTopic && !k.AutoExpandPartitions {
-		return nil
-	}
-
-	log.Infof("开始检查Kafka topic: %s, 期望分区数: %d", k.Topic, k.DesiredPartitions)
-
-	// 这里使用kafka-go的AdminClient来管理topic
-	// 由于这是最小化调整，我们先记录日志，实际分区管理在server中实现
-	log.Infof("Topic分区管理配置 - 自动创建: %v, 自动扩展: %v, 期望分区: %d",
-		k.AutoCreateTopic, k.AutoExpandPartitions, k.DesiredPartitions)
-
-	return nil
 }

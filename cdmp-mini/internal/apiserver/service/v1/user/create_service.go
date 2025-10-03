@@ -16,11 +16,14 @@ import (
 
 func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
 
-	// //判断用户是否存在
-	// rUser, err := u.Store.Users().Get(ctx, user.Name, metav1.GetOptions{}, u.Options)
-	// if err == nil && rUser != nil {
-	// 	return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在%s", user.Name)
-	// }
+	log.Info("service:开始处理用户创建请求...")
+
+	//判断用户是否存在
+	ruser, err := u.checkUserExist(ctx, user.Name)
+	if ruser != nil && ruser.Name != RATE_LIMIT_PREVENTION {
+		log.Info("用户已经存在,无法创建")
+		return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在")
+	}
 
 	if u.Producer == nil {
 		log.Errorf("生产者转换错误")
@@ -30,12 +33,13 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		return fmt.Errorf("producer未初始化")
 	}
 	// 发送到Kafka
-	err := u.Producer.SendUserCreateMessage(ctx, user)
-	if err != nil {
+	errKafka := u.Producer.SendUserCreateMessage(ctx, user)
+	if errKafka != nil {
 		log.Errorf("requestID=%s: 生产者消息发送失败 username=%s, err=%v", ctx.Value("requestID"), user.Name, err)
 		return errors.WithCode(code.ErrKafkaFailed, "kafka生产者消息发送失败")
+	} else {
+		log.Infow("用户创建请求已发送到Kafka", "username", user.Name)
 	}
-	// 记录业务成功
-	log.Infow("用户创建请求已发送到Kafka", "username", user.Name)
+
 	return nil
 }

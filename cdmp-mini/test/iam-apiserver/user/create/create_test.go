@@ -37,10 +37,10 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 并发配置（先调小进行调试）
-	ConcurrentUsers = 10000 // 并发用户数（调试阶段调小）
-	RequestsPerUser = 100   // 每用户请求数
-	MaxConcurrent   = 100   // 最大并发数
-	BatchSize       = 100   // 批次大小
+	ConcurrentUsers = 10 // 并发用户数（调试阶段调小）
+	RequestsPerUser = 1  // 每用户请求数
+	MaxConcurrent   = 1  // 最大并发数
+	BatchSize       = 1  // 批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -332,6 +332,7 @@ func sendSingleRequestWithAuth(userID, requestID int) {
 	userReq := CreateUserRequest{
 		Metadata: &UserMetadata{
 			Name: generateUniqueUsername(userID),
+			//"admin",
 		},
 		Nickname: fmt.Sprintf("测试用户%d", userID),
 		Password: "Test@123456",

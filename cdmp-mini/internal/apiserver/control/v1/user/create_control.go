@@ -35,7 +35,7 @@ func (u *UserController) Create(ctx *gin.Context) {
 		return
 	}
 
-	log.Info("开始处理用户创建请求")
+	log.Info("control:开始处理用户创建请求...")
 
 	var r v1.User
 	if err := ctx.ShouldBindJSON(&r); err != nil {

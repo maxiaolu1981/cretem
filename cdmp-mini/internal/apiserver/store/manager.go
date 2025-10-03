@@ -34,10 +34,10 @@ type Datastore struct {
 }
 
 func newUsers(ds *Datastore) interfaces.UserStore {
-	log.Infof("🔍 UserStore创建: 集群模式=%v", ds.UseCluster)
+	log.Debugf("🔍 UserStore创建: 集群模式=%v", ds.UseCluster)
 	policyStore := newPolices(ds)
 	if ds.UseCluster {
-		log.Info("🚀 读写分离已启用 - 使用ClusterAwareUserStore")
+		log.Debugf("🚀 读写分离已启用 - 使用ClusterAwareUserStore")
 		// 集群模式下传入读写两个DB
 		return &ClusterAwareUserStore{
 			readStore:  user.NewUsers(ds.DBManager.GetReadDB(), policyStore),
