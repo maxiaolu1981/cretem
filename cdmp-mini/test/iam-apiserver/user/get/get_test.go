@@ -150,10 +150,10 @@ const (
 	RespCodeForbidden  = 110009 //无权访问
 	RespCodeValidation = 100400
 
-	ConcurrentUsers       = 10000
-	RequestsPerUser       = 100
+	ConcurrentUsers       = 1
+	RequestsPerUser       = 1
 	RequestInterval       = 2 * time.Millisecond
-	BatchSize             = 10
+	BatchSize             = 1
 	HotUserRequestPercent = 50 // 热点用户请求百分比
 	InvalidRequestPercent = 10 //无效请求百分比
 

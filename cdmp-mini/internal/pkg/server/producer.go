@@ -65,9 +65,10 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 	}
 
 	return &UserProducer{
-		writer:      mainWriter,
-		retryWriter: reliableWriter,
-		maxRetries:  options.MaxRetries,
+		writer:       mainWriter,
+		retryWriter:  reliableWriter,
+		maxRetries:   options.MaxRetries,
+		kafkaOptions: options,
 	}
 }
 
@@ -182,7 +183,7 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 	err := p.writer.WriteMessages(ctx, sendMsg)
 	if err == nil {
 		success = true // 标记为成功
-		log.Infof("发送成功: topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
+		log.Debugf("发送成功: topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
 		return nil
 	}
 	// 首次发送失败，进行重试
@@ -209,12 +210,13 @@ func (p *UserProducer) getOperationFromHeaders(headers []kafka.Header) string {
 }
 
 func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
-	// 1. 读取原始消息的重试次数
-	//log.Debugf("📨 进入sendToRetryTopic: key=%s", string(msg.Key))
 
-	// for i, header := range msg.Headers {
-	// 	log.Debugf("  输入消息Header[%d]: %s=%s", i, header.Key, string(header.Value))
-	// }
+	// 空指针保护
+	if p == nil {
+		log.Error("UserProducer is nil in sendToRetryTopic")
+		return fmt.Errorf("user producer is nil")
+	}
+
 	currentRetryCount := 0
 	for _, h := range msg.Headers {
 		if h.Key == HeaderRetryCount {
@@ -222,14 +224,13 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 				currentRetryCount = cnt
 			}
 			break
+
 		}
 	}
-	currentRetryCount++
 
-	// 2. 检查最大重试次数
+	//检查最大重试次数
 	if currentRetryCount > p.maxRetries {
-		errMsg := fmt.Sprintf("已达最大重试次数（%d次）", p.maxRetries)
-		log.Warnf("key=%s: %s", string(msg.Key), errMsg)
+		errMsg := fmt.Sprintf("已达最大重试次数（%d次）,将发送到死信区", p.maxRetries)
 		return p.SendToDeadLetterTopic(ctx, msg, errMsg+": "+errorInfo)
 	}
 
@@ -240,7 +241,7 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 		Time:  time.Now(),
 	}
 
-	// 复制并更新headers（修复重复问题）
+	// 复制并更新headers
 	retryMsg.Headers = make([]kafka.Header, len(msg.Headers))
 	copy(retryMsg.Headers, msg.Headers)
 	retryMsg.Headers = p.updateOrAddHeader(retryMsg.Headers, HeaderRetryCount, strconv.Itoa(currentRetryCount))
@@ -256,16 +257,15 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 		// 进入死信队列
 		return p.SendToDeadLetterTopic(ctx, msg, "重试发送失败: "+err.Error())
 	}
-
-	log.Infow("成功发送到重试Topic",
-		"key", string(msg.Key),
-		"retry_count", currentRetryCount,
-		"next_retry", p.calcNextRetryTS(currentRetryCount).Format(time.RFC3339))
 	return nil
 }
 
 // 新增：计算下次重试时间（指数退避策略）
 func (p *UserProducer) calcNextRetryTS(retryCount int) time.Time {
+
+	if retryCount <= 0 {
+		retryCount = 1 // 或者返回默认延迟
+	}
 	// 基础延迟 * 2^(重试次数-1)，避免短期内频繁重试
 	delay := p.kafkaOptions.BaseRetryDelay * time.Duration(1<<(retryCount-1))
 	// 限制最大延迟，避免重试间隔过长
@@ -291,7 +291,7 @@ func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Mess
 		Headers: p.updateOrAddHeader(msg.Headers, "deadletter-reason", errorInfo),
 	}
 	deadLetterMsg.Headers = p.updateOrAddHeader(deadLetterMsg.Headers, "deadletter-timestamp", time.Now().Format(time.RFC3339))
-	log.Warnf("发送到死信队列: key=%s, reason=%s", string(msg.Key), errorInfo)
+
 	// 使用增强的同步发送
 	sendErr = p.sendMessageWithRetry(ctx, deadLetterMsg, UserDeadLetterTopic)
 	return sendErr
@@ -385,7 +385,6 @@ func (p *UserProducer) updateOrAddHeader(headers []kafka.Header, key, value stri
 	return newHeaders
 }
 
-// sendMessageWithRetry 增强的同步发送方法（新增）
 // sendMessageWithRetry 增强的同步发送方法
 func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
 	const maxSendRetries = 3
@@ -422,9 +421,15 @@ func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Messa
 		log.Warnf("发送失败（key=%s, topic=%s, 尝试%d/%d）: %v",
 			string(msg.Key), topic, i+1, maxSendRetries, err)
 
-		// 等待后重试（指数退避）
 		if i < maxSendRetries-1 {
-			waitTime := time.Duration(1<<uint(i)) * time.Second
+			baseDelay := time.Second
+			maxDelay := 30 * time.Second
+			// 指数退避：1s, 2s, 4s, 8s, 16s, 30s, 30s...
+			waitTime := baseDelay * time.Duration(1<<uint(i))
+			if waitTime > maxDelay {
+				waitTime = maxDelay
+			}
+
 			select {
 			case <-time.After(waitTime):
 				continue
@@ -433,6 +438,5 @@ func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Messa
 			}
 		}
 	}
-
 	return fmt.Errorf("发送到主题%s重试%d次均失败: %v", topic, maxSendRetries, lastErr)
 }

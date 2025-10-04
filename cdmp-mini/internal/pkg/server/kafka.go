@@ -98,8 +98,8 @@ func isKafkaStartingError(err error) bool {
 	}
 }
 
-// InitKafkaWithRetry 初始化 Kafka 连接，如果失败则退出程序
-func InitKafkaWithRetry(opt *options.Options) error {
+// TestKafkaConnect 初始化 Kafka 连接，如果失败则退出程序
+func TestKafkaConnect(opt *options.Options) error {
 	log.Info("开始检查 Kafka 服务状态...")
 
 	if err := CheckKafkaConnection(opt); err != nil {

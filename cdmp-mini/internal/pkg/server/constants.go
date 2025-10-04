@@ -31,6 +31,7 @@ const (
 )
 
 const (
+	ConsumerGroupPrefix = "user-service-prod"
 	// Topic 定义
 	UserCreateTopic     = "user.create.v1"
 	UserUpdateTopic     = "user.update.v1"

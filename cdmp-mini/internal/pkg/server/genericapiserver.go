@@ -64,16 +64,6 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	if err := g.configureGin(); err != nil {
 		return nil, err
 	}
-
-	// //初始化mysql
-	// storeIns, dbIns, err := mysql.GetMySQLFactoryOr(opts.MysqlOptions)
-	// if err != nil {
-	// 	log.Error("mysql服务器启动失败")
-	// 	return nil, err
-	// }
-	// interfaces.SetClient(storeIns)
-	// log.Info("mysql服务器初始化成功")
-	// time.Sleep(3 * time.Second)
 	// 初始化mysql
 	storeIns, dbIns, err := mysql.GetMySQLFactoryOr(opts.MysqlOptions)
 	if err != nil {
@@ -111,12 +101,13 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	log.Info("redis服务器启动成功")
 	time.Sleep(3 * time.Second)
 
-	// 初始化Kafka生产者和消费者
-	if err := InitKafkaWithRetry(opts); err != nil {
+	// 测试kafka是否连通
+	if err := TestKafkaConnect(opts); err != nil {
 		log.Error("kafka测试连通失败")
 		return nil, errors.WithCode(code.ErrKafkaFailed, "kafka服务未启动")
 	}
 
+	//初始化kafka
 	if err := g.initKafkaComponents(dbIns); err != nil {
 		log.Error("kafka服务启动失败")
 		return nil, err
@@ -353,12 +344,6 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	kafkaOpts := g.options.KafkaOptions
 
-	// 新增：在初始化Kafka组件前先确保topic分区
-	log.Info("检查Kafka topic分区配置...")
-	if err := g.ensureKafkaTopics(); err != nil {
-		log.Warnf("Kafka topic分区检查失败: %v", err)
-	}
-
 	log.Infof("初始化Kafka组件，最大重试: %d, 消费者实例数量: %d",
 		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount)
 
@@ -369,25 +354,22 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	log.Info("初始化Kafka生产者...")
 	userProducer := NewUserProducer(kafkaOpts)
 
-	// 2. 初始化各个主题的消费者,创建多个实例
-	consumerGroupPrefix := "user-service-prod"
 	// 为每个主题创建多个消费者实例
 	consumerCount := kafkaOpts.WorkerCount
-	if consumerCount <= 0 {
-		consumerCount = 3 // 默认3个，匹配分区数
-	}
+	retryconsumerCount := kafkaOpts.RetryWorkerCount
 	log.Infof("为每个主题创建 %d 个消费者实例", consumerCount)
 
 	// 创建消费者实例切片
 	createConsumers := make([]*UserConsumer, consumerCount)
 	updateConsumers := make([]*UserConsumer, consumerCount)
 	deleteConsumers := make([]*UserConsumer, consumerCount)
+	retryConsumers := make([]*RetryConsumer, retryconsumerCount)
 
 	for i := 0; i < consumerCount; i++ {
 		// 所有实例使用相同的消费组ID（不加后缀）
-		createGroupID := consumerGroupPrefix + "-create" // 相同的组ID
-		updateGroupID := consumerGroupPrefix + "-update" // 相同的组ID
-		deleteGroupID := consumerGroupPrefix + "-delete" // 相同的组ID
+		createGroupID := ConsumerGroupPrefix + "-create" // 相同的组ID
+		updateGroupID := ConsumerGroupPrefix + "-update" // 相同的组ID
+		deleteGroupID := ConsumerGroupPrefix + "-delete" // 相同的组ID
 
 		// 创建消费者实例 - 使用相同的消费组ID
 		createConsumers[i] = NewUserConsumer(kafkaOpts.Brokers, UserCreateTopic,
@@ -407,17 +389,20 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	}
 
 	log.Info("初始化重试消费者...")
-	retryConsumer := NewRetryConsumer(db, g.redis, userProducer, kafkaOpts)
 
+	retryGroupId := ConsumerGroupPrefix + "-retry"
+	for i := 0; i < kafkaOpts.RetryWorkerCount; i++ {
+		retryConsumers[i] = NewRetryConsumer(db, g.redis, userProducer, kafkaOpts, UserRetryTopic, retryGroupId)
+	}
 	// 3. 赋值到服务器实例
 	g.producer = userProducer
 	g.createConsumer = createConsumers[0] // 保持兼容，使用第一个实例
 	g.updateConsumer = updateConsumers[0] // 保持兼容，使用第一个实例
 	g.deleteConsumer = deleteConsumers[0] // 保持兼容，使用第一个实例
-	g.retryConsumer = retryConsumer
+	g.retryConsumer = retryConsumers[0]
 
 	// 5. 存储所有消费者实例（新增字段）
-	g.setConsumerInstances(createConsumers, updateConsumers, deleteConsumers)
+	g.setConsumerInstances(createConsumers, updateConsumers, deleteConsumers, retryConsumers)
 
 	log.Infof("✅ Kafka组件初始化完成，配置: 重试%d次, Worker%d个, 批量%d, 超时%v",
 		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount, kafkaOpts.BatchSize, kafkaOpts.BatchTimeout)
@@ -761,14 +746,17 @@ type consumerInstances struct {
 	createConsumers []*UserConsumer
 	updateConsumers []*UserConsumer
 	deleteConsumers []*UserConsumer
+	retryConsumers  []*RetryConsumer
 }
 
 var consumerInstancesStore = &consumerInstances{}
 
-func (g *GenericAPIServer) setConsumerInstances(create, update, delete []*UserConsumer) {
+func (g *GenericAPIServer) setConsumerInstances(create, update, delete []*UserConsumer, retry []*RetryConsumer) {
 	consumerInstancesStore.createConsumers = create
 	consumerInstancesStore.updateConsumers = update
 	consumerInstancesStore.deleteConsumers = delete
+	consumerInstancesStore.retryConsumers = retry
+
 }
 
 func (g *GenericAPIServer) getConsumerInstances() *consumerInstances {
@@ -812,29 +800,6 @@ func initializeGaleraCluster(datastore *store.Datastore) error {
 	}
 
 	log.Warn("⚠️  Galera集群部分节点不可用，但服务将继续启动")
-	return nil
-}
-
-// ensureKafkaTopics 确保所有需要的Kafka topic都存在且分区数正确
-func (g *GenericAPIServer) ensureKafkaTopics() error {
-	kafkaOpts := g.options.KafkaOptions
-
-	// 定义需要管理的topic列表
-	topics := []string{
-		UserCreateTopic,
-		UserUpdateTopic,
-		UserDeleteTopic,
-		UserRetryTopic,
-		UserDeadLetterTopic,
-	}
-
-	for _, topic := range topics {
-		if err := g.ensureTopicPartitions(topic, kafkaOpts.DesiredPartitions); err != nil {
-			log.Warnf("Topic %s 分区管理失败: %v", topic, err)
-			// 不阻断启动，只记录警告
-		}
-	}
-
 	return nil
 }
 

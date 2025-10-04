@@ -16,8 +16,10 @@ import (
 )
 
 func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
-	cacheKey := u.generateUserCacheKey(username)
 
+	log.Info("service:开始处理用户查询请求...")
+
+	cacheKey := u.generateUserCacheKey(username)
 	// 先尝试无锁查询缓存（大部分请求应该在这里返回）
 	user, found, err := u.tryGetFromCache(ctx, cacheKey)
 	if err != nil {
@@ -36,7 +38,7 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 		return u.getUserFromDBAndSetCache(ctx, username, cacheKey)
 	})
 	if shared {
-		log.Infow("数据库查询被合并，共享结果", "username", username)
+		log.Debugf("数据库查询被合并，共享结果", "username", username)
 		metrics.RequestsMerged.WithLabelValues("get").Inc()
 	}
 	if err != nil {

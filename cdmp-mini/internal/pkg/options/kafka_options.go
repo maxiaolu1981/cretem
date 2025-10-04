@@ -44,6 +44,8 @@ type KafkaOptions struct {
 	// 消费者worker数量
 	WorkerCount int `json:"workerCount" mapstructure:"workerCount" validate:"min=1"`
 
+	RetryWorkerCount int `json:"retryWorkerCount" mapstructure:"retryWorkerCount" validate:"min=1"`
+
 	// 是否启用SSL
 	EnableSSL bool `json:"enableSSL" mapstructure:"enableSSL"`
 
@@ -66,14 +68,15 @@ func NewKafkaOptions() *KafkaOptions {
 		Async:                true,
 		BatchSize:            100,
 		BatchTimeout:         100 * time.Millisecond,
-		MaxRetries:           6,
+		MaxRetries:           4,
 		MinBytes:             50 * 1024,        // 10KB
 		MaxBytes:             10 * 1024 * 1024, // 10MB
 		WorkerCount:          16,
+		RetryWorkerCount:     3,
 		EnableSSL:            false,
 		SSLCertFile:          "",
-		BaseRetryDelay:       10 * time.Second,
-		MaxRetryDelay:        5 * time.Minute,
+		BaseRetryDelay:       5 * time.Second,
+		MaxRetryDelay:        2 * time.Minute,
 		AutoCreateTopic:      true,
 		DesiredPartitions:    48, // 期望的分区数
 		AutoExpandPartitions: true,

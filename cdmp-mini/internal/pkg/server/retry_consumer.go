@@ -30,21 +30,22 @@ type RetryConsumer struct {
 	kafkaOptions *options.KafkaOptions
 }
 
-func NewRetryConsumer(db *gorm.DB, redis *storage.RedisCluster, producer *UserProducer, kafkaOptions *options.KafkaOptions) *RetryConsumer {
+func NewRetryConsumer(db *gorm.DB, redis *storage.RedisCluster, producer *UserProducer, kafkaOptions *options.KafkaOptions, topic, groupid string) *RetryConsumer {
 	return &RetryConsumer{
 		reader: kafka.NewReader(kafka.ReaderConfig{
 			Brokers:        kafkaOptions.Brokers,
-			Topic:          UserRetryTopic,
-			GroupID:        "user-retry-group",
+			Topic:          topic,
+			GroupID:        groupid,
 			MinBytes:       10e3,
 			MaxBytes:       10e6,
 			CommitInterval: 2 * time.Second,
 			StartOffset:    kafka.FirstOffset,
 		}),
-		db:         db,
-		redis:      redis,
-		producer:   producer,
-		maxRetries: kafkaOptions.MaxRetries,
+		db:           db,
+		redis:        redis,
+		producer:     producer,
+		maxRetries:   kafkaOptions.MaxRetries,
+		kafkaOptions: kafkaOptions,
 	}
 }
 
@@ -75,11 +76,26 @@ func (rc *RetryConsumer) StartConsuming(ctx context.Context, workerCount int) {
 func (rc *RetryConsumer) retryWorker(ctx context.Context, workerID int) {
 	log.Infof("启动重试消费者Worker %d", workerID)
 
+	// 添加健康检查计数器
+	healthCheckTicker := time.NewTicker(30 * time.Second)
+	defer healthCheckTicker.Stop()
+
 	for {
 		select {
 		case <-ctx.Done():
 			log.Infof("重试Worker %d: 停止消费", workerID)
 			return
+		case <-healthCheckTicker.C:
+			stats := rc.reader.Stats()
+			log.Infof("Worker %d: 消费者状态 - Lag: %d, 错误数: %d", workerID, stats.Lag, stats.Errors)
+
+			// 添加告警
+			if stats.Lag > 1000 {
+				log.Errorf("Worker %d: 消费延迟过高! Lag: %d", workerID, stats.Lag)
+			}
+			if stats.Errors > 10 {
+				log.Errorf("Worker %d: 错误数过多! Errors: %d", workerID, stats.Errors)
+			}
 		default:
 			msg, err := rc.reader.FetchMessage(ctx)
 			if err != nil {
@@ -166,9 +182,6 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 
 	currentRetryCount, nextRetryTime, lastError := rc.parseRetryHeaders(msg.Headers)
 
-	log.Infof("处理重试创建: username=%s, 重试次数=%d, 上次错误=%s",
-		user.Name, currentRetryCount, lastError)
-
 	if currentRetryCount >= rc.maxRetries {
 		log.Warnf("创建消息达到最大重试次数(%d), 发送到死信队列: username=%s",
 			rc.maxRetries, user.Name)
@@ -186,24 +199,12 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 		}
 	}
 
-	log.Infof("开始第%d次重试创建: username=%s", currentRetryCount+1, user.Name)
-
-	// exists, err := rc.checkUserExists(ctx, user.Name)
-	// if err != nil {
-	// 	return rc.handleProcessingError(ctx, msg, currentRetryCount, "检查用户存在性失败: "+err.Error())
-	// }
-	// if exists {
-	// 	log.Debugf("用户已存在，重试创建成功: username=%s", user.Name)
-	// 	return nil
-	// }
-
 	if err := rc.createUserInDB(ctx, &user); err != nil {
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "检查用户存在性失败: "+err.Error())
 	}
 
 	rc.setUserCache(ctx, &user)
 
-	log.Infof("第%d次重试创建成功: username=%s", currentRetryCount+1, user.Name)
 	return nil
 }
 
@@ -215,8 +216,6 @@ func (rc *RetryConsumer) processRetryUpdate(ctx context.Context, msg kafka.Messa
 
 	currentRetryCount, nextRetryTime, lastError := rc.parseRetryHeaders(msg.Headers)
 
-	log.Infof("处理重试更新: username=%s, 重试次数=%d", user.Name, currentRetryCount)
-
 	if currentRetryCount >= rc.maxRetries {
 		return rc.producer.SendToDeadLetterTopic(ctx, msg,
 			fmt.Sprintf("MAX_RETRIES_EXCEEDED(%d): %s", rc.maxRetries, lastError))
@@ -226,21 +225,12 @@ func (rc *RetryConsumer) processRetryUpdate(ctx context.Context, msg kafka.Messa
 		time.Sleep(time.Until(nextRetryTime))
 	}
 
-	exists, err := rc.checkUserExists(ctx, user.Name)
-	if err != nil {
-		return rc.handleProcessingError(ctx, msg, currentRetryCount, "错误信息: "+err.Error())
-	}
-	if !exists {
-		return rc.producer.SendToDeadLetterTopic(ctx, msg, "USER_NOT_EXISTS_FOR_UPDATE")
-	}
-
 	if err := rc.updateUserInDB(ctx, &user); err != nil {
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "错误信息: "+err.Error())
 	}
 
 	rc.setUserCache(ctx, &user)
 
-	log.Infof("第%d次重试更新成功: username=%s", currentRetryCount+1, user.Name)
 	return nil
 }
 
@@ -258,63 +248,107 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 
 	currentRetryCount, nextRetryTime, lastError := rc.parseRetryHeaders(msg.Headers)
 
-	log.Infof("处理重试删除: username=%s, 重试次数=%d", deleteRequest.Username, currentRetryCount)
-
 	if currentRetryCount >= rc.maxRetries {
 		return rc.producer.SendToDeadLetterTopic(ctx, msg,
 			fmt.Sprintf("MAX_RETRIES_EXCEEDED(%d): %s", rc.maxRetries, lastError))
 	}
 
+	// 🔴 优化：如果重试时间未到，直接重新入队而不是阻塞
 	if time.Now().Before(nextRetryTime) {
-		time.Sleep(time.Until(nextRetryTime))
-	}
-
-	exists, err := rc.checkUserExists(ctx, deleteRequest.Username)
-	if err != nil {
-		return rc.handleProcessingError(ctx, msg, currentRetryCount, "错误信息: "+err.Error())
-	}
-	if !exists {
-		log.Debugf("用户已不存在，重试删除成功: username=%s", deleteRequest.Username)
-		return nil
+		log.Debugf("重试时间未到，重新入队等待: username=%s, delay=%v",
+			deleteRequest.Username, time.Until(nextRetryTime))
+		return rc.prepareNextRetry(ctx, msg, currentRetryCount, lastError)
 	}
 
 	if err := rc.deleteUserFromDB(ctx, deleteRequest.Username); err != nil {
+		// 检查是否为可忽略的错误
+		if rc.isIgnorableDeleteError(err) {
+			log.Warnf("删除操作遇到可忽略错误，直接提交: username=%s, error=%v",
+				deleteRequest.Username, err)
+			rc.deleteUserCache(ctx, deleteRequest.Username)
+			return nil
+		}
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "错误信息: "+err.Error())
 	}
 
 	if err := rc.deleteUserCache(ctx, deleteRequest.Username); err != nil {
 		log.Errorw("重试删除成功但缓存删除失败", "username", deleteRequest.Username, "error", err)
 	}
-
-	// 布隆过滤器不支持删除操作
-	log.Debugf("重试删除成功，布隆过滤器需要等待重建: username=%s", deleteRequest.Username)
-
-	log.Infof("第%d次重试删除成功: username=%s", currentRetryCount+1, deleteRequest.Username)
 	return nil
+}
+
+// 新增：判断是否为可忽略的删除错误
+func (rc *RetryConsumer) isIgnorableDeleteError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+	ignorableErrors := []string{
+		"definer",          // DEFINER权限错误
+		"does not exist",   // 数据不存在
+		"not found",        // 数据不存在
+		"record not found", // 数据不存在
+		"duplicate entry",  // 重复数据
+		"1062",             // MySQL重复键
+	}
+
+	lowerError := strings.ToLower(errStr)
+	for _, ignorableError := range ignorableErrors {
+		if strings.Contains(lowerError, ignorableError) {
+			return true
+		}
+	}
+	return false
 }
 
 // handleProcessingError 处理错误，决定是重试还是进入死信队列
 func (rc *RetryConsumer) handleProcessingError(ctx context.Context, msg kafka.Message, currentRetryCount int, errorInfo string) error {
-	// 如果是致命错误，直接进入死信队列
+	// 1. 可以直接忽略的错误 - 直接提交
+	if shouldIgnoreError(errorInfo) {
+		log.Warnf("忽略错误，直接提交消息: %s", errorInfo)
+		return nil // 直接返回nil，外层会提交偏移量
+	}
+
+	// 2. 需要人工干预的错误 - 发送到死信队列
 	if shouldGoToDeadLetterImmediately(errorInfo) {
-		log.Warnf("致命错误，直接进入死信队列: %s", errorInfo)
+		log.Warnf("致命错误，发送到死信队列: %s", errorInfo)
 		return rc.producer.SendToDeadLetterTopic(ctx, msg, "FATAL_ERROR: "+errorInfo)
 	}
 
-	// 否则进行智能重试
+	// 3. 可以重试的错误 - 准备下次重试
 	return rc.prepareNextRetry(ctx, msg, currentRetryCount, errorInfo)
 }
 
-// shouldGoToDeadLetterImmediately 判断是否应该直接进入死信队列
+// shouldIgnoreError 判断是否可以直接忽略的错误
+func shouldIgnoreError(errorInfo string) bool {
+	ignorableErrors := []string{
+		"definer",            // DEFINER权限错误
+		"does not exist",     // 数据不存在
+		"not found",          // 数据不存在
+		"record not found",   // 数据不存在
+		"duplicate entry",    // 重复数据（幂等性）
+		"user already exist", // 用户已存在
+		"1062",               // MySQL重复键错误
+	}
+
+	lowerError := strings.ToLower(errorInfo)
+	for _, ignorableError := range ignorableErrors {
+		if strings.Contains(lowerError, ignorableError) {
+			return true
+		}
+	}
+	return false
+}
+
+// 更新 shouldGoToDeadLetterImmediately，移除已归类到忽略的错误
 func shouldGoToDeadLetterImmediately(errorInfo string) bool {
-	// 这些错误不需要重试，直接进入死信队列
 	fatalErrors := []string{
-		"invalid json",
-		"unknown operation",
-		"permission denied",
-		"not found",
-		"invalid format",
-		"poison message",
+		"invalid json",      // 消息格式错误
+		"unmarshal error",   // 反序列化错误
+		"unknown operation", // 未知操作类型
+		"poison message",    // 毒药消息
+		"permission denied", // 真正的权限错误（不是DEFINER）
 	}
 
 	lowerError := strings.ToLower(errorInfo)
@@ -326,10 +360,12 @@ func shouldGoToDeadLetterImmediately(errorInfo string) bool {
 	return false
 }
 
-// 优化后的prepareNextRetry方法
 func (rc *RetryConsumer) prepareNextRetry(ctx context.Context, msg kafka.Message, currentRetryCount int, errorInfo string) error {
-	log.Debugf("开始处理消息: key=%s, headers=%v", string(msg.Key), msg.Headers)
-	log.Debugf("原始消息Headers:")
+	// 确保 currentRetryCount 不会导致负数位移
+	if currentRetryCount < 0 {
+		currentRetryCount = 0
+	}
+
 	newRetryCount := currentRetryCount + 1
 
 	// 检查是否达到最大重试次数
@@ -340,40 +376,40 @@ func (rc *RetryConsumer) prepareNextRetry(ctx context.Context, msg kafka.Message
 	}
 
 	// 根据错误类型决定重试策略
-	var nextRetryDelay time.Duration // 下一次重试要等多久
-	var retryStrategy string         // 记录用了什么策略（方便日志/监控）
+	var nextRetryDelay time.Duration
+	var retryStrategy string
 
 	switch {
 	case isDBConnectionError(errorInfo):
-		// 数据库连接问题：指数退避 + 随机抖动
-		// 策略：指数退避+随机抖动（失败次数越多，等越久，且加随机值避免“重试风暴”）
-		// 2^current * 基础延迟（如基础1秒，第1次2秒，第2次4秒...）
-		baseDelay := time.Duration(1<<currentRetryCount) * rc.kafkaOptions.BaseRetryDelay
-		// 加0~50%的随机延迟（比如4秒基础延迟，加0~2秒随机值）
-		jitter := time.Duration(rand.Int63n(int64(baseDelay / 2))) // 最多50%的抖动
+		// 安全的指数退避计算
+		baseDelay := rc.kafkaOptions.BaseRetryDelay
+		if currentRetryCount > 0 {
+			baseDelay = rc.kafkaOptions.BaseRetryDelay * time.Duration(1<<(currentRetryCount-1))
+		}
+		jitter := time.Duration(rand.Int63n(int64(baseDelay / 2)))
 		nextRetryDelay = baseDelay + jitter
 		retryStrategy = "指数退避(连接问题)"
-		// 情况2：数据库死锁（瞬时冲突，很快恢复）
+
 	case isDBDeadlockError(errorInfo):
-		// 死锁问题：快速重试，短延迟
-		// 策略：快速重试（100ms后就试，死锁通常是临时的）
 		nextRetryDelay = 100 * time.Millisecond
 		retryStrategy = "快速重试(死锁)"
-		// 情况3：重复键错误（如唯一索引冲突，可能是并发导致）
+
 	case isDuplicateKeyError(errorInfo):
-		// 重复键错误：可能是幂等问题，中等延迟
 		nextRetryDelay = 2 * time.Second
 		retryStrategy = "中等延迟(重复键)"
-		// 情况4：其他临时错误（如资源暂时耗尽
+
 	case isTemporaryError(errorInfo):
-		// 临时性错误：线性增长
-		// 策略：线性增长（第1次1秒，第2次2秒...比指数平缓）
+		// 线性增长：n * baseDelay
 		nextRetryDelay = time.Duration(currentRetryCount+1) * rc.kafkaOptions.BaseRetryDelay
 		retryStrategy = "线性增长(临时错误)"
 
 	default:
-		// 其他错误：默认指数退避
-		nextRetryDelay = time.Duration(1<<currentRetryCount) * rc.kafkaOptions.BaseRetryDelay
+		// 默认指数退避 - 确保不会负数位移
+		baseDelay := rc.kafkaOptions.BaseRetryDelay
+		if currentRetryCount > 0 {
+			baseDelay = rc.kafkaOptions.BaseRetryDelay * time.Duration(1<<(currentRetryCount-1))
+		}
+		nextRetryDelay = baseDelay
 		retryStrategy = "指数退避(默认)"
 	}
 
@@ -387,22 +423,13 @@ func (rc *RetryConsumer) prepareNextRetry(ctx context.Context, msg kafka.Message
 	// 创建新的headers数组
 	newHeaders := make([]kafka.Header, len(msg.Headers))
 	copy(newHeaders, msg.Headers)
-	// 调试：打印复制后的headers
-	log.Debugf("复制后的Headers:")
-	for i, header := range newHeaders {
-		log.Debugf("  [%d] %s: %s", i, header.Key, string(header.Value))
-	}
 
 	// 更新重试相关的headers
 	newHeaders = rc.updateOrAddHeader(newHeaders, HeaderRetryCount, strconv.Itoa(newRetryCount))
 	newHeaders = rc.updateOrAddHeader(newHeaders, HeaderNextRetryTS, nextRetryTime.Format(time.RFC3339))
 	newHeaders = rc.updateOrAddHeader(newHeaders, HeaderRetryError, errorInfo)
 	newHeaders = rc.updateOrAddHeader(newHeaders, "retry-strategy", retryStrategy)
-	// 调试：打印最终headers
-	log.Debugf("最终Headers:")
-	for i, header := range newHeaders {
-		log.Debugf("  [%d] %s: %s", i, header.Key, string(header.Value))
-	}
+
 	// 创建重试消息
 	retryMsg := kafka.Message{
 		Key:     msg.Key,
@@ -465,16 +492,8 @@ func (rc *RetryConsumer) updateUserInDB(ctx context.Context, user *v1.User) erro
 
 func (rc *RetryConsumer) deleteUserFromDB(ctx context.Context, username string) error {
 	return rc.db.WithContext(ctx).
-		Where("name = ?", username).
+		Where("name = ? and status = 1", username).
 		Delete(&v1.User{}).Error
-}
-
-func (rc *RetryConsumer) checkUserExists(ctx context.Context, username string) (bool, error) {
-	var count int64
-	err := rc.db.WithContext(ctx).Model(&v1.User{}).
-		Where("name = ?", username).
-		Count(&count).Error
-	return count > 0, err
 }
 
 func (rc *RetryConsumer) setUserCache(ctx context.Context, user *v1.User) error {
@@ -503,32 +522,7 @@ func (rc *RetryConsumer) deleteUserCache(ctx context.Context, username string) e
 	return err
 }
 
-// updateOrAddHeader 更新或添加header
-// updateOrAddHeader 安全地更新或添加Kafka消息头（忽略Key的大小写，不修改原始切片）
-// 参数：
-//
-//	headers: 原始消息头切片（可为nil或空）
-//	key:     要操作的消息头键（不可为空字符串，忽略大小写，如"Retry-Count"和"retry-count"视为同一键）
-//	value:   要设置的消息头值（可为空字符串，会转为[]byte存储）
-//
-// 返回值：
-//
-//	新的消息头切片（与原始切片完全独立）
-
-// updateOrAddHeader 安全更新/添加Kafka消息头（核心特性：1.忽略Key大小写 2.只保留一个目标头 3.不修改原始切片）
-// 参数：
-//
-//	headers: 原始消息头切片（可为nil/空，自动兼容）
-//	key:     目标头Key（不可为空，匹配时忽略大小写，如"Retry-Error"与"retry-error"视为同一Key）
-//	value:   目标头最新Value（可为空，自动转为[]byte）
-//
-// 返回值：
-//
-//	新消息头切片（与原始切片完全独立，仅含一个目标头，其余非目标头保持不变）
-//
-// 异常：
-//
-//	若key为空字符串，直接panic（空Key无业务意义，会导致头逻辑混乱）
+// 若key为空字符串，直接panic（空Key无业务意义，会导致头逻辑混乱）
 func (rc *RetryConsumer) updateOrAddHeader(headers []kafka.Header, key, value string) []kafka.Header {
 	// 1. 基础校验：阻断空Key输入（避免无效头）
 	if key == "" {

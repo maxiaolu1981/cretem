@@ -6,6 +6,7 @@ import (
 
 	"github.com/bytedance/gopkg/util/logger"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/db"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -15,6 +16,7 @@ import (
 func (u *Users) Get(ctx context.Context, username string,
 	opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
 
+	log.Info("store:开始处理用户创建请求...")
 	// 设置包含重试时间预算的超时上下文
 	totalCtx, cancel := u.createTimeoutContext(ctx, opt.ServerRunOptions.CtxTimeout, 3)
 	defer cancel()
@@ -47,5 +49,6 @@ func (u *Users) Get(ctx context.Context, username string,
 	if err != nil {
 		return nil, u.handleGetError(err)
 	}
+	log.Debugf("查询用户%s成功", username)
 	return resultUser, nil
 }

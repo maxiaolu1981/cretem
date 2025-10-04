@@ -42,7 +42,7 @@ func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis
 			QueueCapacity: 100,                    // 降低队列容量，避免消息堆积在内存
 
 			CommitInterval: 0,
-			StartOffset:    kafka.LastOffset,
+			StartOffset:    kafka.FirstOffset,
 
 			// 添加重试配置
 			MaxAttempts:    3,
@@ -219,7 +219,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
 		// 缓存失败不影响主流程，不返回错误
 	} else {
-		log.Infof("用户%s缓存成功", user.Name)
+		log.Debugf("用户%s缓存成功", user.Name)
 	}
 
 	log.Infof("用户创建成功: username=%s", user.Name)
@@ -289,7 +289,7 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error 
 
 func (c *UserConsumer) deleteUserFromDB(ctx context.Context, username string) error {
 	if err := c.db.WithContext(ctx).
-		Where("name = ? and state = 1", username).
+		Where("name = ? and status = 1", username).
 		Delete(&v1.User{}).Error; err != nil {
 		return err
 	}
@@ -318,26 +318,28 @@ func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Me
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
-		log.Info("开始根据消息处理业务......")
+		log.Debugf("开始第%d次处理消息", attempt)
 		err := c.processMessage(ctx, msg)
 		if err == nil {
+			log.Debugf("第%d次处理成功", attempt)
 			return nil // 处理成功,跳出循环
 		}
 
 		lastErr = err
 
-		// 检查是否应该重试
+		// 检查错误类型
 		if !shouldRetry(err) {
-			log.Warn("用户名重复: %v")
-			return nil // 死信发送成功，认为处理完成
+			log.Info("用户名重复")
+			return nil //认为处理完成
 		}
 
 		// 可重试错误：记录日志并等待重试
 		log.Warnf("消息处理失败，准备重试 (尝试 %d/%d): %v", attempt, maxRetries, err)
 
 		if attempt < maxRetries {
-			// 指数退避
-			backoff := time.Second * time.Duration(1<<uint(attempt-1))
+			// 指数退避，但有上限
+			backoff := c.calculateBackoff(attempt)
+			log.Debugf("等待 %v 后进行第%d次重试", backoff, attempt+1)
 			select {
 			case <-time.After(backoff):
 				// 继续重试
@@ -358,16 +360,31 @@ func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Me
 	return nil // 重试主题发送成功，认为处理完成
 }
 
+// calculateBackoff 计算指数退避延迟时间
+func (c *UserConsumer) calculateBackoff(attempt int) time.Duration {
+	maxBackoff := 30 * time.Second
+	minBackoff := 1 * time.Second
+
+	// 指数退避公式：base * 2^(attempt-1)
+	backoff := minBackoff * time.Duration(1<<uint(attempt-1))
+
+	// 限制最大延迟
+	if backoff > maxBackoff {
+		return maxBackoff
+	}
+	return backoff
+}
+
 // 记录消费信息
 func (c *UserConsumer) recordConsumerMetrics(operation, messageKey string, processStart time.Time, processingErr error, workerID int) {
 	processingDuration := time.Since(processStart).Seconds()
 
 	// 添加详细的处理时间日志
 	if processingErr != nil {
-		log.Debugf("Worker %d 业务处理失败: topic=%s, key=%s, operation=%s, 处理耗时=%.3fs, 错误=%v",
+		log.Errorf("Worker %d 业务处理失败: topic=%s, key=%s, operation=%s, 处理耗时=%.3fs, 错误=%v",
 			workerID, c.topic, messageKey, operation, processingDuration, processingErr)
 	} else {
-		log.Infof("Worker %d 业务处理成功: topic=%s, operation=%s, 耗时=%.3fs",
+		log.Debugf("Worker %d 业务处理成功: topic=%s, operation=%s, 耗时=%.3fs",
 			workerID, c.topic, operation, processingDuration)
 	}
 
@@ -481,8 +498,11 @@ func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) err
 	return nil
 }
 
+// 发送到重试主题
 func (c *UserConsumer) sendToRetry(ctx context.Context, msg kafka.Message, errorInfo string) error {
+
 	operation := c.getOperationFromHeaders(msg.Headers)
+
 	errorType := getErrorType(fmt.Errorf("%s", errorInfo))
 	// 记录重试指标
 	metrics.ConsumerRetryMessages.WithLabelValues(c.topic, c.groupID, operation, errorType).Inc()

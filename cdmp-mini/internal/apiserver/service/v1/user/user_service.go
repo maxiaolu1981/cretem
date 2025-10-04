@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"time"
 
+	"github.com/bytedance/gopkg/util/logger"
 	"github.com/go-redis/redis/v8"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
@@ -69,7 +70,7 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 	if err != nil {
 		operationErr = err
 		if errors.Is(err, redis.Nil) {
-			log.Infof("未进行缓存缓 key=%s", cacheKey)
+			log.Debugf("未进行缓存缓 key=%s", cacheKey)
 			return nil, false, nil
 		}
 		log.Errorf("redis服务失败: key=%s, err=%v", cacheKey, err)
@@ -82,7 +83,7 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 	}
 	//查找到防穿透记录
 	if data == RATE_LIMIT_PREVENTION {
-		log.Infof("空值缓存命中: key=%s", cacheKey)
+		log.Debugf("空值缓存命中: key=%s", cacheKey)
 		user.Name = RATE_LIMIT_PREVENTION
 		user.Status = -1
 		cacheHit = true
@@ -104,7 +105,6 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 
 // getUserFromDBAndSetCache 带缓存的用户查询核心逻辑
 func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, cacheKey string) (*v1.User, error) {
-	logger := log.L(ctx).WithValues("operation", "getUserWithCache")
 
 	// 1. 查询数据库
 	user, err := u.Store.Users().Get(ctx, username, metav1.GetOptions{}, u.Options)
@@ -113,10 +113,10 @@ func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, ca
 			metrics.DBQueries.WithLabelValues("not_found").Inc()
 			// 用户不存在，缓存空值（防止缓存击穿）
 			if err := u.cacheNullValue(cacheKey); err != nil {
-				logger.Errorf("缓存设置失败", "error", err.Error())
+				log.Errorf("缓存设置失败", "error", err.Error())
 			}
 
-			log.Infof("设置用户%s缓存成功", username)
+			log.Debugf("设置用户%s缓存成功", username)
 			return &v1.User{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: RATE_LIMIT_PREVENTION, // 直接赋值
@@ -129,7 +129,7 @@ func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, ca
 	//写入缓存（带随机过期时间防雪崩）
 	u.setUserCache(ctx, cacheKey, user)
 
-	logger.Infof("为用户%s设置缓存成功", username)
+	logger.Debugf("为用户%s设置缓存成功", username)
 	return user, nil
 }
 

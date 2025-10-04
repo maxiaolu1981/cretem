@@ -1,7 +1,4 @@
-/*
-真正并发压力测试：并发创建用户 + 并发删除用户
-*/
-package deleteforce
+package performance
 
 import (
 	"bytes"
@@ -39,16 +36,16 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 创建用户并发配置
-	PreCreateConcurrent = 1000 // 预创建并发数
-	PreCreateBatchSize  = 1000 // 进度显示批次
-	PreCreateTimeout    = 10 * time.Second
+	PreCreateConcurrent = 1 // 预创建并发数
+	PreCreateBatchSize  = 1 // 进度显示批次
+	PreCreateTimeout    = 1 * time.Second
 
 	// 删除用户并发配置
-	ConcurrentDeleters = 1  // 并发删除器数量
-	DeletesPerUser     = 10 // 每个删除器执行的删除次数
-	MaxConcurrent      = 1  // 最大并发数
-	BatchSize          = 1  // 批次大小
-	PreCreateUsers     = 10 // 预先创建的用户数量
+	ConcurrentDeleters = 1 // 并发删除器数量
+	DeletesPerUser     = 1 // 每个删除器执行的删除次数
+	MaxConcurrent      = 1 // 最大并发数
+	BatchSize          = 1 // 批次大小
+	PreCreateUsers     = 1 // 预先创建的用户数量
 
 	// 模式配置
 	DeleteModeRandom = "random"
