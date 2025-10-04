@@ -62,6 +62,7 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 		RequiredAcks:    kafka.RequireAll,
 		Async:           false,
 		Compression:     kafka.Snappy,
+		Balancer:        &kafka.Hash{}, // 新增：使用Hash平衡器确保分区均匀分布
 	}
 
 	return &UserProducer{
@@ -239,6 +240,7 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 		Key:   msg.Key,
 		Value: msg.Value,
 		Time:  time.Now(),
+		Topic: UserRetryTopic,
 	}
 
 	// 复制并更新headers
@@ -395,7 +397,7 @@ func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Messa
 		writer := &kafka.Writer{
 			Addr:                   kafka.TCP(KafkaBrokers...),
 			Topic:                  topic,
-			Balancer:               &kafka.LeastBytes{},
+			Balancer:               &kafka.Hash{},
 			BatchSize:              1, // 同步发送，每批次1条
 			BatchTimeout:           100 * time.Millisecond,
 			Async:                  false,            // 同步模式
@@ -403,11 +405,20 @@ func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Messa
 			AllowAutoTopicCreation: true,             // 允许自动创建主题
 		}
 
+		// 确保消息有Topic
+		sendMsg := kafka.Message{
+			Key:     msg.Key, // ✅ 有Key才能均匀分区
+			Value:   msg.Value,
+			Time:    msg.Time,
+			Headers: msg.Headers,
+			Topic:   topic, // ✅ 确保设置topic
+		}
+
 		// 设置发送超时
 		sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		err := writer.WriteMessages(sendCtx, msg)
+		err := writer.WriteMessages(sendCtx, sendMsg)
 
 		// 无论成功失败都立即关闭writer
 		if closeErr := writer.Close(); closeErr != nil {

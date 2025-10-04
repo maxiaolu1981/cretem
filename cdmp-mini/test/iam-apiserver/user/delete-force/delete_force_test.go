@@ -36,19 +36,16 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 创建用户并发配置
-	PreCreateConcurrent = 1 // 预创建并发数
-	PreCreateBatchSize  = 1 // 进度显示批次
-	PreCreateTimeout    = 1 * time.Second
+	PreCreateUsers      = 100000 // 预先创建的用户数量
+	PreCreateConcurrent = 1000   // 预创建并发数
+	PreCreateBatchSize  = 1000   // 进度显示批次
+	PreCreateTimeout    = 10 * time.Second
 
 	// 删除用户并发配置
-	ConcurrentDeleters = 1 // 并发删除器数量
-	DeletesPerUser     = 1 // 每个删除器执行的删除次数
-	MaxConcurrent      = 1 // 最大并发数
-	BatchSize          = 1 // 批次大小
-	PreCreateUsers     = 1 // 预先创建的用户数量
-
-	// 模式配置
-	DeleteModeRandom = "random"
+	ConcurrentDeleters = 250  // 并发删除器数量
+	DeletesPerUser     = 400  // 每个删除器执行的删除次数
+	MaxConcurrent      = 25   // 最大并发数
+	BatchSize          = 1000 // 批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -138,6 +135,9 @@ var (
 	availableUsers  []string
 	usersMutex      sync.RWMutex
 	usernameCounter int64
+
+	// 测试运行控制
+	testRunID = fmt.Sprintf("run_%d", time.Now().UnixNano()) // 唯一测试ID
 )
 
 // ==================== 主测试函数 ====================
@@ -148,6 +148,10 @@ func TestUserForceDelete_RealConcurrent(t *testing.T) {
 
 	width := getTerminalWidth()
 	printHeader("🚀 开始并发创建+删除用户压力测试", width)
+	fmt.Printf("📝 测试运行ID: %s\n", testRunID)
+
+	// 0. 清理旧的测试数据
+	cleanupOldTestData()
 
 	// 1. 获取认证Token
 	fmt.Printf("🔑 获取认证Token...\n")
@@ -181,10 +185,9 @@ func TestUserForceDelete_RealConcurrent(t *testing.T) {
 	fmt.Printf("  ├─ 每删除器操作数: %d\n", DeletesPerUser)
 	fmt.Printf("  ├─ 总删除操作数: %d\n", totalExpectedDeletes)
 	fmt.Printf("  ├─ 预创建用户数: %d\n", PreCreateUsers)
-	fmt.Printf("  ├─ 实际成功创建: %d\n", createSuccessCount)
-	fmt.Printf("  ├─ 创建失败数: %d\n", createFailCount)
+	fmt.Printf("  ├─ 实际成功创建: %d\n", atomic.LoadInt64(&createSuccessCount))
+	fmt.Printf("  ├─ 创建失败数: %d\n", atomic.LoadInt64(&createFailCount))
 	fmt.Printf("  ├─ 创建耗时: %v\n", createDuration.Round(time.Millisecond))
-	fmt.Printf("  ├─ 删除模式: %s\n", DeleteModeRandom)
 	fmt.Printf("  ├─ 最大并发数: %d\n", MaxConcurrent)
 	fmt.Printf("  └─ 使用Token认证: 是\n")
 	fmt.Printf("%s\n", strings.Repeat("─", width))
@@ -206,6 +209,21 @@ func TestUserForceDelete_RealConcurrent(t *testing.T) {
 	validateResults(width)
 }
 
+// 清理旧的测试数据
+func cleanupOldTestData() {
+	fmt.Printf("🧹 清理旧的测试数据...\n")
+
+	_, err := getAuthTokenWithDebug()
+	if err != nil {
+		fmt.Printf("⚠️  获取清理Token失败: %v\n", err)
+		return
+	}
+
+	// 这里可以调用批量删除API或者直接数据库清理
+	// 暂时先记录日志，手动清理
+	fmt.Printf("💡 请手动执行: DELETE FROM user WHERE name LIKE 'test  AND name NOT LIKE '%s%%';\n", testRunID)
+}
+
 // ==================== 并发预创建用户 ====================
 func preCreateTestUsersConcurrent(token string, count int) error {
 	availableUsers = make([]string, 0, count)
@@ -222,10 +240,7 @@ func preCreateTestUsersConcurrent(token string, count int) error {
 		concurrentCreators = count
 	}
 
-	// ✅ 移除未使用的 semaphore 和 wg 变量声明
-
 	var mutex sync.Mutex
-
 	successCount := int32(0)
 	failedCount := int32(0)
 
@@ -338,7 +353,7 @@ func createSingleUser(workerID int, token string, index int, mutex *sync.Mutex) 
 
 	if resp.StatusCode != http.StatusCreated {
 		recordCreateResult(workerID, index, false, time.Since(start),
-			fmt.Sprintf("HTTP状态码错误: %d", resp.StatusCode), username)
+			fmt.Sprintf("HTTP状态码错误: %d, 响应: %s", resp.StatusCode, string(body)), username)
 		return false
 	}
 
@@ -479,6 +494,7 @@ func sendSingleDeleteRequest(deleterID, requestID int) {
 	case resp.StatusCode == http.StatusOK && apiResp.Code == RespCodeSuccess:
 		success = true
 	case resp.StatusCode == http.StatusNotFound:
+		success = true // 用户不存在也算成功（幂等性）
 		errorMsg = fmt.Sprintf("用户不存在: %s", username)
 	case resp.StatusCode == http.StatusUnauthorized:
 		errorMsg = "权限认证失败"
@@ -492,10 +508,10 @@ func sendSingleDeleteRequest(deleterID, requestID int) {
 
 	if success {
 		recordDeleteResult(deleterID, requestID, true, duration, "", username)
-		// 从可用用户列表中移除已删除的用户
-		removeDeletedUser(username)
+		removeUserAfterSuccess(username) // ✅ 只有成功才移除
 	} else {
 		recordDeleteResult(deleterID, requestID, false, duration, errorMsg, username)
+		// ❌ 失败不移除，允许重试
 	}
 }
 
@@ -508,26 +524,29 @@ func selectUserForDeletion() string {
 		return ""
 	}
 
-	// 随机选择用户进行删除
 	index := rand.IntN(len(availableUsers))
-	user := availableUsers[index]
-
-	// 立即移除，避免并发竞争
-	availableUsers = append(availableUsers[:index], availableUsers[index+1:]...)
-
-	return user
+	return availableUsers[index] // ✅ 不立即移除
 }
 
-func removeDeletedUser(username string) {
-	// 这个函数现在在 selectUserForDeletion 中已经处理了移除逻辑
-	// 保留这个函数是为了兼容性，实际可能不再需要
+// 只有删除成功后才移除用户
+func removeUserAfterSuccess(username string) {
+	usersMutex.Lock()
+	defer usersMutex.Unlock()
+
+	for i, user := range availableUsers {
+		if user == username {
+			availableUsers = append(availableUsers[:i], availableUsers[i+1:]...)
+			fmt.Printf("✅ 从列表中移除用户: %s, 剩余: %d\n", username, len(availableUsers))
+			break
+		}
+	}
 }
 
-// 快速用户名生成
+// 快速用户名生成（包含测试运行ID）
 func generateTestUsernameFast(index int) string {
 	timestamp := time.Now().UnixNano() % 1000000
 	counter := atomic.AddInt64(&usernameCounter, 1)
-	return fmt.Sprintf("test_%d_%d_%d", index, timestamp, counter)
+	return fmt.Sprintf("test_%s_%d_%d_%d", testRunID, index, timestamp, counter)
 }
 
 // 优化的HTTP客户端
@@ -704,6 +723,10 @@ func validateResults(width int) {
 	if len(availableUsers) > 0 {
 		fmt.Printf("⚠️  剩余用户警告: 还有 %d 个用户未被删除\n", len(availableUsers))
 	}
+
+	// 数据库验证
+	fmt.Printf("\n🔍 数据库验证:\n")
+	fmt.Printf("  请执行: SELECT COUNT(*) FROM user WHERE name LIKE 'test_%s%%';\n", testRunID)
 }
 
 // ==================== 其他工具函数 ====================

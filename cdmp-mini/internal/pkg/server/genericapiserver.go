@@ -147,6 +147,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		go g.deleteConsumer.StartConsuming(ctx, mainWorkers)
 	}
 
+	time.Sleep(5 * time.Second) // 等待其他组件完全初始化
 	go g.retryConsumer.StartConsuming(ctx, RetryConsumerWorkers)
 
 	log.Info("所有Kafka消费者已启动")

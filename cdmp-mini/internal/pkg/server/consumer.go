@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
@@ -76,26 +77,12 @@ func (c *UserConsumer) worker(ctx context.Context, workerID int) {
 	log.Infof("启动消费者实例 %d, Worker %d, Topic: %s, 消费组: %s",
 		c.instanceID, workerID, c.topic, c.groupID)
 
-	// 添加健康检查计数器
-	healthCheckTicker := time.NewTicker(30 * time.Second)
-	defer healthCheckTicker.Stop()
-
 	for {
 		select {
 		case <-ctx.Done():
 			log.Infof("Worker %d: 停止消费", workerID)
 			return
-		case <-healthCheckTicker.C:
-			stats := c.reader.Stats()
-			log.Infof("Worker %d: 消费者状态 - Lag: %d, 错误数: %d", workerID, stats.Lag, stats.Errors)
 
-			// 添加告警
-			if stats.Lag > 1000 {
-				log.Errorf("Worker %d: 消费延迟过高! Lag: %d", workerID, stats.Lag)
-			}
-			if stats.Errors > 10 {
-				log.Errorf("Worker %d: 错误数过多! Errors: %d", workerID, stats.Errors)
-			}
 		default:
 			log.Debugf("Worker %d: 开始处理消息", workerID)
 			err := c.processSingleMessage(ctx, workerID)
@@ -249,7 +236,7 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 	} else {
 		log.Infof("缓存删除成功: username=%s", deleteRequest.Username)
 	}
-	log.Infof("用户创建成功: username=%s", deleteRequest.Username)
+	log.Infof("用户删除成功: username=%s", deleteRequest.Username)
 
 	return nil
 }
@@ -288,10 +275,15 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error 
 }
 
 func (c *UserConsumer) deleteUserFromDB(ctx context.Context, username string) error {
-	if err := c.db.WithContext(ctx).
-		Where("name = ? and status = 1", username).
-		Delete(&v1.User{}).Error; err != nil {
-		return err
+	result := c.db.WithContext(ctx).
+		Where("name = ? ", username).
+		Delete(&v1.User{})
+	if result.Error != nil {
+		return result.Error
+	}
+	// 关键：检查实际影响行数
+	if result.RowsAffected == 0 {
+		return errors.WithCode(code.ErrUserNotFound, "用户没有发现")
 	}
 	return nil
 }
@@ -329,7 +321,7 @@ func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Me
 
 		// 检查错误类型
 		if !shouldRetry(err) {
-			log.Info("用户名重复")
+			log.Warn("进入不可重试处理流程...")
 			return nil //认为处理完成
 		}
 
@@ -446,29 +438,72 @@ func shouldRetry(err error) bool {
 
 	errStr := err.Error()
 
-	// 这些错误不应该重试，应该发送到死信
-	if strings.Contains(errStr, "Duplicate entry") ||
-		strings.Contains(errStr, "1062") ||
-		strings.Contains(errStr, "23000") ||
-		strings.Contains(errStr, "duplicate key value") ||
-		strings.Contains(errStr, "23505") ||
-		strings.Contains(errStr, "用户已存在") ||
-		strings.Contains(errStr, "UserAlreadyExist") ||
-		strings.Contains(errStr, "UNMARSHAL_ERROR") {
-		return false // ❌ 不可重试错误
+	// 第一层：明确不可重试的错误
+	if isUnrecoverableError(errStr) {
+		return false
 	}
 
-	// 这些错误应该重试
-	if strings.Contains(errStr, "timeout") ||
-		strings.Contains(errStr, "deadline exceeded") ||
-		strings.Contains(errStr, "connection refused") ||
-		strings.Contains(errStr, "network error") ||
-		strings.Contains(errStr, "database is closed") {
-		return true // ✅ 可重试错误
+	// 第二层：明确可重试的错误
+	if isRecoverableError(errStr) {
+		return true
 	}
 
-	// 默认情况下重试
+	// 第三层：默认情况
+	return false
+}
+
+// isUnrecoverableError 判断是否为不可恢复的错误
+func isUnrecoverableError(errStr string) bool {
+	unrecoverableErrors := []string{
+		// 数据重复错误
+		"Duplicate entry", "1062", "23000", "duplicate key value", "23505",
+		"用户已存在", "UserAlreadyExist",
+
+		// 消息格式错误
+		"UNMARSHAL_ERROR", "invalid json", "unknown operation", "poison message",
+
+		// 权限和DEFINER错误
+		"definer", "DEFINER", "1449", "permission denied",
+
+		// 数据不存在错误（幂等性）
+		"does not exist", "not found", "record not found",
+
+		// 数据库约束错误
+		"constraint", "foreign key", "1451", "1452", "syntax error",
+
+		// 业务逻辑错误
+		"invalid format", "validation failed",
+	}
+
+	for _, unrecoverableErr := range unrecoverableErrors {
+		if strings.Contains(errStr, unrecoverableErr) {
+			return false
+		}
+	}
 	return true
+}
+
+// isRecoverableError 判断是否为可恢复的错误
+func isRecoverableError(errStr string) bool {
+	recoverableErrors := []string{
+		// 超时和网络错误
+		"timeout", "deadline exceeded", "connection refused", "network error",
+		"connection reset", "broken pipe", "no route to host",
+
+		// 数据库临时错误
+		"database is closed", "deadlock", "1213", "40001",
+		"temporary", "busy", "lock", "try again",
+
+		// 资源暂时不可用
+		"resource temporarily unavailable", "too many connections",
+	}
+
+	for _, recoverableErr := range recoverableErrors {
+		if strings.Contains(errStr, recoverableErr) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *UserConsumer) setUserCache(ctx context.Context, user *v1.User) error {

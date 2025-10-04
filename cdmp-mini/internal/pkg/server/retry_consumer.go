@@ -57,9 +57,19 @@ func (rc *RetryConsumer) Close() error {
 }
 
 func (rc *RetryConsumer) StartConsuming(ctx context.Context, workerCount int) {
-	log.Infof("启动重试消费者，worker数量: %d", workerCount)
-
+	log.Infof("🚀 StartConsuming开始，worker数量: %d", workerCount)
+	log.Infof("上下文状态: %v", ctx.Err())
+	log.Infof("Reader状态: %v", rc.reader != nil)
 	var wg sync.WaitGroup
+
+	if rc.reader == nil {
+		log.Error("Reader未初始化，等待...")
+		time.Sleep(3 * time.Second)
+		if rc.reader == nil {
+			log.Error("Reader仍然未初始化，退出")
+			return
+		}
+	}
 
 	// 为每个worker启动一个goroutine
 	for i := 0; i < workerCount; i++ {
@@ -69,34 +79,21 @@ func (rc *RetryConsumer) StartConsuming(ctx context.Context, workerCount int) {
 			rc.retryWorker(ctx, workerID)
 		}(i)
 	}
-
+	log.Info("等待所有worker完成...")
 	wg.Wait()
+	log.Info("所有worker已完成，StartConsuming返回")
 }
 
 func (rc *RetryConsumer) retryWorker(ctx context.Context, workerID int) {
 	log.Infof("启动重试消费者Worker %d", workerID)
-
-	// 添加健康检查计数器
-	healthCheckTicker := time.NewTicker(30 * time.Second)
-	defer healthCheckTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			log.Infof("重试Worker %d: 停止消费", workerID)
 			return
-		case <-healthCheckTicker.C:
-			stats := rc.reader.Stats()
-			log.Infof("Worker %d: 消费者状态 - Lag: %d, 错误数: %d", workerID, stats.Lag, stats.Errors)
-
-			// 添加告警
-			if stats.Lag > 1000 {
-				log.Errorf("Worker %d: 消费延迟过高! Lag: %d", workerID, stats.Lag)
-			}
-			if stats.Errors > 10 {
-				log.Errorf("Worker %d: 错误数过多! Errors: %d", workerID, stats.Errors)
-			}
 		default:
+			log.Debugf("Worker %d: 准备获取消息...", workerID) // 🔴 添加这行
 			msg, err := rc.reader.FetchMessage(ctx)
 			if err != nil {
 				log.Errorf("重试Worker %d: 获取消息失败: %v", workerID, err)
@@ -246,18 +243,11 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 		return rc.producer.SendToDeadLetterTopic(ctx, msg, "POISON_MESSAGE_IN_RETRY: "+err.Error())
 	}
 
-	currentRetryCount, nextRetryTime, lastError := rc.parseRetryHeaders(msg.Headers)
+	currentRetryCount, _, lastError := rc.parseRetryHeaders(msg.Headers)
 
 	if currentRetryCount >= rc.maxRetries {
 		return rc.producer.SendToDeadLetterTopic(ctx, msg,
 			fmt.Sprintf("MAX_RETRIES_EXCEEDED(%d): %s", rc.maxRetries, lastError))
-	}
-
-	// 🔴 优化：如果重试时间未到，直接重新入队而不是阻塞
-	if time.Now().Before(nextRetryTime) {
-		log.Debugf("重试时间未到，重新入队等待: username=%s, delay=%v",
-			deleteRequest.Username, time.Until(nextRetryTime))
-		return rc.prepareNextRetry(ctx, msg, currentRetryCount, lastError)
 	}
 
 	if err := rc.deleteUserFromDB(ctx, deleteRequest.Username); err != nil {
