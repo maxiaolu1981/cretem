@@ -42,7 +42,7 @@ import (
 	"strings"
 
 	"github.com/fatih/color" // 用于终端颜色输出
-	"github.com/spf13/cobra" // Go命令行框架
+	// Go命令行框架
 	"github.com/spf13/pflag" // 命令行标志处理库
 )
 
@@ -51,39 +51,6 @@ const (
 	flagHelp          = "help" // 长选项名：--help
 	flagHelpShorthand = "h"    // 短选项名：-H
 )
-
-// helpCommand 创建一个"help"子命令，用于显示其他命令的帮助信息
-// 参数name通常是应用程序的名称
-func helpCommand(name string) *cobra.Command {
-	return &cobra.Command{
-		Use:   "help [command]",          // 命令用法：help 后跟要查询的命令
-		Short: "Help about any command.", // 简短描述
-		Long: `Help provides help for any command in the application.
-Simply type ` + name + ` help [path to command] for full details.`, // 详细描述
-
-		// 命令执行函数
-		Run: func(c *cobra.Command, args []string) {
-			// 从根命令开始查找用户指定的命令
-			cmd, _, e := c.Root().Find(args)
-
-			// 若命令未找到或查找过程出错
-			if cmd == nil || e != nil {
-				c.Printf("Unknown help topic %#q\n", args) // 提示未知的帮助主题
-				_ = c.Root().Usage()                       // 显示根命令的用法信息
-			} else {
-				cmd.InitDefaultHelpFlag() // 初始化命令的默认帮助标志，确保帮助信息完整
-				_ = cmd.Help()            // 显示目标命令的帮助信息
-			}
-		},
-	}
-}
-
-// addHelpFlag 为特定应用向指定的标志集(FlagSet)添加帮助标志
-// 参数name是应用名称，fs是要添加标志的标志集
-func addHelpFlag(name string, fs *pflag.FlagSet) {
-	// 添加--help/-H标志，默认值为false，提示信息为"Help for [应用名]."
-	fs.BoolP(flagHelp, flagHelpShorthand, false, fmt.Sprintf("Help for %s.", name))
-}
 
 // addHelpCommandFlag 为应用的特定命令向指定的标志集(FlagSet)添加帮助标志
 // 参数usage是命令的用法字符串，fs是要添加标志的标志集

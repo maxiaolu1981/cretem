@@ -18,7 +18,7 @@ type InsecureServingOptions struct {
 func NewInsecureServingOptions() *InsecureServingOptions {
 
 	return &InsecureServingOptions{
-		BindAddress: "127.0.0.1",
+		BindAddress: "192.168.10.8",
 		BindPort:    8088,
 	}
 }
@@ -27,7 +27,7 @@ func (i *InsecureServingOptions) Complete() {
 	i.loadFromEnv()
 
 	if i.BindAddress == "" {
-		i.BindAddress = "127.0.0.1"
+		i.BindAddress = "192.168.10.8"
 	}
 	if i.BindPort < 0 || i.BindPort > 65535 {
 		i.BindPort = 8080

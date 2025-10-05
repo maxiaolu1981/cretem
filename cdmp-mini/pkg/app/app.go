@@ -131,60 +131,8 @@ import (
 	"github.com/spf13/viper"
 )
 
-const example = `  # 基础启动（使用默认配置）
-  iam-apiserver
-
-  # 配置MySQL和Redis连接
-  iam-apiserver --mysql-host=127.0.0.1 --mysql-port=3306 --redis-url=redis://localhost:6379
-
-  # 启用安全服务并设置GRPC端口
-  iam-apiserver --secure-serving-bind-port=443 --grpc-port=9000
-
-  # 调整日志级别并启用特定功能
-  iam-apiserver --logs-level=debug --features=enable-beta
-
-  # 查看所有配置项（按分组展示）
-  iam-server --help`
-
 var (
 	progressMessage = color.GreenString("==>")
-
-	usageTemplate = fmt.Sprintf(`%s{{if .Runnable}}
-  %s{{end}}{{if .HasAvailableSubCommands}}
-  %s{{end}}{{if gt (len .Aliases) 0}}
-
-%s
-  {{.NameAndAliases}}{{end}}{{if .HasExample}}
-
-%s
-{{.Example}}{{end}}{{if .HasAvailableSubCommands}}
-
-%s{{range .Commands}}{{if (or .IsAvailableCommand (eq .Name "help"))}}
-  %s {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
-
-%s
-{{.LocalFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
-
-%s
-{{.InheritedFlags.FlagUsages | trimTrailingWhitespaces}}{{end}}{{if .HasHelpSubCommands}}
-
-%s{{range .Commands}}{{if .IsAdditionalHelpTopicCommand}}
-  {{rpad .CommandPath .CommandPathPadding}} {{.Short}}{{end}}{{end}}{{end}}{{if .HasAvailableSubCommands}}
-
-Use "%s --help" for more information about a command.{{end}}
-`,
-		color.CyanString("Usage:"),
-		color.GreenString("{{.UseLine}}"),
-		color.GreenString("{{.CommandPath}} [command]"),
-		color.CyanString("Aliases:"),
-		color.CyanString("Examples:"),
-		color.CyanString("Available Commands:"),
-		color.GreenString("{{rpad .Name .NamePadding }}"),
-		color.CyanString("Flags:"),
-		color.CyanString("Global Flags:"),
-		color.CyanString("Additional help topics:"),
-		color.GreenString("{{.CommandPath}} [command]"),
-	)
 )
 
 type App struct {

@@ -45,6 +45,9 @@ var (
 	ConsumerRetryMessages      *prometheus.CounterVec
 	ConsumerDeadLetterMessages *prometheus.CounterVec
 	ConsumerLag                *prometheus.GaugeVec
+	// Commit success / failure metrics (include partition)
+	ConsumerCommitSuccess  *prometheus.CounterVec
+	ConsumerCommitFailures *prometheus.CounterVec
 
 	// 新增：topic 分区数量、组实例数量与无主分区的启发式计数
 	ConsumerTopicPartitions   *prometheus.GaugeVec
@@ -302,6 +305,22 @@ func init() {
 			Help: "Total number of messages sent to dead letter queue by consumer",
 		},
 		[]string{"topic", "group", "operation", "error_type"},
+	)
+
+	ConsumerCommitSuccess = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_commit_success_total",
+			Help: "Total number of successful consumer commit operations",
+		},
+		[]string{"topic", "group", "partition"},
+	)
+
+	ConsumerCommitFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kafka_consumer_commit_failures_total",
+			Help: "Total number of failed consumer commit operations",
+		},
+		[]string{"topic", "group", "partition"},
 	)
 
 	ConsumerLag = prometheus.NewGaugeVec(
@@ -1156,13 +1175,6 @@ func MonitorBusinessOperation(service, operation, source string, fn func() error
 	}
 
 	return err
-}
-
-// updateBusinessRate 更新业务操作速率（QPS）
-func updateBusinessRate(service, operation string) {
-	// 这里可以实现更复杂的QPS计算逻辑
-	// 简单版本：使用rate函数在Prometheus中计算
-	// 复杂版本：可以在这里实现滑动窗口计算
 }
 
 // RecordBusinessQPS 记录业务QPS（供外部调用）

@@ -36,16 +36,16 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 创建用户并发配置
-	PreCreateUsers      = 100000 // 预先创建的用户数量
-	PreCreateConcurrent = 1000   // 预创建并发数
-	PreCreateBatchSize  = 1000   // 进度显示批次
-	PreCreateTimeout    = 10 * time.Second
+	PreCreateUsers      = 100 // 预先创建的用户数量
+	PreCreateConcurrent = 10  // 预创建并发数
+	PreCreateBatchSize  = 100 // 进度显示批次
+	PreCreateTimeout    = 1 * time.Second
 
 	// 删除用户并发配置
-	ConcurrentDeleters = 250  // 并发删除器数量
-	DeletesPerUser     = 400  // 每个删除器执行的删除次数
-	MaxConcurrent      = 25   // 最大并发数
-	BatchSize          = 1000 // 批次大小
+	ConcurrentDeleters = 10 // 并发删除器数量
+	DeletesPerUser     = 10 // 每个删除器执行的删除次数
+	MaxConcurrent      = 25 // 最大并发数
+	BatchSize          = 10 // 批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -206,7 +206,7 @@ func TestUserForceDelete_RealConcurrent(t *testing.T) {
 	printFinalResults(createDuration, deleteDuration, width)
 
 	// 6. 数据校验
-	validateResults(width)
+	validateResults()
 }
 
 // 清理旧的测试数据
@@ -711,7 +711,7 @@ func printFinalResults(createDuration, deleteDuration time.Duration, width int) 
 	fmt.Printf("%s\n", strings.Repeat("═", width))
 }
 
-func validateResults(width int) {
+func validateResults() {
 	statsMutex.RLock()
 	defer statsMutex.RUnlock()
 

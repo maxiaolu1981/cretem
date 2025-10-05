@@ -1,0 +1,109 @@
+{
+	"annotations": {
+		"list": [
+			{
+				"builtIn": 1,
+				"datasource": { "type": "datasource", "uid": "grafana" },
+				"enable": true,
+				"hide": true,
+				"iconColor": "rgba(0, 211, 255, 1)",
+				"name": "Annotations & Alerts",
+				"target": { "limit": 100, "matchAny": false, "tags": [], "type": "dashboard" },
+				"type": "dashboard"
+			}
+		]
+	},
+	"description": "【中文版本】基于Prometheus的kafka_exporter，KAFKA资源全面展示，包括 commit 成功/失败指标（按 partition）及分区明细表格。",
+	"editable": true,
+	"fiscalYearStartMonth": 0,
+	"gnetId": 21078,
+	"graphTooltip": 0,
+	"id": 14,
+	"links": [
+		{ "asDropdown": false, "icon": "bolt", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "Update", "tooltip": "查看更多仪表板", "type": "link", "url": "https://grafana.com/orgs/starsliao/dashboards" },
+		{ "asDropdown": false, "icon": "question", "includeVars": false, "keepTime": false, "tags": [], "targetBlank": true, "title": "GitHub", "tooltip": "查看更多仪表板", "type": "link", "url": "https://github.com/starsliao" }
+	],
+	"liveNow": false,
+	"panels": [
+		{
+			"datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" },
+			"fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [ { "options": { "match": "null", "result": { "text": "0" } }, "type": "special" } ], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 80 } ] }, "unit": "none" }, "overrides": [] },
+			"gridPos": { "h": 3, "w": 2, "x": 0, "y": 0 },
+			"id": 35,
+			"maxDataPoints": 100,
+			"options": { "colorMode": "background_solid", "graphMode": "none", "justifyMode": "auto", "orientation": "horizontal", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "showPercentChange": false, "textMode": "auto", "wideLayout": true },
+			"pluginVersion": "10.0.0",
+			"targets": [ { "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "editorMode": "code", "expr": "kafka_brokers{job=\"$job\",name=\"$name\"}", "format": "time_series", "intervalFactor": 1, "range": true, "refId": "A" } ],
+			"title": "Brokers",
+			"type": "stat"
+		},
+		{
+			"datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" },
+			"fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }, "unit": "none" }, "overrides": [] },
+			"gridPos": { "h": 6, "w": 12, "x": 0, "y": 41 },
+			"id": 100,
+			"options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+			"pluginVersion": "10.0.2",
+			"targets": [ { "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "editorMode": "code", "expr": "sum by(partition) (increase(kafka_consumer_commit_failures_total{job=\"$job\",name=\"$name\",topic=~\"$topic\",group=\"$consumer_group\"}[1m]))", "format": "time_series", "intervalFactor": 1, "legendFormat": "{{partition}}", "refId": "A" } ],
+			"title": "Commit Failures by Partition (1m rate)",
+			"type": "timeseries"
+		},
+		{
+			"datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" },
+			"fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }, "unit": "none" }, "overrides": [] },
+			"gridPos": { "h": 6, "w": 12, "x": 12, "y": 41 },
+			"id": 101,
+			"options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi", "sort": "desc" } },
+			"pluginVersion": "10.0.2",
+			"targets": [ { "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "editorMode": "code", "expr": "sum by(partition) (increase(kafka_consumer_commit_success_total{job=\"$job\",name=\"$name\",topic=~\"$topic\",group=\"$consumer_group\"}[1m]))", "format": "time_series", "intervalFactor": 1, "legendFormat": "{{partition}}", "refId": "A" } ],
+			"title": "Commit Success by Partition (1m rate)",
+			"type": "timeseries"
+		},
+		{
+			"datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" },
+			"fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] }, "unit": "none" }, "overrides": [] },
+			"gridPos": { "h": 3, "w": 6, "x": 24, "y": 41 },
+			"id": 102,
+			"maxDataPoints": 100,
+			"options": { "colorMode": "background_solid", "graphMode": "none", "justifyMode": "center", "orientation": "horizontal", "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false }, "showPercentChange": false, "textMode": "value" },
+			"pluginVersion": "10.0.2",
+			"targets": [ { "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "editorMode": "code", "expr": "sum(increase(kafka_consumer_commit_failures_total{job=\"$job\",name=\"$name\",topic=~\"$topic\",group=\"$consumer_group\"}[1m]))", "format": "time_series", "intervalFactor": 1, "range": true, "refId": "A" } ],
+			"title": "Commit Failures Total (1m)",
+			"type": "stat"
+		},
+		{
+			"datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" },
+			"fieldConfig": { "defaults": { "color": { "mode": "palette-classic" }, "mappings": [], "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 50 } ] }, "unit": "percent" }, "overrides": [] },
+			"gridPos": { "h": 7, "w": 24, "x": 0, "y": 48 },
+			"id": 103,
+			"options": { "showHeader": true, "showFooter": true },
+			"pluginVersion": "10.0.2",
+			"targets": [
+				{ "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "editorMode": "code", "expr": "sum by(partition) (increase(kafka_consumer_commit_success_total{job=\"$job\",name=\"$name\",topic=~\"$topic\",group=\"$consumer_group\"}[1m]))", "format": "table", "instant": true, "refId": "A", "legendFormat": "success_{{partition}}" },
+				{ "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "editorMode": "code", "expr": "sum by(partition) (increase(kafka_consumer_commit_failures_total{job=\"$job\",name=\"$name\",topic=~\"$topic\",group=\"$consumer_group\"}[1m]))", "format": "table", "instant": true, "refId": "B", "legendFormat": "fail_{{partition}}" },
+				{ "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "editorMode": "code", "expr": "(sum by(partition) (increase(kafka_consumer_commit_success_total{job=\"$job\",name=\"$name\",topic=~\"$topic\",group=\"$consumer_group\"}[1m])) / (sum by(partition) (increase(kafka_consumer_commit_success_total{job=\"$job\",name=\"$name\",topic=~\"$topic\",group=\"$consumer_group\"}[1m])) + sum by(partition) (increase(kafka_consumer_commit_failures_total{job=\"$job\",name=\"$name\",topic=~\"$topic\",group=\"$consumer_group\"}[1m])))) * 100", "format": "table", "instant": true, "refId": "C", "legendFormat": "ratio_{{partition}}" }
+			],
+			"title": "Partition Commit Details (success %, counts 1m)",
+			"type": "table"
+		}
+	],
+	"refresh": "1m",
+	"schemaVersion": 38,
+	"style": "dark",
+	"tags": [ "Prometheus", "KAFKA", "StarsL.cn" ],
+	"templating": {
+		"list": [
+			{ "current": { "selected": false, "text": "kafka-exporter", "value": "kafka-exporter" }, "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "definition": "label_values(kafka_brokers,job)", "hide": 0, "includeAll": false, "label": "JOB", "multi": false, "name": "job", "options": [], "query": { "query": "label_values(kafka_brokers,job)", "refId": "PrometheusVariableQueryEditor-VariableQuery" }, "refresh": 2 },
+			{ "current": { "selected": false, "text": "cdmp-kafka-cluster", "value": "cdmp-kafka-cluster" }, "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "definition": "label_values(kafka_brokers{job=~\"$job\"},name)", "hide": 0, "includeAll": false, "label": "名称", "multi": false, "name": "name", "options": [], "query": { "query": "label_values(kafka_brokers{job=~\"$job\"},name)", "refId": "PrometheusVariableQueryEditor-VariableQuery" }, "refresh": 2 },
+			{ "current": { "selected": false, "text": "user-service-prod-create", "value": "user-service-prod-create" }, "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "definition": "query_result(count by (consumergroup)(kafka_consumergroup_members{job=\"$job\",name=~\"$name\",consumergroup!~\"__.*\"}))", "description": "显示所有消费组列表", "hide": 0, "includeAll": true, "label": "消费组", "multi": false, "name": "consumer_group", "options": [], "query": { "query": "query_result(count by (consumergroup)(kafka_consumergroup_members{job=\"$job\",name=~\"$name\",consumergroup!~\"__.*\"}))", "refId": "PrometheusVariableQueryEditor-VariableQuery" }, "refresh": 2 },
+			{ "current": { "selected": false, "text": "user.create.v1", "value": "user.create.v1" }, "datasource": { "type": "prometheus", "uid": "a78f9319-c86a-4d95-ae9c-7e3aaf03da9a" }, "definition": "label_values(kafka_consumergroup_lag_sum{job=\"$job\",name=~\"$name\",topic !~\"__.*\",consumergroup=~\"$consumer_group\"},topic)", "description": "仅显示有消费组消费的Topic，无消费组消费的Topic在下方图表展示。", "hide": 0, "includeAll": true, "label": "topic", "multi": false, "name": "topic", "options": [], "query": { "query": "label_values(kafka_consumergroup_lag_sum{job=\"$job\",name=~\"$name\",topic !~\"__.*\",consumergroup=~\"$consumer_group\"},topic)", "refId": "PrometheusVariableQueryEditor-VariableQuery" }, "refresh": 2 }
+		]
+	},
+	"time": { "from": "now-5m", "to": "now" },
+	"timepicker": { "refresh_intervals": [ "30s", "1m", "5m", "15m", "30m", "1h" ], "time_options": [ "5m", "15m", "1h", "6h", "12h", "24h", "2d", "7d", "30d" ] },
+	"timezone": "browser",
+	"title": "kafka",
+	"uid": "adlp8ituw8qgwf",
+	"version": 49,
+	"weekStart": ""
+}

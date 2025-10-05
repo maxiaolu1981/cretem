@@ -11,6 +11,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -27,12 +28,13 @@ type UserConsumer struct {
 	topic      string
 	groupID    string
 	instanceID int // 新增：实例ID
+	opts       *options.KafkaOptions
 }
 
-func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
+func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
 	consumer := &UserConsumer{
 		reader: kafka.NewReader(kafka.ReaderConfig{
-			Brokers: brokers,
+			Brokers: opts.Brokers,
 			Topic:   topic,
 			GroupID: groupID,
 
@@ -46,7 +48,7 @@ func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis
 			StartOffset:    kafka.FirstOffset,
 
 			// 添加重试配置
-			MaxAttempts:    3,
+			MaxAttempts:    opts.MaxRetries,
 			ReadBackoffMin: time.Millisecond * 100,
 			ReadBackoffMax: time.Millisecond * 1000,
 		}),
@@ -54,6 +56,7 @@ func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis
 		redis:   redis,
 		topic:   topic,
 		groupID: groupID,
+		opts:    opts,
 	}
 	go consumer.startLagMonitor(context.Background())
 	return consumer
@@ -61,106 +64,123 @@ func NewUserConsumer(brokers []string, topic, groupID string, db *gorm.DB, redis
 
 // 消费
 func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
-	var wg sync.WaitGroup
+	// job 用于在 fetcher 与 worker 之间传递消息，并携带一个 done 通道用于返回处理结果
+	type job struct {
+		msg      kafka.Message
+		done     chan error
+		workerID int
+	}
+
+	jobs := make(chan *job, 256)
+
+	// 启动 worker 池，只负责处理业务，不直接调用 FetchMessage/CommitMessages
+	var workerWg sync.WaitGroup
 	for i := 0; i < workerCount; i++ {
-		wg.Add(1)
+		workerWg.Add(1)
 		go func(workerID int) {
-			defer wg.Done()
-			c.worker(ctx, workerID)
+			defer workerWg.Done()
+			for j := range jobs {
+				// 记录开始时间
+				operation := c.getOperationFromHeaders(j.msg.Headers)
+				messageKey := string(j.msg.Key)
+				processStart := time.Now()
+
+				// 处理消息（带重试的业务处理）
+				err := c.processMessageWithRetry(ctx, j.msg, 3)
+
+				// 在本地记录指标（worker 负责记录处理耗时/成功/失败）
+				c.recordConsumerMetrics(operation, messageKey, processStart, err, j.workerID)
+
+				// 将处理结果返回给 fetcher，由 fetcher 负责提交偏移
+				j.done <- err
+			}
 		}(i)
 	}
-	wg.Wait()
-}
 
-// 消息调度
-func (c *UserConsumer) worker(ctx context.Context, workerID int) {
-	log.Debugf("启动消费者实例 %d, Worker %d, Topic: %s, 消费组: %s",
-		c.instanceID, workerID, c.topic, c.groupID)
+	// fetcher: 负责从 Kafka 拉取消息，并在 worker 处理完成后提交偏移量
+	fetchLoopDone := make(chan struct{})
+	go func() {
+		defer close(fetchLoopDone)
+		nextWorker := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 
-	for {
-		select {
-		case <-ctx.Done():
-			log.Debugf("Worker %d: 停止消费", workerID)
-			return
+			// FetchMessage 带重试：与之前逻辑保持一致
+			var msg kafka.Message
+			var fetchErr error
+			for retry := 0; retry < c.opts.MaxRetries; retry++ {
+				msg, fetchErr = c.reader.FetchMessage(ctx)
+				if fetchErr == nil {
+					break
+				}
+				if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
+					log.Debugf("Fetcher: 上下文已取消，停止获取消息")
+					return
+				}
+				log.Warnf("Fetcher: 获取消息失败 (重试 %d/%d): %v", retry+1, c.opts.MaxRetries, fetchErr)
+				backoff := time.Second * time.Duration(1<<uint(retry))
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+					log.Debugf("Fetcher: 重试期间上下文取消")
+					return
+				}
+			}
+			if fetchErr != nil {
+				log.Errorf("Fetcher: 获取消息最终失败: %v", fetchErr)
+				// 在 fetch 失败时短暂停顿，避免紧循环
+				select {
+				case <-time.After(500 * time.Millisecond):
+				case <-ctx.Done():
+					return
+				}
+				continue
+			}
 
-		default:
-			log.Debugf("Worker %d: 开始处理消息", workerID)
-			err := c.processSingleMessage(ctx, workerID)
+			// dispatch to worker
+			j := &job{msg: msg, done: make(chan error, 1), workerID: nextWorker}
+			select {
+			case jobs <- j:
+				// dispatched
+			case <-ctx.Done():
+				return
+			}
 
-			if err != nil {
-				log.Warnf("Worker %d: 处理消息失败: %v", workerID, err)
-				// 所有错误都只是休眠后继续，不停止worker。使用指数退避以避免紧循环。
-				time.Sleep(200 * time.Millisecond)
-			} else {
-				log.Debugf("Worker %d: 消息处理完成", workerID)
+			// round-robin
+			nextWorker = (nextWorker + 1) % workerCount
+
+			// 等待 worker 完成处理
+			procErr := <-j.done
+			if procErr != nil {
+				log.Warnf("Fetcher: message processing failed (worker=%d): %v", j.workerID, procErr)
+				// 处理失败，不提交偏移量（与之前行为一致），继续下一个消息
+				continue
+			}
+
+			// 处理成功后提交偏移
+			if err := c.commitWithRetry(ctx, msg, j.workerID); err != nil {
+				log.Errorf("Fetcher: 提交偏移失败: %v", err)
+				// 提交失败则不阻塞 fetcher，继续下一条（commitWithRetry 内部已做重试）
 			}
 		}
-	}
-}
-
-// 处理消息
-func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) error {
-
-	var operation, messageKey string
-	var processingErr error
-	var msg kafka.Message
-	var processStart time.Time //用于记录真正的处理开始时间
-
-	// 从Kafka拉取消息，添加重试逻辑
-	var fetchErr error
-	for retry := 0; retry < 3; retry++ {
-		msg, fetchErr = c.reader.FetchMessage(ctx)
-		if fetchErr == nil {
-			break
-		}
-
-		// 检查是否是上下文取消
-		if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
-			log.Debugf("Worker %d: 上下文已取消，停止获取消息", workerID)
-			processingErr = fetchErr
-			return fetchErr
-		}
-		log.Warnf("Worker %d: 获取消息失败 (重试 %d/3): %v", workerID, retry+1, fetchErr)
-		// 指数退避
-		backoff := time.Second * time.Duration(1<<uint(retry))
-		select {
-		case <-time.After(backoff):
-			// 继续重试
-		case <-ctx.Done():
-			log.Debugf("Worker %d: 重试期间上下文取消", workerID)
-			processingErr = ctx.Err()
-			return processingErr
-		}
-	}
-
-	if fetchErr != nil {
-		log.Errorf("Worker %d: 获取消息最终失败: %v", workerID, fetchErr)
-		processingErr = fetchErr
-		return fetchErr
-	}
-
-	operation = c.getOperationFromHeaders(msg.Headers)
-	messageKey = string(msg.Key)
-
-	// 🔥 从这里开始计时真正的处理时间（不包括等待消息的时间
-	processStart = time.Now()
-	defer func() {
-		c.recordConsumerMetrics(operation, messageKey, processStart, processingErr, workerID)
 	}()
 
-	// 处理消息（包含业务逻辑重试）
-	processingErr = c.processMessageWithRetry(ctx, msg, 3)
-	if processingErr != nil {
-		log.Errorf("Worker %d: 消息处理最终失败: %v", workerID, processingErr)
-		return processingErr
-	}
-
-	// 提交偏移量（确认消费）
-	if err := c.commitWithRetry(ctx, msg, workerID); err != nil {
-		return err
-	}
-	return nil
+	// 等待 fetcher 结束（通常由 ctx 取消触发），然后关闭 jobs 并等待 workers 退出
+	<-fetchLoopDone
+	close(jobs)
+	workerWg.Wait()
 }
+
+// 消息调度 - 已弃用
+// StartConsuming 已经采用单 fetcher + worker 池的模式替代了旧的并发 Fetch/Commit 实现。
+// 保留该函数签名以避免潜在外部引用编译错误，但实现为空。
+
+// 处理消息
+// ...old worker and processSingleMessage removed. Use StartConsuming with the new fetcher+worker flow.
 
 // commitWithRetry 尝试提交消息偏移，遇到临时错误会重试
 func (c *UserConsumer) commitWithRetry(ctx context.Context, msg kafka.Message, workerID int) error {
@@ -170,7 +190,10 @@ func (c *UserConsumer) commitWithRetry(ctx context.Context, msg kafka.Message, w
 		if err := c.reader.CommitMessages(ctx, msg); err != nil {
 			lastErr = err
 			metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, "commit", "commit_error").Inc()
-			log.Warnf("Worker %d: 提交偏移量失败 (尝试 %d/%d): %v", workerID, i+1, maxAttempts, err)
+			// record commit failure metric (partition as string)
+			metrics.ConsumerCommitFailures.WithLabelValues(c.topic, c.groupID, fmt.Sprintf("%d", msg.Partition)).Inc()
+			log.Warnf("Worker %d: 提交偏移量失败 (尝试 %d/%d): topic=%s partition=%d offset=%d err=%v",
+				workerID, i+1, maxAttempts, msg.Topic, msg.Partition, msg.Offset, err)
 			// 指数退避
 			wait := time.Duration(100*(1<<uint(i))) * time.Millisecond
 			select {
@@ -180,7 +203,9 @@ func (c *UserConsumer) commitWithRetry(ctx context.Context, msg kafka.Message, w
 				return ctx.Err()
 			}
 		} else {
-			log.Debugf("Worker %d: 偏移量提交成功", workerID)
+			// record commit success metric
+			metrics.ConsumerCommitSuccess.WithLabelValues(c.topic, c.groupID, fmt.Sprintf("%d", msg.Partition)).Inc()
+			log.Debugf("Worker %d: 偏移量提交成功: topic=%s partition=%d offset=%d", workerID, msg.Topic, msg.Partition, msg.Offset)
 			return nil
 		}
 	}

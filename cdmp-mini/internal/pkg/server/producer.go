@@ -27,7 +27,6 @@ type UserProducer struct {
 	writer       *kafka.Writer
 	retryWriter  *kafka.Writer
 	kafkaOptions *options.KafkaOptions
-	maxRetries   int
 }
 
 // internal/pkg/server/producer.go
@@ -37,7 +36,7 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 	mainWriter := &kafka.Writer{
 		Addr: kafka.TCP(options.Brokers...),
 		// 注意：这里不设置 Topic，在发送时动态设置
-		MaxAttempts:     3,
+		MaxAttempts:     options.MaxRetries,
 		WriteBackoffMin: 100 * time.Millisecond,
 		WriteBackoffMax: 1 * time.Second,
 		BatchBytes:      1048576,
@@ -69,7 +68,6 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 	return &UserProducer{
 		writer:       mainWriter,
 		retryWriter:  reliableWriter,
-		maxRetries:   options.MaxRetries,
 		kafkaOptions: options,
 	}
 }
@@ -231,8 +229,8 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 	}
 
 	//检查最大重试次数
-	if currentRetryCount > p.maxRetries {
-		errMsg := fmt.Sprintf("已达最大重试次数（%d次）,将发送到死信区", p.maxRetries)
+	if currentRetryCount > p.kafkaOptions.MaxRetries {
+		errMsg := fmt.Sprintf("已达最大重试次数（%d次）,将发送到死信区", p.kafkaOptions.MaxRetries)
 		return p.SendToDeadLetterTopic(ctx, msg, errMsg+": "+errorInfo)
 	}
 
