@@ -2,7 +2,6 @@ package user
 
 import (
 	"context"
-	"fmt"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
@@ -20,6 +19,9 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 
 	//判断用户是否存在
 	ruser, err := u.checkUserExist(ctx, user.Name)
+	if err != nil {
+		log.Debugf("checkUserExist 返回错误: %v", err)
+	}
 	if ruser != nil && ruser.Name != RATE_LIMIT_PREVENTION {
 		log.Debug("用户已经存在,无法创建")
 		return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在")
@@ -29,17 +31,13 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		log.Errorf("生产者转换错误")
 		return errors.WithCode(code.ErrKafkaFailed, "Kafka生产者未初始化")
 	}
-	if u.Producer == nil {
-		return fmt.Errorf("producer未初始化")
-	}
 	// 发送到Kafka
 	errKafka := u.Producer.SendUserCreateMessage(ctx, user)
 	if errKafka != nil {
-		log.Errorf("requestID=%s: 生产者消息发送失败 username=%s, err=%v", ctx.Value("requestID"), user.Name, err)
+		log.Errorf("requestID=%v: 生产者消息发送失败 username=%s, err=%v", ctx.Value("requestID"), user.Name, errKafka)
 		return errors.WithCode(code.ErrKafkaFailed, "kafka生产者消息发送失败")
-	} else {
-		log.Debugw("用户创建请求已发送到Kafka", "username", user.Name)
 	}
+	log.Debugw("用户创建请求已发送到Kafka", "username", user.Name)
 
 	return nil
 }

@@ -392,10 +392,10 @@ func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Messa
 	var lastErr error
 
 	for i := 0; i < maxSendRetries; i++ {
-		// 使用临时writer，避免长期占用连接,不设置Topic
+		// 使用临时writer，避免长期占用连接
+		// 注意：不要同时在 Writer 和 Message 上设置 Topic（kafka-go 要求只在其中一种设置）
 		writer := &kafka.Writer{
 			Addr:                   kafka.TCP(KafkaBrokers...),
-			Topic:                  topic,
 			Balancer:               &kafka.Hash{},
 			BatchSize:              1, // 同步发送，每批次1条
 			BatchTimeout:           100 * time.Millisecond,
