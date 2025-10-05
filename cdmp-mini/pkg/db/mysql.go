@@ -100,7 +100,7 @@ func NewDBManager(opts *Options) (*DBManager, error) {
 		go mgr.healthCheck()
 	}
 
-	log.Infof("Database cluster initialized: primary=1, replicas=%d, load_balance=%v",
+	log.Debugf("Database cluster initialized: primary=1, replicas=%d, load_balance=%v",
 		len(mgr.replicaDBs), opts.LoadBalance)
 
 	return mgr, nil
@@ -322,7 +322,7 @@ func New(opts *Options) (*gorm.DB, error) {
 	// 添加查询超时回调
 	addQueryTimeoutCallbacks(db, opts.Timeout)
 
-	log.Infof("Database connection initialized: Host=%s, MaxOpenConns=%d, MaxIdleConns=%d",
+	log.Debugf("Database connection initialized: Host=%s, MaxOpenConns=%d, MaxIdleConns=%d",
 		opts.Host, opts.MaxOpenConnections, opts.MaxIdleConnections)
 
 	return db, nil

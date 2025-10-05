@@ -773,6 +773,9 @@ func init() {
 		ConsumerProcessingTime,
 		ConsumerRetryMessages,
 		ConsumerDeadLetterMessages,
+		// commit success/failure metrics should be registered so they're exposed
+		ConsumerCommitSuccess,
+		ConsumerCommitFailures,
 		ConsumerLag,
 
 		// 数据库指标

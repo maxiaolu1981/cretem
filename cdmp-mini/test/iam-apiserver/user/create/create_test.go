@@ -24,7 +24,7 @@ import (
 
 // ==================== 配置常量 ====================
 const (
-	ServerBaseURL  = "http://localhost:8088"
+	ServerBaseURL  = "http://192.168.10.8:8088"
 	RequestTimeout = 30 * time.Second
 
 	LoginAPIPath = "/login"

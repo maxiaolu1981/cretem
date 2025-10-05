@@ -28,7 +28,7 @@ var (
 	localLimiter = &localRateLimiter{
 		counters: make(map[string]*localCounter),
 	}
-	
+
 	// 定期清理过期的本地计数器
 	cleanupTicker = time.NewTicker(5 * time.Minute)
 )
@@ -149,7 +149,7 @@ func localRateCheck(identifier string, limit int, window time.Duration) bool {
 
 	now := time.Now()
 	counter, exists := localLimiter.counters[identifier]
-	
+
 	if !exists {
 		localLimiter.counters[identifier] = &localCounter{
 			count:    1,
@@ -169,7 +169,7 @@ func localRateCheck(identifier string, limit int, window time.Duration) bool {
 	// 增加计数
 	counter.count++
 	counter.lastTime = now
-	
+
 	// 本地限制可以比Redis宽松一些，避免误限流
 	localLimit := limit * 2
 	return counter.count <= int64(localLimit)
@@ -198,7 +198,7 @@ func handleRedisError(c *gin.Context, err error, identifier string, limit int) {
 	// Redis不可用时，使用宽松的本地限流
 	if !lenientLocalRateCheck(identifier, limit) {
 		c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
-			"code":    100209, 
+			"code":    100209,
 			"message": "系统繁忙，请稍后再试",
 			"data":    nil,
 		})
@@ -216,7 +216,7 @@ func strictLocalRateCheck(identifier string, limit int) bool {
 	if !exists {
 		return true
 	}
-	
+
 	// 严格模式：使用原始限制
 	return counter.count <= int64(limit)
 }
@@ -230,7 +230,7 @@ func lenientLocalRateCheck(identifier string, limit int) bool {
 	if !exists {
 		return true
 	}
-	
+
 	// 宽松模式：使用2倍限制
 	return counter.count <= int64(limit*2)
 }
@@ -305,14 +305,14 @@ func LoginRateLimiterByUser(redisCluster *storage.RedisCluster, limit int, windo
 func CleanupRateLimit(redisCluster *storage.RedisCluster) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	
+
 	pattern := buildRedisKey(redisCluster, "ratelimit:login:*")
 	keys, err := redisCluster.GetClient().Keys(ctx, pattern).Result()
 	if err != nil {
 		log.Errorf("清理限流key失败: %v", err)
 		return
 	}
-	
+
 	if len(keys) > 0 {
 		_, err = redisCluster.GetClient().Del(ctx, keys...).Result()
 		if err != nil {
@@ -320,11 +320,11 @@ func CleanupRateLimit(redisCluster *storage.RedisCluster) {
 			return
 		}
 	}
-	
+
 	// 同时清理本地计数器
 	localLimiter.Lock()
 	localLimiter.counters = make(map[string]*localCounter)
 	localLimiter.Unlock()
-	
-	log.Infof("清理了 %d 个Redis限流key和本地计数器", len(keys))
+
+	log.Debugf("清理了 %d 个Redis限流key和本地计数器", len(keys))
 }

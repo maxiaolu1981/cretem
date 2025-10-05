@@ -523,10 +523,10 @@ func isUnrecoverableError(errStr string) bool {
 
 	for _, unrecoverableErr := range unrecoverableErrors {
 		if strings.Contains(errStr, unrecoverableErr) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // isRecoverableError 判断是否为可恢复的错误

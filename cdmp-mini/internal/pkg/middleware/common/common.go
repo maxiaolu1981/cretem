@@ -167,13 +167,13 @@ func GetMiddlewareStack(opt *options.Options) []gin.HandlerFunc {
 		if middleware, exists := allMiddlewares[key]; exists {
 
 			if opt.ServerRunOptions.Env == "development" {
-				log.Infof("安装中间件: %s (%T)", key, middleware)
+				log.Debugf("安装中间件: %s (%T)", key, middleware)
 			} else {
-				log.Infof("安装中间件: %s", key)
+				log.Debugf("安装中间件: %s", key)
 			}
 			stack = append(stack, middleware)
 		}
 	}
-	log.Infof("环境: %s, 共安装 %d 个中间件", opt.ServerRunOptions.Env, len(stack))
+	log.Debugf("环境: %s, 共安装 %d 个中间件", opt.ServerRunOptions.Env, len(stack))
 	return stack
 }
