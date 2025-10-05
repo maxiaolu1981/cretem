@@ -16,7 +16,7 @@ import (
 func (u *Users) Get(ctx context.Context, username string,
 	opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
 
-	log.Info("store:开始处理用户创建请求...")
+	log.Debug("store:开始处理用户创建请求...")
 	// 设置包含重试时间预算的超时上下文
 	totalCtx, cancel := u.createTimeoutContext(ctx, opt.ServerRunOptions.CtxTimeout, 3)
 	defer cancel()

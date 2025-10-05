@@ -18,7 +18,7 @@ import (
 )
 
 func (u *UserController) Get(ctx *gin.Context) {
-	log.Info("control:开始处理用户查询请求...")
+	log.Debug("control:开始处理用户查询请求...")
 
 	operator := common.GetUsername(ctx.Request.Context())
 	username := ctx.Param("name")

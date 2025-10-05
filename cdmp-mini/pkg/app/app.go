@@ -311,7 +311,7 @@ func (a *App) buildCommand() error {
 
 func (a *App) runCommand(cmd *cobra.Command, args []string) error {
 	pwd, _ := os.Getwd()
-	log.Infof("%s开始在[%s]运行%s", progressMessage, pwd, a.name)
+	log.Debugf("%s开始在[%s]运行%s", progressMessage, pwd, a.name)
 	if a.runFunc != nil {
 		err := a.runFunc(a.basename)
 		if err != nil {

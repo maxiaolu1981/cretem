@@ -4,6 +4,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/rand"
 	"strconv"
@@ -57,21 +58,20 @@ func (rc *RetryConsumer) Close() error {
 }
 
 func (rc *RetryConsumer) StartConsuming(ctx context.Context, workerCount int) {
-	log.Infof("🚀 StartConsuming开始，worker数量: %d", workerCount)
-	log.Infof("上下文状态: %v", ctx.Err())
-	log.Infof("Reader状态: %v", rc.reader != nil)
+	log.Debugf("StartConsuming 开始，worker数量: %d", workerCount)
+	log.Debugf("上下文状态: %v", ctx.Err())
+	log.Debugf("Reader已初始化: %v", rc.reader != nil)
 	var wg sync.WaitGroup
 
 	if rc.reader == nil {
-		log.Error("Reader未初始化，等待...")
+		log.Warn("Reader未初始化，等待...")
 		time.Sleep(3 * time.Second)
 		if rc.reader == nil {
-			log.Error("Reader仍然未初始化，退出")
+			log.Warn("Reader仍然未初始化，退出")
 			return
 		}
 	}
 
-	// 为每个worker启动一个goroutine
 	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go func(workerID int) {
@@ -79,24 +79,33 @@ func (rc *RetryConsumer) StartConsuming(ctx context.Context, workerCount int) {
 			rc.retryWorker(ctx, workerID)
 		}(i)
 	}
-	log.Info("等待所有worker完成...")
+	log.Debug("等待所有worker完成...")
 	wg.Wait()
-	log.Info("所有worker已完成，StartConsuming返回")
+	log.Debug("所有worker已完成，StartConsuming返回")
 }
 
 func (rc *RetryConsumer) retryWorker(ctx context.Context, workerID int) {
-	log.Infof("启动重试消费者Worker %d", workerID)
+	log.Debugf("启动重试消费者Worker %d", workerID)
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Infof("重试Worker %d: 停止消费", workerID)
+			log.Debugf("重试Worker %d: 停止消费", workerID)
 			return
 		default:
-			log.Debugf("Worker %d: 准备获取消息...", workerID) // 🔴 添加这行
+			log.Debugf("Worker %d: 准备获取消息...", workerID)
 			msg, err := rc.reader.FetchMessage(ctx)
 			if err != nil {
-				log.Errorf("重试Worker %d: 获取消息失败: %v", workerID, err)
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					log.Debugf("Worker %d: 上下文已取消，退出", workerID)
+					return
+				}
+				log.Warnf("重试Worker %d: 获取消息失败: %v，稍后重试", workerID, err)
+				select {
+				case <-time.After(200 * time.Millisecond):
+				case <-ctx.Done():
+					return
+				}
 				continue
 			}
 
@@ -105,15 +114,39 @@ func (rc *RetryConsumer) retryWorker(ctx context.Context, workerID int) {
 				continue
 			}
 
-			if err := rc.reader.CommitMessages(ctx, msg); err != nil {
+			if err := rc.commitWithRetry(ctx, msg, workerID); err != nil {
 				log.Errorf("重试Worker %d: 提交偏移量失败: %v", workerID, err)
 			}
 		}
 	}
 }
 
-func (rc *RetryConsumer) processRetryMessage(ctx context.Context, msg kafka.Message) error {
+// commitWithRetry 对 RetryConsumer 的 CommitMessages 进行短次数重试
+func (rc *RetryConsumer) commitWithRetry(ctx context.Context, msg kafka.Message, workerID int) error {
+	maxAttempts := 3
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		if err := rc.reader.CommitMessages(ctx, msg); err != nil {
+			lastErr = err
+			metrics.ConsumerProcessingErrors.WithLabelValues(rc.reader.Config().Topic, rc.reader.Config().GroupID, "commit", "commit_error").Inc()
+			log.Warnf("RetryWorker %d: 提交偏移量失败 (尝试 %d/%d): %v", workerID, i+1, maxAttempts, err)
+			wait := time.Duration(100*(1<<uint(i))) * time.Millisecond
+			select {
+			case <-time.After(wait):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		} else {
+			log.Debugf("RetryWorker %d: 偏移量提交成功", workerID)
+			return nil
+		}
+	}
+	log.Errorf("RetryWorker %d: 提交偏移量最终失败: %v", workerID, lastErr)
+	return lastErr
+}
 
+func (rc *RetryConsumer) processRetryMessage(ctx context.Context, msg kafka.Message) error {
 	operation := rc.getOperationFromHeaders(msg.Headers)
 
 	switch operation {

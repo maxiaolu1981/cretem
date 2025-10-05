@@ -118,7 +118,7 @@ func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *op
 
 	// 统计处理时间
 	processingTime := time.Since(startTime)
-	logger.Infof("Successfully processed %d users in %v", len(resultItems), processingTime)
+	logger.Debugf("Successfully processed %d users in %v", len(resultItems), processingTime)
 
 	return &v1.UserList{
 		ListMeta: users.ListMeta,

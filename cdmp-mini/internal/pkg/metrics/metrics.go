@@ -46,6 +46,11 @@ var (
 	ConsumerDeadLetterMessages *prometheus.CounterVec
 	ConsumerLag                *prometheus.GaugeVec
 
+	// 新增：topic 分区数量、组实例数量与无主分区的启发式计数
+	ConsumerTopicPartitions   *prometheus.GaugeVec
+	ConsumerGroupInstances    *prometheus.GaugeVec
+	ConsumerPartitionsNoOwner *prometheus.GaugeVec
+
 	// 数据库操作指标
 	// DatabaseQueryDuration    *prometheus.HistogramVec
 	// DatabaseQueryErrors      *prometheus.CounterVec
@@ -303,6 +308,31 @@ func init() {
 		prometheus.GaugeOpts{
 			Name: "kafka_consumer_lag",
 			Help: "Current consumer lag (estimated)",
+		},
+		[]string{"topic", "group"},
+	)
+
+	// 新增：topic 分区与消费组实例相关指标
+	ConsumerTopicPartitions = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kafka_topic_partitions",
+			Help: "Number of partitions for a Kafka topic",
+		},
+		[]string{"topic"},
+	)
+
+	ConsumerGroupInstances = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kafka_consumer_group_instances",
+			Help: "Number of active consumer instances in the consumer group",
+		},
+		[]string{"group"},
+	)
+
+	ConsumerPartitionsNoOwner = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "kafka_partitions_without_consumer",
+			Help: "Heuristic count of partitions without active consumers for a topic/group",
 		},
 		[]string{"topic", "group"},
 	)

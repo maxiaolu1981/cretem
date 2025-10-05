@@ -39,7 +39,7 @@ func (u *UserService) Delete(ctx context.Context, username string, force bool, o
 			return errors.WithCode(code.ErrKafkaFailed, "kafka生产者消息发送失败")
 		}
 		// 记录业务成功
-		log.Infow("用户删除请求已发送到Kafka", "username", username)
+		log.Debugw("用户删除请求已发送到Kafka", "username", username)
 		return nil
 
 	} else { //更新操作

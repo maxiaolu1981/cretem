@@ -208,13 +208,13 @@ func NewRedisClusterPool(isCache bool, config *options.RedisOptions) redis.Unive
 	}
 
 	if opts.MasterName != "" {
-		log.Info("--> [REDIS] Creating sentinel-backed failover client")
+		log.Debug("--> [REDIS] Creating sentinel-backed failover client")
 		client = redis.NewFailoverClient(opts.failover())
 	} else if config.EnableCluster {
-		log.Info("--> [REDIS] Creating cluster client")
+		log.Debug("--> [REDIS] Creating cluster client")
 		client = redis.NewClusterClient(opts.cluster())
 	} else {
-		log.Info("--> [REDIS] Creating single-node client")
+		log.Debug("--> [REDIS] Creating single-node client")
 		client = redis.NewClient(opts.simple())
 	}
 
@@ -853,13 +853,13 @@ func (r *RedisCluster) DeleteScanMatch(ctx context.Context, pattern string) bool
 
 	if len(keys) > 0 {
 		for _, name := range keys {
-			log.Infof("Deleting: %s", name)
+			log.Debugf("Deleting: %s", name)
 			err := client.Del(ctx, name).Err()
 			if err != nil {
 				log.Errorf("Error trying to delete key: %s - %s", name, err.Error())
 			}
 		}
-		log.Infof("Deleted: %d records", len(keys))
+		log.Debugf("Deleted: %d records", len(keys))
 	} else {
 		log.Debug("RedisCluster called DEL - Nothing to delete")
 	}

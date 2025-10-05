@@ -33,7 +33,7 @@ type UserProducer struct {
 // internal/pkg/server/producer.go
 
 func NewUserProducer(options *options.KafkaOptions) *UserProducer {
-	// 主Writer（高性能配置）
+	// 主Writer（高性能配置）主业务消息（创建、更新、删除用户）
 	mainWriter := &kafka.Writer{
 		Addr: kafka.TCP(options.Brokers...),
 		// 注意：这里不设置 Topic，在发送时动态设置
@@ -54,12 +54,13 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 	reliableWriter := &kafka.Writer{
 		Addr: kafka.TCP(options.Brokers...),
 		// 注意：这里不设置 Topic，在发送时动态设置
-		MaxAttempts:     10,
+		//	Topic:           UserRetryTopic, // ✅ 在这里设置Topic
+		MaxAttempts:     10, // 更多重试次数
 		WriteBackoffMin: 500 * time.Millisecond,
 		WriteBackoffMax: 5 * time.Second,
-		BatchSize:       1,
-		WriteTimeout:    60 * time.Second,
-		RequiredAcks:    kafka.RequireAll,
+		BatchSize:       1,                // 每条消息立即发送
+		WriteTimeout:    60 * time.Second, // 更长超时
+		RequiredAcks:    kafka.RequireAll, // 需要所有副本确认
 		Async:           false,
 		Compression:     kafka.Snappy,
 		Balancer:        &kafka.Hash{}, // 新增：使用Hash平衡器确保分区均匀分布
@@ -197,7 +198,7 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 
 	success = true
 	sendErr = nil
-	log.Infof("发送成功(重试): topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
+	log.Debugf("发送成功(重试): topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
 	return nil
 }
 
@@ -240,7 +241,7 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 		Key:   msg.Key,
 		Value: msg.Value,
 		Time:  time.Now(),
-		Topic: UserRetryTopic,
+		//	Topic: UserRetryTopic,
 	}
 
 	// 复制并更新headers
@@ -320,7 +321,7 @@ func (p *UserProducer) recordDeadLetterOperation(topic, operation string, start 
 	if err != nil {
 		log.Errorf("死信队列发送失败: key=%s, reason=%s, error=%v", messageKey, errorInfo, err)
 	} else {
-		log.Warnf("发送到死信队列成功: key=%s, reason=%s, 耗时=%v", messageKey, errorInfo, duration)
+		log.Debugf("发送到死信队列成功: key=%s, reason=%s, 耗时=%v", messageKey, errorInfo, duration)
 	}
 }
 
@@ -393,7 +394,7 @@ func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Messa
 	var lastErr error
 
 	for i := 0; i < maxSendRetries; i++ {
-		// 使用临时writer，避免长期占用连接
+		// 使用临时writer，避免长期占用连接,不设置Topic
 		writer := &kafka.Writer{
 			Addr:                   kafka.TCP(KafkaBrokers...),
 			Topic:                  topic,

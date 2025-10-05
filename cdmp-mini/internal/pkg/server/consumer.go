@@ -74,13 +74,13 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 
 // 消息调度
 func (c *UserConsumer) worker(ctx context.Context, workerID int) {
-	log.Infof("启动消费者实例 %d, Worker %d, Topic: %s, 消费组: %s",
+	log.Debugf("启动消费者实例 %d, Worker %d, Topic: %s, 消费组: %s",
 		c.instanceID, workerID, c.topic, c.groupID)
 
 	for {
 		select {
 		case <-ctx.Done():
-			log.Infof("Worker %d: 停止消费", workerID)
+			log.Debugf("Worker %d: 停止消费", workerID)
 			return
 
 		default:
@@ -89,8 +89,8 @@ func (c *UserConsumer) worker(ctx context.Context, workerID int) {
 
 			if err != nil {
 				log.Warnf("Worker %d: 处理消息失败: %v", workerID, err)
-				// 所有错误都只是休眠后继续，不停止worker
-				time.Sleep(100 * time.Millisecond)
+				// 所有错误都只是休眠后继续，不停止worker。使用指数退避以避免紧循环。
+				time.Sleep(200 * time.Millisecond)
 			} else {
 				log.Debugf("Worker %d: 消息处理完成", workerID)
 			}
@@ -116,7 +116,7 @@ func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) e
 
 		// 检查是否是上下文取消
 		if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
-			log.Infof("Worker %d: 上下文已取消，停止获取消息", workerID)
+			log.Debugf("Worker %d: 上下文已取消，停止获取消息", workerID)
 			processingErr = fetchErr
 			return fetchErr
 		}
@@ -127,7 +127,7 @@ func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) e
 		case <-time.After(backoff):
 			// 继续重试
 		case <-ctx.Done():
-			log.Infof("Worker %d: 重试期间上下文取消", workerID)
+			log.Debugf("Worker %d: 重试期间上下文取消", workerID)
 			processingErr = ctx.Err()
 			return processingErr
 		}
@@ -156,15 +156,36 @@ func (c *UserConsumer) processSingleMessage(ctx context.Context, workerID int) e
 	}
 
 	// 提交偏移量（确认消费）
-	if err := c.reader.CommitMessages(ctx, msg); err != nil {
-		log.Errorf("Worker %d: 提交偏移量失败: %v", workerID, err)
-		metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, "commit", "commit_error").Inc()
+	if err := c.commitWithRetry(ctx, msg, workerID); err != nil {
 		return err
-	} else {
-		log.Debugf("Worker %d: 偏移量提交成功", workerID)
 	}
 	return nil
+}
 
+// commitWithRetry 尝试提交消息偏移，遇到临时错误会重试
+func (c *UserConsumer) commitWithRetry(ctx context.Context, msg kafka.Message, workerID int) error {
+	maxAttempts := 3
+	var lastErr error
+	for i := 0; i < maxAttempts; i++ {
+		if err := c.reader.CommitMessages(ctx, msg); err != nil {
+			lastErr = err
+			metrics.ConsumerProcessingErrors.WithLabelValues(c.topic, c.groupID, "commit", "commit_error").Inc()
+			log.Warnf("Worker %d: 提交偏移量失败 (尝试 %d/%d): %v", workerID, i+1, maxAttempts, err)
+			// 指数退避
+			wait := time.Duration(100*(1<<uint(i))) * time.Millisecond
+			select {
+			case <-time.After(wait):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		} else {
+			log.Debugf("Worker %d: 偏移量提交成功", workerID)
+			return nil
+		}
+	}
+	log.Errorf("Worker %d: 提交偏移量最终失败: %v", workerID, lastErr)
+	return lastErr
 }
 
 // 业务处理
@@ -209,7 +230,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		log.Debugf("用户%s缓存成功", user.Name)
 	}
 
-	log.Infof("用户创建成功: username=%s", user.Name)
+	log.Debugf("用户创建成功: username=%s", user.Name)
 	return nil
 }
 
@@ -234,9 +255,9 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 	if err := c.deleteUserCache(ctx, deleteRequest.Username); err != nil {
 		log.Errorw("缓存删除失败", "username", deleteRequest.Username, "error", err)
 	} else {
-		log.Infof("缓存删除成功: username=%s", deleteRequest.Username)
+		log.Debugf("缓存删除成功: username=%s", deleteRequest.Username)
 	}
-	log.Infof("用户删除成功: username=%s", deleteRequest.Username)
+	log.Debugf("用户删除成功: username=%s", deleteRequest.Username)
 
 	return nil
 }
@@ -255,7 +276,7 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 
 	c.setUserCache(ctx, &user)
 
-	log.Infof("用户更新成功: username=%s", user.Name)
+	log.Debugf("用户更新成功: username=%s", user.Name)
 	return nil
 }
 
@@ -348,7 +369,7 @@ func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Me
 		return fmt.Errorf("发送重试主题失败: %v (原错误: %v)", retryErr, lastErr)
 	}
 
-	log.Infof("消息已发送到重试主题: %s", string(msg.Key))
+	log.Debugf("消息已发送到重试主题: %s", string(msg.Key))
 	return nil // 重试主题发送成功，认为处理完成
 }
 

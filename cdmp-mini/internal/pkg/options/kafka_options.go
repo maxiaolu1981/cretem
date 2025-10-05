@@ -46,6 +46,10 @@ type KafkaOptions struct {
 
 	RetryWorkerCount int `json:"retryWorkerCount" mapstructure:"retryWorkerCount" validate:"min=1"`
 
+	// Metrics refresh configuration for retry/topic metrics
+	EnableMetricsRefresh   bool          `json:"enableMetricsRefresh" mapstructure:"enableMetricsRefresh"`
+	MetricsRefreshInterval time.Duration `json:"metricsRefreshInterval" mapstructure:"metricsRefreshInterval"`
+
 	// 是否启用SSL
 	EnableSSL bool `json:"enableSSL" mapstructure:"enableSSL"`
 
@@ -61,25 +65,27 @@ type KafkaOptions struct {
 // NewKafkaOptions 创建带有默认值的Kafka配置
 func NewKafkaOptions() *KafkaOptions {
 	return &KafkaOptions{
-		Brokers:              []string{"192.168.10.8:9092", "192.168.10.8:9093", "192.168.10.8:9094"},
-		Topic:                "default-topic",
-		ConsumerGroup:        "default-consumer-group",
-		RequiredAcks:         -1, // leader确认
-		Async:                true,
-		BatchSize:            100,
-		BatchTimeout:         100 * time.Millisecond,
-		MaxRetries:           4,
-		MinBytes:             50 * 1024,        // 10KB
-		MaxBytes:             10 * 1024 * 1024, // 10MB
-		WorkerCount:          16,
-		RetryWorkerCount:     3,
-		EnableSSL:            false,
-		SSLCertFile:          "",
-		BaseRetryDelay:       5 * time.Second,
-		MaxRetryDelay:        2 * time.Minute,
-		AutoCreateTopic:      true,
-		DesiredPartitions:    48, // 期望的分区数
-		AutoExpandPartitions: true,
+		Brokers:                []string{"192.168.10.8:9092", "192.168.10.8:9093", "192.168.10.8:9094"},
+		Topic:                  "default-topic",
+		ConsumerGroup:          "default-consumer-group",
+		RequiredAcks:           -1, // leader确认
+		Async:                  true,
+		BatchSize:              100,
+		BatchTimeout:           100 * time.Millisecond,
+		MaxRetries:             4,
+		MinBytes:               50 * 1024,        // 10KB
+		MaxBytes:               10 * 1024 * 1024, // 10MB
+		WorkerCount:            16,
+		RetryWorkerCount:       3,
+		EnableMetricsRefresh:   true,
+		MetricsRefreshInterval: 30 * time.Second,
+		EnableSSL:              false,
+		SSLCertFile:            "",
+		BaseRetryDelay:         5 * time.Second,
+		MaxRetryDelay:          2 * time.Minute,
+		AutoCreateTopic:        true,
+		DesiredPartitions:      48, // 期望的分区数
+		AutoExpandPartitions:   true,
 	}
 }
 
@@ -140,6 +146,11 @@ func (k *KafkaOptions) Complete() {
 	if k.DesiredPartitions <= 0 {
 		k.DesiredPartitions = 48 // 默认16个分区
 	}
+	if k.MetricsRefreshInterval <= 0 {
+		k.MetricsRefreshInterval = 30 * time.Second
+	}
+	// 默认启用周期性指标刷新
+	// 如果未显式配置，则保持默认 true
 	// 确保worker数量不超过分区数
 	if k.WorkerCount > k.DesiredPartitions {
 		log.Warnf("Worker数量(%d)超过分区数(%d)，部分worker可能空闲",

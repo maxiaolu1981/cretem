@@ -17,12 +17,12 @@ func CheckKafkaConnection(opt *options.Options) error {
 	var lastErr error
 
 	for i := 0; i < opt.KafkaOptions.MaxRetries; i++ {
-		log.Infof("尝试连接 Kafka (第 %d/%d 次)...", i+1, opt.KafkaOptions.MaxRetries)
+		log.Debugf("尝试连接 Kafka (第 %d/%d 次)...", i+1, opt.KafkaOptions.MaxRetries)
 
 		// 方法1: 尝试连接 Broker
 		if err := checkKafkaBrokers(opt.KafkaOptions.Brokers, opt.KafkaOptions.BatchTimeout); err != nil {
 			lastErr = err
-			log.Infof("Kafka 连接失败: %v", err)
+			log.Debugf("Kafka 连接失败: %v", err)
 			time.Sleep(2 * time.Second) // 等待2秒后重试
 			continue
 		}
@@ -30,12 +30,12 @@ func CheckKafkaConnection(opt *options.Options) error {
 		// 方法2: 尝试创建临时主题来验证集群可用性
 		if err := checkKafkaCluster(opt); err != nil {
 			lastErr = err
-			log.Infof("Kafka 集群检查失败: %v", err)
+			log.Debugf("Kafka 集群检查失败: %v", err)
 			time.Sleep(2 * time.Second)
 			continue
 		}
 
-		log.Infof("Kafka 连接成功!")
+		log.Debug("Kafka 连接成功")
 		return nil
 	}
 
@@ -53,7 +53,7 @@ func checkKafkaBrokers(brokers []string, timeout time.Duration) error {
 			return fmt.Errorf("无法连接到 Broker %s: %v", broker, err)
 		}
 		conn.Close()
-		log.Infof("Broker %s 连接成功", broker)
+		log.Debugf("Broker %s 连接成功", broker)
 	}
 	return nil
 }
@@ -79,7 +79,7 @@ func checkKafkaCluster(opt *options.Options) error {
 			return err
 		}
 		// 其他错误（如主题不存在）可以忽略，说明 Kafka 是运行的
-		log.Infof("Kafka 运行中但主题可能不存在: %v", err)
+		log.Debugf("Kafka 运行中但主题可能不存在: %v", err)
 	}
 
 	return nil
@@ -100,13 +100,13 @@ func isKafkaStartingError(err error) bool {
 
 // TestKafkaConnect 初始化 Kafka 连接，如果失败则退出程序
 func TestKafkaConnect(opt *options.Options) error {
-	log.Info("开始检查 Kafka 服务状态...")
+	log.Debug("开始检查 Kafka 服务状态...")
 
 	if err := CheckKafkaConnection(opt); err != nil {
 		log.Fatalf("❌ Kafka 服务不可用，程序退出: %v", err)
 		return err
 	}
 
-	log.Info("✅ Kafka 服务可用，继续启动程序...")
+	log.Debug("✅ Kafka 服务可用，继续启动程序...")
 	return nil
 }

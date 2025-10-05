@@ -317,7 +317,7 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 	go g.executeBackgroundCleanup(claims)
 
 	// 4. 登出成功响应
-	log.Infof("登出成功，user_id=%s", claims.UserID)
+	log.Debugf("登出成功，user_id=%s", claims.UserID)
 	// 🔧 优化4：成功场景也通过core.WriteResponse，确保格式统一（code=成功码，message=成功消息）
 	core.WriteResponse(c, nil, "登出成功")
 }
@@ -395,7 +395,7 @@ func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomC
 
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			log.Infof("用户会话不存在，无需清理: user_id=%s", userID)
+			log.Debugf("用户会话不存在，无需清理: user_id=%s", userID)
 			return
 		}
 		log.Errorf("登出清理Lua脚本执行失败: user_id=%s, error=%v", userID, err)
@@ -407,7 +407,7 @@ func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomC
 		tokenCount = int(result.(int64))
 	}
 
-	log.Infof("用户登出清理完成: user_id=%s, 清理了%d个refresh token, jti=%s",
+	log.Debugf("用户登出清理完成: user_id=%s, 清理了%d个refresh token, jti=%s",
 		userID, tokenCount, jti)
 	log.Debugf("登出-用户会话Key: %s", redisGenericapiserverPrefix+userSessionsKey)
 }
@@ -914,7 +914,7 @@ func LogWithLevelByBizCode(c *gin.Context, bizCode int, message string) {
 			bizCode, requestID, message)
 	// 常规场景：Info级别（正常用户操作，如令牌过期、缺少头）
 	case code.ErrExpired, code.ErrMissingHeader, code.ErrPermissionDenied:
-		log.Infof("[常规场景] 未授权（bizCode: %d），request-id: %s，消息: %s",
+		log.Debugf("[常规场景] 未授权（bizCode: %d），request-id: %s，消息: %s",
 			bizCode, requestID, message)
 	// 未分类：Warn级别（需后续补充匹配规则）
 	default:
@@ -1017,7 +1017,7 @@ func (g *GenericAPIServer) getLoginFailCount(ctx *gin.Context, username string) 
 	}
 	count, err := strconv.Atoi(val)
 	if err != nil {
-		log.Infof("解析登录失败次数失败: username=%s, val=%s, error=%v", username, val, err)
+		log.Debugf("解析登录失败次数失败: username=%s, val=%s, error=%v", username, val, err)
 		return 0, nil // 解析失败默认返回0次
 	}
 	return count, nil
@@ -1104,7 +1104,7 @@ func extractBizCode(c *gin.Context, message string) int {
 		// 适配自定义withCode错误（必须实现Code() int方法）
 		if customErr, ok := rawErr.(interface{ Code() int }); ok {
 			bizCode := customErr.Code()
-			log.Infof("[handleUnauthorized] 从错误中提取业务码: %d（request-id: %s）",
+			log.Debugf("[handleUnauthorized] 从错误中提取业务码: %d（request-id: %s）",
 				bizCode, getRequestID(c))
 			return bizCode
 		}

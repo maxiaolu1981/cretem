@@ -16,12 +16,12 @@ import (
 
 func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
 
-	log.Info("service:开始处理用户创建请求...")
+	log.Debug("service:开始处理用户创建请求...")
 
 	//判断用户是否存在
 	ruser, err := u.checkUserExist(ctx, user.Name)
 	if ruser != nil && ruser.Name != RATE_LIMIT_PREVENTION {
-		log.Info("用户已经存在,无法创建")
+		log.Debug("用户已经存在,无法创建")
 		return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在")
 	}
 
@@ -38,7 +38,7 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		log.Errorf("requestID=%s: 生产者消息发送失败 username=%s, err=%v", ctx.Value("requestID"), user.Name, err)
 		return errors.WithCode(code.ErrKafkaFailed, "kafka生产者消息发送失败")
 	} else {
-		log.Infow("用户创建请求已发送到Kafka", "username", user.Name)
+		log.Debugw("用户创建请求已发送到Kafka", "username", user.Name)
 	}
 
 	return nil

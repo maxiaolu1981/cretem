@@ -17,7 +17,7 @@ import (
 
 func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
 
-	log.Info("service:开始处理用户查询请求...")
+	log.Debug("service:开始处理用户查询请求...")
 
 	cacheKey := u.generateUserCacheKey(username)
 	// 先尝试无锁查询缓存（大部分请求应该在这里返回）

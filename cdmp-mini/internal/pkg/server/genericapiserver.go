@@ -21,7 +21,7 @@ import (
 
 	mysql "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 
@@ -51,7 +51,7 @@ type GenericAPIServer struct {
 
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	// 初始化日志
-	log.Infof("正在初始化GenericAPIServer服务器，环境: %s", opts.ServerRunOptions.Mode)
+	log.Debugf("正在初始化GenericAPIServer服务器，环境: %s", opts.ServerRunOptions.Mode)
 
 	//创建服务器实例
 	g := &GenericAPIServer{
@@ -71,12 +71,12 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		return nil, err
 	}
 	interfaces.SetClient(storeIns)
-	log.Info("mysql服务器初始化成功")
+	log.Debug("mysql服务器初始化成功")
 
 	// ========== 新增：增强版集群状态检查和初始化 ==========
 	if datastore, ok := storeIns.(*store.Datastore); ok {
 		if datastore.IsClusterMode() {
-			log.Info("🚀 检测到Galera集群模式，正在初始化集群连接...")
+			log.Debug("🚀 检测到Galera集群模式，正在初始化集群连接...")
 
 			// 执行集群健康检查
 			if err := initializeGaleraCluster(datastore); err != nil {
@@ -87,7 +87,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 			// 定期监控集群状态（可选）
 			go monitorClusterHealth(datastore, opts.MysqlOptions.HealthCheckInterval)
 		} else {
-			log.Info("✅ 使用单节点MySQL模式")
+			log.Debug("✅ 使用单节点MySQL模式")
 		}
 	}
 
@@ -98,21 +98,13 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		log.Error("redis服务器启动失败")
 		return nil, err
 	}
-	log.Info("redis服务器启动成功")
+	log.Debug("redis服务器启动成功")
 	time.Sleep(3 * time.Second)
-
-	// 测试kafka是否连通
-	if err := TestKafkaConnect(opts); err != nil {
-		log.Error("kafka测试连通失败")
-		return nil, errors.WithCode(code.ErrKafkaFailed, "kafka服务未启动")
-	}
-
-	//初始化kafka
 	if err := g.initKafkaComponents(dbIns); err != nil {
 		log.Error("kafka服务启动失败")
 		return nil, err
 	}
-	log.Info("kafka服务器启动成功")
+	log.Debug("kafka服务器启动成功")
 	time.Sleep(3 * time.Second)
 
 	// 启动消费者
@@ -135,7 +127,97 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 				go instances.deleteConsumers[i].StartConsuming(ctx, 1)
 			}
 		}
-		log.Infof("已启动 %d 个消费者实例", len(instances.createConsumers))
+
+		// 单独启动重试消费者的所有实例，保证重试主题能在消费者组中均衡分配分区
+		if len(instances.retryConsumers) > 0 {
+			// 查询 topic 分区数用于指标和并发计算
+			partitionCount := 0
+			brokers := g.options.KafkaOptions.Brokers
+			if len(brokers) > 0 {
+				if p, err := getTopicPartitionCount(ctx, brokers, UserRetryTopic); err == nil {
+					partitionCount = p
+				} else {
+					log.Warnf("无法获取 topic %s 的分区信息: %v", UserRetryTopic, err)
+				}
+			}
+
+			// 更新 prometheus 指标
+			retryGroupId := ConsumerGroupPrefix + "-retry"
+			metrics.ConsumerTopicPartitions.WithLabelValues(UserRetryTopic).Set(float64(partitionCount))
+			metrics.ConsumerGroupInstances.WithLabelValues(retryGroupId).Set(float64(len(instances.retryConsumers)))
+			if len(instances.retryConsumers) == 0 {
+				metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(float64(partitionCount))
+			} else {
+				// 简单启发式：当有实例存在时，认为无主分区为0（更精确的检测需要 Kafka admin/group 查询）
+				metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(0)
+			}
+
+			// 根据分区数与实例数计算每个实例需要的 worker 数（上限为 RetryConsumerWorkers）
+			workersPerInstance := 1
+			if partitionCount > 0 && len(instances.retryConsumers) > 0 {
+				workersPerInstance = (partitionCount + len(instances.retryConsumers) - 1) / len(instances.retryConsumers)
+				if workersPerInstance > RetryConsumerWorkers {
+					workersPerInstance = RetryConsumerWorkers
+				}
+				if workersPerInstance < 1 {
+					workersPerInstance = 1
+				}
+			}
+
+			for i := 0; i < len(instances.retryConsumers); i++ {
+				if instances.retryConsumers[i] != nil {
+					go instances.retryConsumers[i].StartConsuming(ctx, workersPerInstance)
+				}
+			}
+
+			// 定期更新 topic/实例/无主分区指标（可配置）
+			if g.options.KafkaOptions.EnableMetricsRefresh {
+				go func() {
+					ticker := time.NewTicker(g.options.KafkaOptions.MetricsRefreshInterval)
+					defer ticker.Stop()
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case <-ticker.C:
+							if len(brokers) == 0 {
+								continue
+							}
+
+							// 更丰富的日志在 Debug 模式下打印
+							isDebug := g.options.ServerRunOptions.Mode == "debug"
+
+							if p, err := getTopicPartitionCount(ctx, brokers, UserRetryTopic); err == nil {
+								metrics.ConsumerTopicPartitions.WithLabelValues(UserRetryTopic).Set(float64(p))
+								metrics.ConsumerGroupInstances.WithLabelValues(retryGroupId).Set(float64(len(instances.retryConsumers)))
+								if len(instances.retryConsumers) == 0 {
+									metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(float64(p))
+									if isDebug {
+										log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), p)
+									}
+								} else {
+									if noOwner, err := getPartitionsWithoutOwner(ctx, brokers, retryGroupId, UserRetryTopic); err == nil {
+										metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(float64(noOwner))
+										if isDebug {
+											log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), noOwner)
+										}
+									} else {
+										// 回退到启发式
+										metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(0)
+										log.Debugf("周期更新: 无法计算无主分区，使用回退值 0: %v", err)
+									}
+								}
+							} else {
+								if g.options.ServerRunOptions.Mode == "debug" {
+									log.Debugf("周期更新: 无法读取 topic %s 分区信息: %v", UserRetryTopic, err)
+								}
+							}
+						}
+					}
+				}()
+			}
+		}
+		log.Debugf("已启动 %d 个消费者实例", len(instances.createConsumers))
 	} else {
 		// 回退到原来的单个消费者模式
 		mainWorkers := opts.KafkaOptions.WorkerCount
@@ -148,9 +230,12 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 
 	time.Sleep(5 * time.Second) // 等待其他组件完全初始化
-	go g.retryConsumer.StartConsuming(ctx, RetryConsumerWorkers)
+	// 如果我们未创建按实例存储（回退模式），启动单个全局重试消费者
+	if instances == nil {
+		go g.retryConsumer.StartConsuming(ctx, RetryConsumerWorkers)
+	}
 
-	log.Info("所有Kafka消费者已启动")
+	log.Debug("所有Kafka消费者已启动")
 	g.printKafkaConfigInfo()
 
 	//安装中间件
@@ -158,7 +243,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		log.Error("中间件安装失败")
 		return nil, err
 	}
-	log.Info("中间件安装成功")
+	log.Debug("中间件安装成功")
 
 	//. 安装路由
 	g.installRoutes()
@@ -186,7 +271,7 @@ func monitorClusterHealth(datastore *store.Datastore, interval time.Duration) {
 			currentStatus.HealthyReplicas != lastStatus.HealthyReplicas {
 
 			if currentStatus.PrimaryHealthy && currentStatus.HealthyReplicas > 0 {
-				log.Infof("📊 集群状态: 主节点健康，%d/%d 副本可用",
+				log.Debugf("📊 集群状态: 主节点健康，%d/%d 副本可用",
 					currentStatus.HealthyReplicas, currentStatus.ReplicaCount)
 				unhealthyCount = 0
 			} else if !currentStatus.PrimaryHealthy {
@@ -250,7 +335,7 @@ func (g *GenericAPIServer) Run() error {
 	serverStarted := make(chan struct{})
 
 	eg.Go(func() error {
-		log.Infof("正在 %s 启动 GenericAPIServer 服务", address)
+		log.Debugf("正在 %s 启动 GenericAPIServer 服务", address)
 
 		// 创建监听器，确保端口可用
 		listener, err := net.Listen("tcp", address)
@@ -258,27 +343,27 @@ func (g *GenericAPIServer) Run() error {
 			return fmt.Errorf("创建监听器失败: %w", err)
 		}
 
-		log.Info("端口监听成功，开始接受连接")
+		log.Debug("端口监听成功，开始接受连接")
 		close(serverStarted)
 
 		// 启动服务器
 		err = g.insecureServer.Serve(listener)
 		if errors.Is(err, http.ErrServerClosed) {
-			log.Infof("GenericAPIServer服务器已正常关闭")
+			log.Debugf("GenericAPIServer服务器已正常关闭")
 			return nil
 		}
 		if err != nil {
 			return fmt.Errorf("GenericAPIServer服务器启动失败: %w", err)
 		}
 
-		log.Infof("停止 %s 运行的 GenericAPIServer 服务", address)
+		log.Debugf("停止 %s 运行的 GenericAPIServer 服务", address)
 		return nil
 	})
 
 	// 等待服务器开始监听
 	select {
 	case <-serverStarted:
-		log.Info("GenericAPIServer服务器已开始监听，准备进行健康检查...")
+		log.Debug("GenericAPIServer服务器已开始监听，准备进行健康检查...")
 	case <-time.After(10 * time.Second):
 		return fmt.Errorf("GenericAPIServer服务器启动超时，无法在5秒内开始监听")
 	}
@@ -307,7 +392,7 @@ func (g *GenericAPIServer) Run() error {
 // waitForPortReady 等待端口就绪
 func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	log.Infof("等待端口 %s 就绪，超时时间: %v", address, timeout)
+	log.Debugf("等待端口 %s 就绪，超时时间: %v", address, timeout)
 
 	for attempt := 1; ; attempt++ {
 		// 检查是否超时
@@ -319,13 +404,13 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 		conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
 		if err == nil {
 			conn.Close()
-			log.Infof("端口 %s 就绪检测成功，尝试次数: %d", address, attempt)
+			log.Debugf("端口 %s 就绪检测成功，尝试次数: %d", address, attempt)
 			return nil
 		}
 
 		// 记录重试信息（每5次尝试记录一次）
 		if attempt%5 == 0 {
-			log.Infof("端口就绪检测尝试 %d: %v", attempt, err)
+			log.Debugf("端口就绪检测尝试 %d: %v", attempt, err)
 		}
 
 		// 等待重试或上下文取消
@@ -345,20 +430,20 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	kafkaOpts := g.options.KafkaOptions
 
-	log.Infof("初始化Kafka组件，最大重试: %d, 消费者实例数量: %d",
+	log.Debugf("初始化Kafka组件，最大重试: %d, 消费者实例数量: %d",
 		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount)
 
-	log.Infof("初始化Kafka组件，最大重试: %d, 消费者实例数量: %d",
+	log.Debugf("初始化Kafka组件，最大重试: %d, 消费者实例数量: %d",
 		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount)
 
 	// 1. 初始化生产者,消费者在处理消息时，可能需要将处理失败的消息发送到其他主题：
-	log.Info("初始化Kafka生产者...")
+	log.Debug("初始化Kafka生产者...")
 	userProducer := NewUserProducer(kafkaOpts)
 
 	// 为每个主题创建多个消费者实例
 	consumerCount := kafkaOpts.WorkerCount
 	retryconsumerCount := kafkaOpts.RetryWorkerCount
-	log.Infof("为每个主题创建 %d 个消费者实例", consumerCount)
+	log.Debugf("为每个主题创建 %d 个消费者实例", consumerCount)
 
 	// 创建消费者实例切片
 	createConsumers := make([]*UserConsumer, consumerCount)
@@ -389,7 +474,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		deleteConsumers[i].SetInstanceID(i)
 	}
 
-	log.Info("初始化重试消费者...")
+	log.Debugf("初始化重试消费者...")
 
 	retryGroupId := ConsumerGroupPrefix + "-retry"
 	for i := 0; i < kafkaOpts.RetryWorkerCount; i++ {
@@ -405,7 +490,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	// 5. 存储所有消费者实例（新增字段）
 	g.setConsumerInstances(createConsumers, updateConsumers, deleteConsumers, retryConsumers)
 
-	log.Infof("✅ Kafka组件初始化完成，配置: 重试%d次, Worker%d个, 批量%d, 超时%v",
+	log.Debugf("✅ Kafka组件初始化完成，配置: 重试%d次, Worker%d个, 批量%d, 超时%v",
 		kafkaOpts.MaxRetries, kafkaOpts.WorkerCount, kafkaOpts.BatchSize, kafkaOpts.BatchTimeout)
 	return nil
 }
@@ -417,7 +502,7 @@ func (g *GenericAPIServer) monitorRedisConnection(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info("Redis集群监控退出")
+			log.Debug("Redis集群监控退出")
 			return
 		case <-ticker.C:
 			client := g.redis.GetClient()
@@ -447,9 +532,8 @@ func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
 	}
 
 	url := fmt.Sprintf("http://%s/healthz", net.JoinHostPort(host, port))
-	log.Infof("开始健康检查，目标URL: %s", url)
+	log.Debugf("开始健康检查，目标URL: %s", url)
 
-	startTime := time.Now()
 	attempt := 0
 
 	for {
@@ -466,18 +550,17 @@ func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			if attempt%3 == 0 { // 每3次失败记录一次日志，避免日志过多
-				log.Infof("健康检查尝试 %d 失败: %v", attempt, err)
+				log.Debugf("健康检查尝试 %d 失败: %v", attempt, err)
 			}
 		} else {
 			defer resp.Body.Close()
 
 			if resp.StatusCode == http.StatusOK {
-				log.Infof("健康检查成功! 总共尝试 %d 次, 耗时 %v",
-					attempt, time.Since(startTime))
+				log.Debug("健康检查成功")
 				return nil
 			}
 
-			log.Infof("健康检查尝试 %d: 状态码 %d", attempt, resp.StatusCode)
+			log.Debugf("健康检查尝试 %d: 状态码 %d", attempt, resp.StatusCode)
 		}
 
 		select {
@@ -502,13 +585,13 @@ func (g *GenericAPIServer) initRedisStore() error {
 
 	// 启动异步连接任务
 	go func() {
-		log.Info("启动Redis集群异步连接任务")
+		log.Debugf("启动Redis集群异步连接任务")
 		storage.ConnectToRedis(ctx, g.options.RedisOptions)
 		log.Warn("Redis集群异步连接任务退出（可能上下文已取消）")
 	}()
 
 	// 同步等待Redis完全启动
-	log.Info("等待Redis集群完全启动...")
+	log.Debugf("等待Redis集群完全启动...")
 
 	// 第一阶段：等待基础连接
 	if err := g.waitForBasicConnection(10 * time.Second); err != nil {
@@ -520,7 +603,7 @@ func (g *GenericAPIServer) initRedisStore() error {
 		return err
 	}
 
-	log.Info("✅ Redis集群完全启动并验证成功")
+	log.Debug("✅ Redis集群完全启动并验证成功")
 
 	// 启动监控
 	go g.monitorRedisConnection(ctx)
@@ -544,13 +627,13 @@ func (g *GenericAPIServer) waitForHealthyCluster(ctx context.Context, timeout ti
 		redisClient := g.redis.GetClient()
 		if redisClient != nil {
 			if err := g.pingRedis(ctx, redisClient); err == nil {
-				log.Infof("✅ Redis集群健康检查通过（尝试 %d 次）", attempt)
+				log.Debugf("Redis集群健康检查通过（尝试 %d 次）", attempt)
 				return nil
 			}
 		}
 
 		if attempt%2 == 0 {
-			log.Infof("等待Redis集群健康检查...（尝试 %d 次）", attempt)
+			log.Debugf("等待Redis集群健康检查...（尝试 %d 次）", attempt)
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -571,12 +654,12 @@ func (g *GenericAPIServer) waitForBasicConnection(timeout time.Duration) error {
 		}
 
 		if storage.Connected() && g.redis.GetClient() != nil {
-			log.Infof("✅ Redis基础连接建立（尝试 %d 次）", attempt)
+			log.Debugf("✅ Redis基础连接建立（尝试 %d 次）", attempt)
 			return nil
 		}
 
 		if attempt%3 == 0 {
-			log.Infof("等待Redis基础连接...（尝试 %d 次）", attempt)
+			log.Debugf("等待Redis基础连接...（尝试 %d 次）", attempt)
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -593,7 +676,7 @@ func (g *GenericAPIServer) setupRedisClusterMonitoring() {
 		nodes = []string{fmt.Sprintf("%s:%d", g.options.RedisOptions.Host, g.options.RedisOptions.Port)}
 	}
 
-	log.Infof("启动Redis集群监控，节点: %v", nodes)
+	log.Debugf("启动Redis集群监控，节点: %v", nodes)
 
 	// 创建集群监控器
 	monitor := metrics.NewRedisClusterMonitor(
@@ -605,7 +688,7 @@ func (g *GenericAPIServer) setupRedisClusterMonitoring() {
 	// 启动监控
 	go monitor.Start(context.Background())
 
-	log.Info("✅ Redis集群监控已启动")
+	log.Debug("✅ Redis集群监控已启动")
 }
 
 // pingRedis 支持redis.UniversalClient类型
@@ -727,19 +810,19 @@ func (g *GenericAPIServer) printKafkaConfigInfo() {
 		instanceCount = len(instances.createConsumers)
 	}
 
-	log.Infof("📊 Kafka配置信息:")
-	log.Infof("  运行模式: %s", g.options.ServerRunOptions.Mode)
-	log.Infof("  Brokers: %v", kafkaOpts.Brokers)
-	log.Infof("  主题配置:")
-	log.Infof("    - 创建: %s (%d个消费者实例)", UserCreateTopic, instanceCount)
-	log.Infof("    - 更新: %s (%d个消费者实例)", UserUpdateTopic, instanceCount)
-	log.Infof("    - 删除: %s (%d个消费者实例)", UserDeleteTopic, instanceCount)
-	log.Infof("    - 重试: %s", UserRetryTopic)
-	log.Infof("  配置参数:")
-	log.Infof("    - 最大重试: %d", kafkaOpts.MaxRetries)
-	log.Infof("    - 消费者实例数量: %d", instanceCount)
-	log.Infof("    - 批量大小: %d", kafkaOpts.BatchSize)
-	log.Infof("    - 批量超时: %v", kafkaOpts.BatchTimeout)
+	log.Debugf("📊 Kafka配置信息:")
+	log.Debugf("  运行模式: %s", g.options.ServerRunOptions.Mode)
+	log.Debugf("  Brokers: %v", kafkaOpts.Brokers)
+	log.Debugf("  主题配置:")
+	log.Debugf("    - 创建: %s (%d个消费者实例)", UserCreateTopic, instanceCount)
+	log.Debugf("    - 更新: %s (%d个消费者实例)", UserUpdateTopic, instanceCount)
+	log.Debugf("    - 删除: %s (%d个消费者实例)", UserDeleteTopic, instanceCount)
+	log.Debugf("    - 重试: %s", UserRetryTopic)
+	log.Debugf("  配置参数:")
+	log.Debugf("    - 最大重试: %d", kafkaOpts.MaxRetries)
+	log.Debugf("    - 消费者实例数量: %d", instanceCount)
+	log.Debugf("    - 批量大小: %d", kafkaOpts.BatchSize)
+	log.Debugf("    - 批量超时: %v", kafkaOpts.BatchTimeout)
 }
 
 // 新增：存储所有消费者实例
@@ -772,14 +855,14 @@ func initializeGaleraCluster(datastore *store.Datastore) error {
 	for attempt := 1; attempt <= maxRetries; attempt++ {
 		status := datastore.ClusterStatus()
 
-		log.Infof("🔍 集群健康检查 [%d/%d]: 主节点=%v, 副本=%d/%d 健康",
+		log.Debugf("🔍 集群健康检查 [%d/%d]: 主节点=%v, 副本=%d/%d 健康",
 			attempt, maxRetries, status.PrimaryHealthy, status.HealthyReplicas, status.ReplicaCount)
 
 		// 检查集群健康条件
 		if status.PrimaryHealthy {
 			if status.HealthyReplicas >= 1 {
 				// 理想状态：主节点健康且至少1个副本健康
-				log.Infof("✅ Galera集群状态良好: 主节点健康，%d个副本节点可用", status.HealthyReplicas)
+				log.Debugf("✅ Galera集群状态良好: 主节点健康，%d个副本节点可用", status.HealthyReplicas)
 				return nil
 			} else if status.HealthyReplicas == 0 {
 				// 只有主节点健康（可能是单节点集群或副本节点故障）
@@ -789,7 +872,7 @@ func initializeGaleraCluster(datastore *store.Datastore) error {
 		}
 
 		if attempt < maxRetries {
-			log.Infof("⏳ 集群未就绪，%v后重试...", retryInterval)
+			log.Debugf("⏳ 集群未就绪，%v后重试...", retryInterval)
 			time.Sleep(retryInterval)
 		}
 	}
@@ -820,7 +903,7 @@ func (g *GenericAPIServer) ensureTopicPartitions(topic string, desiredPartitions
 	})
 	if err != nil {
 		if g.options.KafkaOptions.AutoCreateTopic {
-			log.Infof("Topic %s 不存在，将依赖broker自动创建", topic)
+			log.Debugf("Topic %s 不存在，将依赖broker自动创建", topic)
 			return nil
 		}
 		return fmt.Errorf("获取topic %s 元数据失败: %v", topic, err)
@@ -836,21 +919,124 @@ func (g *GenericAPIServer) ensureTopicPartitions(topic string, desiredPartitions
 	}
 
 	if topicMetadata == nil || len(topicMetadata.Partitions) == 0 {
-		log.Infof("Topic %s 不存在，将依赖broker自动创建", topic)
+		log.Debugf("Topic %s 不存在，将依赖broker自动创建", topic)
 		return nil
 	}
 
 	currentPartitions := len(topicMetadata.Partitions)
-	log.Infof("Topic %s 当前分区数: %d, 期望分区数: %d",
+	log.Debugf("Topic %s 当前分区数: %d, 期望分区数: %d",
 		topic, currentPartitions, desiredPartitions)
 
 	// 检查是否需要扩展分区
 	if currentPartitions < desiredPartitions && g.options.KafkaOptions.AutoExpandPartitions {
 		log.Warnf("Topic %s 需要从 %d 分区扩展到 %d 分区，请手动执行扩展操作",
 			topic, currentPartitions, desiredPartitions)
-		log.Infof("手动扩展命令: kafka-topics.sh --alter --topic %s --partitions %d --bootstrap-server %s",
+		log.Debugf("手动扩展命令: kafka-topics.sh --alter --topic %s --partitions %d --bootstrap-server %s",
 			topic, desiredPartitions, g.options.KafkaOptions.Brokers[0])
 	}
 
 	return nil
+}
+
+// getTopicPartitionCount returns the number of partitions for the given topic using kafka.Client.Metadata
+func getTopicPartitionCount(ctx context.Context, brokers []string, topic string) (int, error) {
+	if len(brokers) == 0 {
+		return 0, fmt.Errorf("no brokers provided")
+	}
+
+	admin := &kafka.Client{Addr: kafka.TCP(brokers...)}
+	metadata, err := admin.Metadata(ctx, &kafka.MetadataRequest{Topics: []string{topic}})
+	if err != nil {
+		return 0, err
+	}
+
+	for _, t := range metadata.Topics {
+		if t.Name == topic {
+			return len(t.Partitions), nil
+		}
+	}
+	return 0, fmt.Errorf("topic %s not found in metadata", topic)
+}
+
+// getPartitionsWithoutOwner queries the consumer group and topic metadata to compute the number
+// of partitions of 'topic' that are not currently assigned to any member of the consumer group.
+// It uses kafka.Client to fetch Metadata and DescribeGroups.
+func getPartitionsWithoutOwner(ctx context.Context, brokers []string, groupID, topic string) (int, error) {
+	if len(brokers) == 0 {
+		return 0, fmt.Errorf("no brokers provided")
+	}
+
+	admin := &kafka.Client{Addr: kafka.TCP(brokers...)}
+
+	// 1) 获取 topic partitions
+	metadata, err := admin.Metadata(ctx, &kafka.MetadataRequest{Topics: []string{topic}})
+	if err != nil {
+		return 0, fmt.Errorf("metadata error: %w", err)
+	}
+	var topicMeta *kafka.Topic
+	for _, t := range metadata.Topics {
+		if t.Name == topic {
+			topicMeta = &t
+			break
+		}
+	}
+	if topicMeta == nil {
+		return 0, fmt.Errorf("topic %s not found", topic)
+	}
+	totalPartitions := len(topicMeta.Partitions)
+
+	// 2) Describe group to get member assignments
+	describeResp, err := admin.DescribeGroups(ctx, &kafka.DescribeGroupsRequest{GroupIDs: []string{groupID}})
+	if err != nil {
+		return 0, fmt.Errorf("describe groups error: %w", err)
+	}
+	if len(describeResp.Groups) == 0 {
+		// 没有成员，所有分区都没有 owner
+		return totalPartitions, nil
+	}
+
+	// Collect partitions that are owned by members (for the topic)
+	owned := make(map[int]struct{})
+	for _, g := range describeResp.Groups {
+		for _, member := range g.Members {
+			// Use MemberAssignments (Topics/Partitions)
+			for _, t := range member.MemberAssignments.Topics {
+				if t.Topic != topic {
+					continue
+				}
+				for _, p := range t.Partitions {
+					owned[p] = struct{}{}
+				}
+			}
+			// Also include OwnedPartitions from MemberMetadata for cooperative assignor
+			for _, op := range member.MemberMetadata.OwnedPartitions {
+				if op.Topic != topic {
+					continue
+				}
+				for _, p := range op.Partitions {
+					owned[p] = struct{}{}
+				}
+			}
+		}
+	}
+
+	// If we couldn't find owned partitions via DescribeGroups parsing, fallback to 0 ownership (conservative)
+	if len(owned) == 0 {
+		// Fallback: use ConsumerOffsets (deprecated helper) to see committed offsets for group/topic
+		if offs, err := admin.ConsumerOffsets(ctx, kafka.TopicAndGroup{Topic: topic, GroupId: groupID}); err == nil {
+			for pid := range offs {
+				owned[pid] = struct{}{}
+			}
+		}
+	}
+
+	// Count partitions without owner
+	noOwner := 0
+	for _, p := range topicMeta.Partitions {
+		if _, ok := owned[p.ID]; !ok {
+			noOwner++
+		}
+	}
+
+	return noOwner, nil
 }

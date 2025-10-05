@@ -92,7 +92,7 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 			operationErr = err
 			return nil, false, errors.WithCode(code.ErrDecodingFailed, "数据解码失败")
 		}
-		log.Infof("从缓存中查询到用户:%s: key=%s", user.Name, cacheKey)
+		log.Debugf("从缓存中查询到用户:%s: key=%s", user.Name, cacheKey)
 		cacheHit = true
 	}
 
@@ -196,7 +196,7 @@ func (u *UserService) checkUserExist(ctx context.Context, username string) (*v1.
 		return u.getUserFromDBAndSetCache(ctx, username, username)
 	})
 	if shared {
-		log.Infow("数据库查询被合并，共享结果", "username", username)
+		log.Debugw("数据库查询被合并，共享结果", "username", username)
 		metrics.RequestsMerged.WithLabelValues("get").Inc()
 	}
 	if err != nil {
