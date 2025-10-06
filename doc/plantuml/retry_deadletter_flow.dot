@@ -1,0 +1,22 @@
+digraph retry_deadletter_flow {
+  rankdir=LR;
+  node [shape=box, fontname="Arial"];
+
+  producer [label="Producer\n(write attempt)"];
+  retry_topic [label="Retry Topic\n(backoff consumer)", shape=folder];
+  dead [label="Dead-letter\n(inspection/replay)", shape=note, color="#aa0000"];
+  retry_consumer [label="Retry Consumer\n(exp backoff handler)"];
+  dlq_handler [label="DLQ Handler\n(alert + manual replay)"];
+
+  producer -> retry_topic [label="on transient errors", style=dashed];
+  producer -> dead [label="on permanent errors", style=dotted, color="#aa0000"];
+  retry_topic -> retry_consumer -> producer [label="retry path"];
+  dead -> dlq_handler [label="alert + analyze"];
+
+  subgraph cluster_ops {
+    label="Operator Actions";
+    style=rounded;
+    alert [label="Alert: DeadLetter spike / retry spikes"];
+    alert -> dlq_handler [style=dashed];
+  }
+}
