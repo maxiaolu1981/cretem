@@ -1,0 +1,22 @@
+digraph pc_flow {
+  rankdir=TB;
+  node [shape=box, style=rounded, fontname="Arial", color="#333"];
+
+  handler [label="HTTP Handler\n(validate/auth)"];
+  limiter [label="WriteRateLimiter\n(local/redis)"];
+  producer [label="Producer\n(in-flight semaphore)"];
+  kafka [label="Kafka Topic\n(UserCreate/UserDelete)", shape=cylinder];
+  fetcher [label="Fetcher\n(single loop)"];
+  worker_pool [label="Worker Pool\n(N workers)"];
+  batch [label="Batcher\n(MaxDBBatchSize / timeout)"];
+  db [label="DB (GORM)", shape=cylinder];
+
+  handler -> limiter -> producer -> kafka;
+  kafka -> fetcher -> worker_pool -> batch -> db;
+  worker_pool -> fetcher [style=dashed, label="commit offset"];
+
+  // failure paths
+  producer -> retry [label="retry topic"] [color="#aa7700", style=dashed];
+  producer -> dead [label="dead-letter"] [color="#aa0000", style=dotted];
+
+}

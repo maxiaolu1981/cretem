@@ -21,5 +21,15 @@ for f in *.puml; do
   "${CMD[@]}" -tpng "$f" || echo "png render failed for $f"
   "${CMD[@]}" -tsvg "$f" || echo "svg render failed for $f"
 done
+for d in *.dot; do
+  [ -f "$d" ] || continue
+  echo "Rendering Graphviz $d -> PNG && SVG"
+  if command -v dot >/dev/null 2>&1; then
+    dot -Tpng -o "${d%.dot}.png" "$d" || echo "dot -> png failed for $d"
+    dot -Tsvg -o "${d%.dot}.svg" "$d" || echo "dot -> svg failed for $d"
+  else
+    echo "dot not found: skipping Graphviz render for $d"
+  fi
+done
 echo "Render complete. Generated files:"
 ls -1 -- *.png *.svg 2>/dev/null || true

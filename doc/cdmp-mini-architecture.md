@@ -39,27 +39,21 @@ cdmp-mini 的核心架构采用异步写入流水线，目的是在高并发写�
 
 以下 PNG 图片已使用仓库内 `doc/plantuml/plantuml.jar` 渲染并保存在 `doc/plantuml/` 目录，文档中直接引用相对路径：
 
-![Producer sequence](./plantuml/producer.png)
+![Overall flow](./plantuml/overall_flow.png)
 
-Producer sequence（Handler -> Producer -> Kafka -> retry/dead-letter）示意图。
+Overall 系统级数据流（Client -> API Server -> Producer -> Kafka -> Consumer -> DB），简化展示关键组件与失败路径，便于快速掌握系统边界与控制点。
 
-![Consumer sequence](./plantuml/consumer.png)
+![Producer/Consumer flow](./plantuml/producer_consumer_flow.png)
 
-Consumer（Fetcher -> Worker -> Batch DB 写入 -> commit）处理流程示意图。
-
-![Write Rate Limiter](./plantuml/write_limiter.png)
-
-WriteRateLimiter 的本地/Redis/Lua 原子操作决策流程示意图。
+Producer 与 Consumer 的核心子流程（请求处理 -> 限流 -> Producer -> Kafka -> Fetcher/Worker -> 批量写入 DB），更紧凑、便于 SRE 快速阅读与排查。
 
 注意：在本次渲染运行环境中未安装 Graphviz 的 `dot` 可执行文件，PlantUML 会退回到仅生成序列图或简化的布局；若需要更复杂的布局或更高质量的渲染，请在具备 `dot` 的环境中重跑渲染（参见 `doc/plantuml/README.md`）。
 
 高质量矢量图 (SVG)：如果你的 Markdown 渲染器支持 SVG，优先使用下面的文件以获得缩放与更清晰的展示：
 
-![Producer sequence (SVG)](./plantuml/producer.svg)
+![Overall flow (SVG)](./plantuml/overall_flow.svg)
 
-![Consumer sequence (SVG)](./plantuml/consumer.svg)
-
-![Write Rate Limiter (SVG)](./plantuml/write_limiter.svg)
+![Producer/Consumer flow (SVG)](./plantuml/producer_consumer_flow.svg)
 
  Diagrams 注释（失败模式与监控建议）
 
