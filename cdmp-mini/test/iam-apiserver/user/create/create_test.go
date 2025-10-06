@@ -37,10 +37,10 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 并发配置（先调小进行调试）
-	ConcurrentUsers = 100 // 并发用户数（调试阶段调小）
-	RequestsPerUser = 10  // 每用户请求数
-	MaxConcurrent   = 100 // 最大并发数
-	BatchSize       = 100 // 批次大小
+	ConcurrentUsers = 50 // 并发用户数（调试阶段调小）
+	RequestsPerUser = 10 // 每用户请求数
+	MaxConcurrent   = 10 // 最大并发数
+	BatchSize       = 10 // 批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -99,11 +99,12 @@ type TestResult struct {
 
 // ==================== 全局变量 ====================
 var (
-	httpClient  = createHTTPClient()
-	statsMutex  sync.RWMutex
-	globalToken string
-	tokenMutex  sync.RWMutex
-	tokenExpiry time.Time
+	httpClient = createHTTPClient()
+	statsMutex sync.RWMutex
+	// per-user tokens and expiries
+	userTokens   []string
+	userExpiries []time.Time
+	tokensMutex  sync.RWMutex
 )
 
 // 统计变量
@@ -125,26 +126,28 @@ func TestUserCreate_RealConcurrent(t *testing.T) {
 	printHeader("🚀 开始带Token认证的压力测试", width)
 
 	// 1. 首先获取认证Token（带详细调试信息）
-	fmt.Printf("🔑 获取认证Token...\n")
+	fmt.Printf("🔑 为每个并发用户并发获取认证Token...\n")
 	fmt.Printf("   登录URL: %s%s\n", ServerBaseURL, LoginAPIPath)
-	fmt.Printf("   用户名: %s\n", TestUsername)
-
-	token, err := getAuthTokenWithDebug()
-	if err != nil {
-		fmt.Printf("❌ 获取Token失败: %v\n", err)
-		fmt.Printf("💡 建议检查:\n")
-		fmt.Printf("   1. 服务是否运行在 %s\n", ServerBaseURL)
-		fmt.Printf("   2. 用户 %s 是否存在\n", TestUsername)
-		fmt.Printf("   3. 登录接口路径是否正确: %s\n", LoginAPIPath)
-		return
+	userTokens = make([]string, ConcurrentUsers)
+	userExpiries = make([]time.Time, ConcurrentUsers)
+	var wg sync.WaitGroup
+	wg.Add(ConcurrentUsers)
+	for i := 0; i < ConcurrentUsers; i++ {
+		go func(uid int) {
+			defer wg.Done()
+			t, err := getAuthTokenWithDebug()
+			if err != nil {
+				fmt.Printf("⚠️ 获取 token 失败 user=%d: %v\n", uid, err)
+				return
+			}
+			tokensMutex.Lock()
+			userTokens[uid] = t
+			userExpiries[uid] = time.Now().Add(30 * time.Minute)
+			tokensMutex.Unlock()
+		}(i)
 	}
-
-	tokenMutex.Lock()
-	globalToken = token
-	tokenExpiry = time.Now().Add(30 * time.Minute)
-	tokenMutex.Unlock()
-
-	fmt.Printf("✅ 成功获取Token: %s...\n", token[:min(20, len(token))])
+	wg.Wait()
+	fmt.Printf("✅ 并发用户 token 预取完成（部分可能为空，会在请求时重试）\n")
 
 	// // 2. 先测试单个请求确保Token有效
 	// fmt.Printf("🧪 测试Token有效性...\n")
@@ -239,28 +242,33 @@ func getAuthTokenWithDebug() (string, error) {
 	return response.Data.AccessToken, nil
 }
 
-func getValidToken() string {
-	tokenMutex.RLock()
-	token := globalToken
-	expiry := tokenExpiry
-	tokenMutex.RUnlock()
-
-	if token == "" || time.Now().Add(5*time.Minute).After(expiry) {
-		newToken, err := getAuthTokenWithDebug()
-		if err != nil {
-			fmt.Printf("⚠️  Token刷新失败: %v\n", err)
-			return token
-		}
-
-		tokenMutex.Lock()
-		globalToken = newToken
-		tokenExpiry = time.Now().Add(30 * time.Minute)
-		tokenMutex.Unlock()
-
-		return newToken
+// getTokenForUser 返回指定用户的 token；若不存在或接近过期则尝试刷新
+func getTokenForUser(uid int) string {
+	if uid < 0 || uid >= len(userTokens) {
+		return ""
 	}
+	tokensMutex.RLock()
+	t := userTokens[uid]
+	expiry := time.Time{}
+	if uid < len(userExpiries) {
+		expiry = userExpiries[uid]
+	}
+	tokensMutex.RUnlock()
 
-	return token
+	if t == "" || time.Now().Add(5*time.Minute).After(expiry) {
+		// refresh for this user
+		newT, err := getAuthTokenWithDebug()
+		if err != nil {
+			fmt.Printf("⚠️ 刷新 token 失败 user=%d: %v\n", uid, err)
+			return t
+		}
+		tokensMutex.Lock()
+		userTokens[uid] = newT
+		userExpiries[uid] = time.Now().Add(30 * time.Minute)
+		tokensMutex.Unlock()
+		return newT
+	}
+	return t
 }
 
 // ==================== 核心并发逻辑 ====================
@@ -321,8 +329,8 @@ func sendUserRequestsWithAuth(userID int, semaphore chan struct{}, wg *sync.Wait
 func sendSingleRequestWithAuth(userID, requestID int) {
 	start := time.Now()
 
-	// 获取有效Token
-	token := getValidToken()
+	// 获取该用户的 token
+	token := getTokenForUser(userID)
 	if token == "" {
 		recordResult(userID, requestID, false, time.Since(start), "Token获取失败")
 		return
@@ -386,9 +394,12 @@ func sendSingleRequestWithAuth(userID, requestID int) {
 		recordResult(userID, requestID, true, duration, "")
 	} else {
 		if resp.StatusCode == http.StatusUnauthorized {
-			tokenMutex.Lock()
-			globalToken = ""
-			tokenMutex.Unlock()
+			// clear this user's token so it will be refreshed next time
+			tokensMutex.Lock()
+			if userID >= 0 && userID < len(userTokens) {
+				userTokens[userID] = ""
+			}
+			tokensMutex.Unlock()
 		}
 
 		recordResult(userID, requestID, false, duration,
@@ -479,7 +490,11 @@ func createHTTPClient() *http.Client {
 func generateUniqueUsername(userID int) string {
 	timestamp := time.Now().UnixNano() % 1000000
 	random := rand.IntN(1000000)
-	return fmt.Sprintf("user_%d_%d_%d", userID, timestamp, random)
+	base := fmt.Sprintf("user_%d_%d_%d", userID, timestamp, random)
+	if len(base) > 45 {
+		return base[:45]
+	}
+	return base
 }
 
 func getTerminalWidth() int {

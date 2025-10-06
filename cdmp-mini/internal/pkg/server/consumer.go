@@ -5,9 +5,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
@@ -29,8 +32,9 @@ type UserConsumer struct {
 	groupID    string
 	instanceID int // 新增：实例ID
 	opts       *options.KafkaOptions
-	// 当前是否处于滞后保护状态（true 表示滞后超过阈值）
-	lagProtected bool
+	// 移除本地保护状态，全部走redis全局key
+	// 主控选举相关
+	isMaster bool
 }
 
 func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
@@ -41,7 +45,8 @@ func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm
 			GroupID: groupID,
 
 			// 优化配置
-			MinBytes:      1 * 1024 * 1024,        // 降低最小字节数，立即消费
+			MinBytes: 1 * 1024 * 1024, // 降低最小字节数，立即消费
+			//MinBytes:      10e3,
 			MaxBytes:      10e6,                   // 10MB
 			MaxWait:       time.Millisecond * 100, // 增加到100ms
 			QueueCapacity: 100,                    // 降低队列容量，避免消息堆积在内存
@@ -59,9 +64,28 @@ func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm
 		topic:   topic,
 		groupID: groupID,
 		opts:    opts,
+		// 新增：实例ID赋值
+		instanceID: parseInstanceID(opts.InstanceID),
 	}
 	go consumer.startLagMonitor(context.Background())
 	return consumer
+
+}
+
+// parseInstanceID 支持 string->int 转换，若失败则用 hash 兜底
+func parseInstanceID(idStr string) int {
+	if idStr == "" {
+		return 0
+	}
+	if n, err := strconv.Atoi(idStr); err == nil {
+		return n
+	}
+	// fallback: hash string
+	sum := 0
+	for _, c := range idStr {
+		sum += int(c)
+	}
+	return sum & 0x7FFFFFFF // 保证正数
 }
 
 // 消费
@@ -121,7 +145,6 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 			var deleteBatch []kafka.Message
 			flush := func() {
 				if len(createBatch) > 0 {
-					// 批量写入创建
 					c.batchCreateToDB(ctx, createBatch)
 					createBatch = createBatch[:0]
 				}
@@ -162,12 +185,27 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 			}
 		}()
 
+		// ====== 消费速率统计相关变量 ======
+		var consumeCount int64 = 0
+
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			default:
 			}
+
+			// ====== 完全无限速，无日志 ======
+			stats := c.reader.Stats()
+			lag := stats.Lag
+			if lag == 0 {
+				select {
+				case <-time.After(100 * time.Millisecond):
+				case <-ctx.Done():
+					return
+				}
+			}
+			// ====== 结束 ======
 
 			// FetchMessage 带重试：与之前逻辑保持一致
 			var msg kafka.Message
@@ -242,6 +280,9 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 				log.Errorf("Fetcher: 提交偏移失败: %v", err)
 				// 提交失败则不阻塞 fetcher，继续下一条（commitWithRetry 内部已做重试）
 			}
+
+			// 消费速率统计：每处理一条消息计数+1
+			consumeCount++
 		}
 	}()
 
@@ -310,27 +351,65 @@ func (c *UserConsumer) processMessage(ctx context.Context, msg kafka.Message) er
 }
 
 func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Message) error {
-
+	// 兼容两种结构：1. 扁平 v1.User 2. 带 metadata 的嵌套结构
 	var user v1.User
-	if err := json.Unmarshal(msg.Value, &user); err != nil {
-		return fmt.Errorf("UNMARSHAL_ERROR: %w", err) // 返回错误，让上层决定重试或死信
+	if err := json.Unmarshal(msg.Value, &user); err == nil {
+		if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
+			return err
+		}
+		log.Debugf("开始建立用户: username=%s", user.Name)
+		if err := c.createUserInDB(ctx, &user); err != nil {
+			return fmt.Errorf("创建用户失败: %w", err)
+		}
+		if err := c.setUserCache(ctx, &user); err != nil {
+			log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
+		} else {
+			log.Debugf("用户%s缓存成功", user.Name)
+		}
+		log.Debugf("用户创建成功: username=%s", user.Name)
+		return nil
 	}
-
-	log.Debugf("开始建立用户: username=%s", user.Name)
-
-	// 创建用户
+	// 尝试兼容 metadata 嵌套结构
+	var metaUser struct {
+		Metadata struct {
+			Name      string    `json:"name"`
+			CreatedAt time.Time `json:"createdAt"`
+			UpdatedAt time.Time `json:"updatedAt"`
+		} `json:"metadata"`
+		Status      int    `json:"status"`
+		Nickname    string `json:"nickname"`
+		Password    string `json:"password"`
+		Email       string `json:"email"`
+		Phone       string `json:"phone"`
+		TotalPolicy int    `json:"totalPolicy"`
+		Role        string `json:"role"`
+		LoginedAt   string `json:"loginedAt"`
+	}
+	if err := json.Unmarshal(msg.Value, &metaUser); err != nil {
+		return fmt.Errorf("UNMARSHAL_ERROR: %w", err)
+	}
+	// 转换为 v1.User
+	user.Name = metaUser.Metadata.Name
+	if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
+		return err
+	}
+	user.CreatedAt = metaUser.Metadata.CreatedAt
+	user.UpdatedAt = metaUser.Metadata.UpdatedAt
+	user.Status = metaUser.Status
+	user.Nickname = metaUser.Nickname
+	user.Password = metaUser.Password
+	user.Email = metaUser.Email
+	user.Phone = metaUser.Phone
+	// 其他字段按需补充
+	log.Debugf("开始建立用户(meta): username=%s", user.Name)
 	if err := c.createUserInDB(ctx, &user); err != nil {
-		return fmt.Errorf("创建用户失败: %w", err) // 返回错误，让上层根据错误类型决定
+		return fmt.Errorf("创建用户失败: %w", err)
 	}
-
-	// 设置缓存
 	if err := c.setUserCache(ctx, &user); err != nil {
 		log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
-		// 缓存失败不影响主流程，不返回错误
 	} else {
 		log.Debugf("用户%s缓存成功", user.Name)
 	}
-
 	log.Debugf("用户创建成功: username=%s", user.Name)
 	return nil
 }
@@ -367,6 +446,9 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 	var user v1.User
 	if err := json.Unmarshal(msg.Value, &user); err != nil {
 		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
+	}
+	if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
+		return c.sendToDeadLetter(ctx, msg, err.Error())
 	}
 
 	log.Debugf("处理用户更新: username=%s", user.Name)
@@ -416,10 +498,10 @@ func (c *UserConsumer) updateUserInDB(ctx context.Context, user *v1.User) error 
 	if err := c.db.WithContext(ctx).Model(&v1.User{}).
 		Where("name = ?", user.Name).
 		Updates(map[string]interface{}{
-			"email":      user.Email,
-			"password":   user.Password,
-			"status":     user.Status,
-			"updated_at": user.UpdatedAt,
+			"email":     user.Email,
+			"password":  user.Password,
+			"status":    user.Status,
+			"updatedAt": user.UpdatedAt,
 		}).Error; err != nil {
 		return fmt.Errorf("数据库更新失败: %v", err)
 	}
@@ -588,10 +670,16 @@ func isUnrecoverableError(errStr string) bool {
 		"definer", "DEFINER", "1449", "permission denied",
 
 		// 数据不存在错误（幂等性）
-		"does not exist", "not found", "record not found",
+		"does not exist", "not found", "record not found", "ErrRecordNotFound",
 
 		// 数据库约束错误
 		"constraint", "foreign key", "1451", "1452", "syntax error",
+
+		// 字段超长错误
+		"Data too long for column", "1406",
+
+		// GORM 相关不可重试错误
+		"ErrInvalidData", "ErrInvalidTransaction", "ErrNotImplemented", "ErrMissingWhereClause", "ErrPrimaryKeyRequired", "ErrModelValueRequired", "ErrUnsupportedRelation", "ErrRegistered", "ErrInvalidField", "ErrEmptySlice", "ErrDryRunModeUnsupported",
 
 		// 业务逻辑错误
 		"invalid format", "validation failed",
@@ -618,6 +706,9 @@ func isRecoverableError(errStr string) bool {
 
 		// 资源暂时不可用
 		"resource temporarily unavailable", "too many connections",
+
+		// GORM 可重试错误
+		"ErrInvalidTransaction", "ErrDryRunModeUnsupported",
 	}
 
 	for _, recoverableErr := range recoverableErrors {
@@ -709,22 +800,73 @@ func (c *UserConsumer) startLagMonitor(ctx context.Context) {
 				// 直接获取统计信息，不需要检查 nil
 				stats := c.reader.Stats()
 				metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(float64(stats.Lag))
-				// 可选：记录调试日志
-				if stats.Lag > 0 {
-					log.Debugf("消费者延迟: topic=%s, group=%s, lag=%d", c.topic, c.groupID, stats.Lag)
+				// 1. 每个实例定期上报自己的 lag 到 Redis
+				instanceKey := fmt.Sprintf("kafka:lag:%s:%s:%d", c.topic, c.groupID, c.instanceID)
+				err := c.redis.SetKey(ctx, instanceKey, fmt.Sprintf("%d", stats.Lag), 2*c.opts.LagCheckInterval)
+				if err != nil {
+					log.Errorf("[LagMonitor] 写入Redis失败: key=%s, lag=%d, err=%v", instanceKey, stats.Lag, err)
+				} else {
+					log.Debugf("[LagMonitor] 写入Redis: key=%s, lag=%d", instanceKey, stats.Lag)
 				}
 
-				// 更新保护状态
-				if int64(stats.Lag) >= c.opts.LagScaleThreshold {
-					if !c.lagProtected {
-						log.Warnf("消费者滞后超过阈值: lag=%d, threshold=%d, 进入保护模式", stats.Lag, c.opts.LagScaleThreshold)
+				// 主控选举：用 Redis 分布式锁，锁定 2*LagCheckInterval
+				masterKey := fmt.Sprintf("kafka:lag:master:%s:%s", c.topic, c.groupID)
+				lockVal := fmt.Sprintf("%d", c.instanceID)
+				// 尝试抢占主控
+				gotLock := false
+				if !c.isMaster {
+					success, err := c.redis.SetNX(ctx, masterKey, lockVal, 2*c.opts.LagCheckInterval)
+					if err == nil && success {
+						c.isMaster = true
+						gotLock = true
+						log.Debugf("[LagMonitor] 成为主控: masterKey=%s, val=%s", masterKey, lockVal)
 					}
-					c.lagProtected = true
 				} else {
-					if c.lagProtected {
-						log.Infof("消费者滞后恢复: lag=%d, threshold=%d, 退出保护模式", stats.Lag, c.opts.LagScaleThreshold)
+					// 检查自己是否还是主控
+					v, err := c.redis.GetKey(ctx, masterKey)
+					if err == nil && v == lockVal {
+						gotLock = true
+					} else {
+						c.isMaster = false
+						log.Debugf("[LagMonitor] 主控失效: masterKey=%s, val=%s, err=%v", masterKey, v, err)
+
 					}
-					c.lagProtected = false
+				}
+
+				// 全局聚合所有相关组 lag
+				if gotLock {
+					groups := []string{"user-service-prod.create", "user-service-prod.update", "user-service-prod.delete"}
+					totalLag := int64(0)
+					for _, group := range groups {
+						keys := c.redis.GetKeys(ctx, fmt.Sprintf("kafka:lag:%s:%s:*", c.topic, group))
+						for _, k := range keys {
+							v, err := c.redis.GetKey(ctx, k)
+							if err == nil {
+								var lag int64
+								fmt.Sscanf(v, "%d", &lag)
+								totalLag += lag
+							}
+						}
+					}
+					protectTTL := 2 * c.opts.LagCheckInterval
+					globalProtectKey := "kafka:lag:protect:ALL"
+					if totalLag >= c.opts.LagScaleThreshold {
+						_ = c.redis.SetKey(ctx, globalProtectKey, "1", protectTTL)
+					} else {
+						_ = c.redis.SetKey(ctx, globalProtectKey, "0", protectTTL)
+					}
+					log.Warnf("[全局保护] totalLag=%d, threshold=%d, master=%v", totalLag, c.opts.LagScaleThreshold, c.instanceID)
+				}
+
+				// 3. 所有实例消费前检查保护信号
+				v, err := c.redis.GetKey(ctx, "kafka:lag:protect:ALL")
+				if err == nil && v == "1" {
+					log.Warnf("[全局] Kafka lag 超阈值, 进入全局保护模式 (全局key)")
+					metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(1)
+					// 这里可直接 return 或 sleep，阻断消费
+				} else {
+					log.Infof("[全局] Kafka lag 恢复, 退出全局保护模式 (全局key)")
+					metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(0)
 				}
 			case <-ctx.Done():
 				return
@@ -746,6 +888,13 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 			// 发送到重试或者死信
 			if c.producer != nil {
 				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
+			}
+			continue
+		}
+		if err := validation.ValidateUserFields(u.Name, u.Nickname, u.Password, u.Email, u.Phone); err != nil {
+			log.Errorf("批量创建: %v", err)
+			if c.producer != nil {
+				_ = c.producer.SendToDeadLetterTopic(ctx, m, err.Error())
 			}
 			continue
 		}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"net"
 	"net/http"
 	"os"
@@ -36,9 +35,9 @@ const (
 
 	// 创建用户并发配置
 	PreCreateUsers      = 1000000 // 预先创建的用户数量
-	PreCreateConcurrent = 1000    // 预创建并发数
-	PreCreateBatchSize  = 1000    // 进度显示批次
-	PreCreateTimeout    = 10 * time.Second
+	PreCreateConcurrent = 100     // 预创建并发数
+	PreCreateBatchSize  = 100     // 批次大小
+	PreCreateTimeout    = 100 * time.Second
 
 	// 删除用户并发配置
 	ConcurrentDeleters = 100000 // 并发删除器数量
@@ -107,11 +106,14 @@ type APIResponse struct {
 
 // ==================== 全局变量 ====================
 var (
-	httpClient  = createOptimizedHTTPClient()
-	statsMutex  sync.RWMutex
-	globalToken string
-	tokenMutex  sync.RWMutex
-	tokenExpiry time.Time
+	httpClient = createOptimizedHTTPClient()
+	statsMutex sync.RWMutex
+	// global admin token used for pre-creation
+	adminToken string
+	// per-deleter tokens
+	deleterTokens      []string
+	deleterExpiries    []time.Time
+	deleterTokensMutex sync.RWMutex
 )
 
 // 统计变量
@@ -160,12 +162,9 @@ func TestUserForceDelete_RealConcurrent(t *testing.T) {
 		return
 	}
 
-	tokenMutex.Lock()
-	globalToken = token
-	tokenExpiry = time.Now().Add(30 * time.Minute)
-	tokenMutex.Unlock()
-
-	fmt.Printf("✅ 成功获取Token: %s...\n", token[:min(20, len(token))])
+	// use this as admin token for pre-creation
+	adminToken = token
+	fmt.Printf("✅ 成功获取 admin token: %s...\n", token[:min(20, len(token))])
 
 	// 2. 并发预创建测试用户
 	fmt.Printf("👥 并发预创建测试用户...\n")
@@ -408,7 +407,31 @@ func executeConcurrentDeleteTest() {
 	}
 	close(userCh)
 
-	// Start workers to consume usernames from userCh. Each worker performs DeletesPerUser or until channel is closed.
+	// Prefetch per-deleter tokens (limit concurrency)
+	deleterTokens = make([]string, ConcurrentDeleters)
+	deleterExpiries = make([]time.Time, ConcurrentDeleters)
+	sem := make(chan struct{}, 50) // limit parallel logins
+	var preWg sync.WaitGroup
+	for d := 0; d < ConcurrentDeleters; d++ {
+		preWg.Add(1)
+		sem <- struct{}{}
+		go func(did int) {
+			defer preWg.Done()
+			defer func() { <-sem }()
+			t, err := getAuthTokenWithDebug()
+			if err != nil {
+				fmt.Printf("⚠️ 获取 deleter token 失败 did=%d: %v\n", did, err)
+				return
+			}
+			deleterTokensMutex.Lock()
+			deleterTokens[did] = t
+			deleterExpiries[did] = time.Now().Add(30 * time.Minute)
+			deleterTokensMutex.Unlock()
+		}(d)
+	}
+	preWg.Wait()
+
+	// Start workers to consume usernames from userCh. Each worker performs deletes.
 	var wg sync.WaitGroup
 	for did := 0; did < ConcurrentDeleters; did++ {
 		wg.Add(1)
@@ -430,8 +453,8 @@ func executeConcurrentDeleteTest() {
 func sendSingleDeleteRequestWithUsername(deleterID, requestID int, username string) {
 	start := time.Now()
 
-	// 获取有效Token
-	token := getValidToken()
+	// 获取该删除器的 token
+	token := getDeleterToken(deleterID)
 	if token == "" {
 		recordDeleteResult(deleterID, requestID, false, time.Since(start), "Token获取失败", "")
 		return
@@ -484,9 +507,12 @@ func sendSingleDeleteRequestWithUsername(deleterID, requestID int, username stri
 		errorMsg = fmt.Sprintf("用户不存在: %s", username)
 	case resp.StatusCode == http.StatusUnauthorized:
 		errorMsg = "权限认证失败"
-		tokenMutex.Lock()
-		globalToken = ""
-		tokenMutex.Unlock()
+		// 清空该 deleter 的 token，下一次会刷新
+		deleterTokensMutex.Lock()
+		if deleterID >= 0 && deleterID < len(deleterTokens) {
+			deleterTokens[deleterID] = ""
+		}
+		deleterTokensMutex.Unlock()
 	default:
 		errorMsg = fmt.Sprintf("HTTP=%d, Code=%d, Msg=%s",
 			resp.StatusCode, apiResp.Code, apiResp.Message)
@@ -499,19 +525,6 @@ func sendSingleDeleteRequestWithUsername(deleterID, requestID int, username stri
 		recordDeleteResult(deleterID, requestID, false, duration, errorMsg, username)
 		// ❌ 失败不移除，允许重试
 	}
-}
-
-// ==================== 工具函数 ====================
-func selectUserForDeletion() string {
-	usersMutex.Lock()
-	defer usersMutex.Unlock()
-
-	if len(availableUsers) == 0 {
-		return ""
-	}
-
-	index := rand.IntN(len(availableUsers))
-	return availableUsers[index] // ✅ 不立即移除
 }
 
 // 只有删除成功后才移除用户
@@ -532,7 +545,11 @@ func removeUserAfterSuccess(username string) {
 func generateTestUsernameFast(index int) string {
 	timestamp := time.Now().UnixNano() % 1000000
 	counter := atomic.AddInt64(&usernameCounter, 1)
-	return fmt.Sprintf("test_%s_%d_%d_%d", testRunID, index, timestamp, counter)
+	base := fmt.Sprintf("test_%s_%d_%d_%d", testRunID, index, timestamp, counter)
+	if len(base) > 45 {
+		return base[:45]
+	}
+	return base
 }
 
 // 优化的HTTP客户端
@@ -787,28 +804,32 @@ func getAuthTokenWithDebug() (string, error) {
 	return response.Data.AccessToken, nil
 }
 
-func getValidToken() string {
-	tokenMutex.RLock()
-	token := globalToken
-	expiry := tokenExpiry
-	tokenMutex.RUnlock()
-
-	if token == "" || time.Now().Add(5*time.Minute).After(expiry) {
-		newToken, err := getAuthTokenWithDebug()
-		if err != nil {
-			fmt.Printf("⚠️  Token刷新失败: %v\n", err)
-			return token
-		}
-
-		tokenMutex.Lock()
-		globalToken = newToken
-		tokenExpiry = time.Now().Add(30 * time.Minute)
-		tokenMutex.Unlock()
-
-		return newToken
+// getDeleterToken 返回指定删除器的 token，如果为空则尝试刷新
+func getDeleterToken(did int) string {
+	if did < 0 || did >= len(deleterTokens) {
+		return ""
 	}
+	deleterTokensMutex.RLock()
+	t := deleterTokens[did]
+	expiry := time.Time{}
+	if did < len(deleterExpiries) {
+		expiry = deleterExpiries[did]
+	}
+	deleterTokensMutex.RUnlock()
 
-	return token
+	if t == "" || time.Now().Add(5*time.Minute).After(expiry) {
+		newT, err := getAuthTokenWithDebug()
+		if err != nil {
+			fmt.Printf("⚠️ 刷新 deleter token 失败 did=%d: %v\n", did, err)
+			return t
+		}
+		deleterTokensMutex.Lock()
+		deleterTokens[did] = newT
+		deleterExpiries[did] = time.Now().Add(30 * time.Minute)
+		deleterTokensMutex.Unlock()
+		return newT
+	}
+	return t
 }
 
 func printHeader(title string, width int) {

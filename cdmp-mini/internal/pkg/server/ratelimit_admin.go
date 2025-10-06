@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/go-redis/redis/v8"
 	apiserveropts "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
@@ -31,19 +33,33 @@ func RegisterRateLimitAdminHandlers(rg *gin.RouterGroup, redisCluster *storage.R
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
 		defer cancel()
-		if redisCluster == nil || redisCluster.GetClient() == nil {
-			core.WriteResponse(c, nil, gin.H{"value": nil, "source": "no_redis"})
+		if redisCluster == nil {
+			// No Redis configured — return configured default write limit if available
+			core.WriteResponse(c, nil, gin.H{"value": opts.ServerRunOptions.WriteRateLimit, "ttl_seconds": 0, "source": "no_redis"})
 			return
 		}
-		val, err := redisCluster.GetClient().Get(ctx, key).Result()
+		// Prefer an explicit availability check so we return a clear no_redis response
+		if err := redisCluster.Up(); err != nil {
+			// Redis exists but is down — return configured default so admins get a meaningful number
+			log.Warnf("redis up check failed for keys %s / %s: %v", key, metaKey, err)
+			core.WriteResponse(c, nil, gin.H{"value": opts.ServerRunOptions.WriteRateLimit, "ttl_seconds": 0, "source": "no_redis"})
+			return
+		}
+
+		client := redisCluster.GetClient()
+		val, err := client.Get(ctx, key).Result()
 		if err != nil {
-			// if not found, return nil value with no error
+			if errors.Is(err, redis.Nil) {
+				// key not found — return configured default so callers see the effective limit
+				core.WriteResponse(c, nil, gin.H{"value": opts.ServerRunOptions.WriteRateLimit, "ttl_seconds": 0, "source": "default"})
+				return
+			}
 			core.WriteResponse(c, nil, gin.H{"value": nil, "error": err.Error()})
 			return
 		}
-		ttl, _ := redisCluster.GetClient().TTL(ctx, key).Result()
+		ttl, _ := client.TTL(ctx, key).Result()
 		source := "unknown"
-		if metaVal, err := redisCluster.GetClient().Get(ctx, metaKey).Result(); err == nil {
+		if metaVal, err := client.Get(ctx, metaKey).Result(); err == nil {
 			source = metaVal
 		}
 		core.WriteResponse(c, nil, gin.H{"value": val, "ttl_seconds": int(ttl.Seconds()), "source": source})
@@ -84,7 +100,13 @@ func RegisterRateLimitAdminHandlers(rg *gin.RouterGroup, redisCluster *storage.R
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
-		if redisCluster == nil || redisCluster.GetClient() == nil {
+		if redisCluster == nil {
+			log.Warn("redisCluster is nil when trying to set ratelimit")
+			core.WriteResponse(c, nil, gin.H{"result": "no_redis"})
+			return
+		}
+		if err := redisCluster.Up(); err != nil {
+			log.Warnf("redis up check failed when setting keys %s / %s: %v", key, metaKey, err)
 			core.WriteResponse(c, nil, gin.H{"result": "no_redis"})
 			return
 		}
@@ -134,7 +156,13 @@ func RegisterRateLimitAdminHandlers(rg *gin.RouterGroup, redisCluster *storage.R
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		defer cancel()
-		if redisCluster == nil || redisCluster.GetClient() == nil {
+		if redisCluster == nil {
+			log.Warn("redisCluster is nil when trying to delete ratelimit keys")
+			core.WriteResponse(c, nil, gin.H{"result": "no_redis"})
+			return
+		}
+		if err := redisCluster.Up(); err != nil {
+			log.Warnf("redis up check failed when deleting keys %s / %s: %v", key, metaKey, err)
 			core.WriteResponse(c, nil, gin.H{"result": "no_redis"})
 			return
 		}

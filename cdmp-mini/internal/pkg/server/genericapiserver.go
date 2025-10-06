@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"os"
 	"sync"
 
 	"fmt"
@@ -51,6 +52,10 @@ type GenericAPIServer struct {
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	// 初始化日志
 	log.Debugf("正在初始化GenericAPIServer服务器，环境: %s", opts.ServerRunOptions.Mode)
+	// 打印 Kafka 实例ID
+	if opts.KafkaOptions != nil {
+		log.Infof("[Kafka] 当前实例 InstanceID = %s", opts.KafkaOptions.InstanceID)
+	}
 
 	//创建服务器实例
 	g := &GenericAPIServer{
@@ -99,6 +104,20 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	}
 	log.Debug("redis服务器启动成功")
 	time.Sleep(3 * time.Second)
+	// 生成唯一的 KAFKA_INSTANCE_ID
+	instanceID := os.Getenv("KAFKA_INSTANCE_ID")
+	if instanceID == "" {
+		host, err := os.Hostname()
+		if err != nil {
+			host = "unknownhost"
+		}
+		timestamp := time.Now().UnixNano()
+		instanceID = fmt.Sprintf("%s-%d", host, timestamp)
+	}
+	if opts.KafkaOptions != nil {
+		opts.KafkaOptions.InstanceID = instanceID
+		log.Infof("[Kafka] 自动生成唯一 InstanceID = %s", instanceID)
+	}
 	if err := g.initKafkaComponents(dbIns); err != nil {
 		log.Error("kafka服务启动失败")
 		return nil, err

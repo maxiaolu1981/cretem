@@ -64,10 +64,14 @@ type KafkaOptions struct {
 	LagScaleThreshold int64 `json:"lagScaleThreshold" mapstructure:"lagScaleThreshold"`
 	// 检查滞后间隔
 	LagCheckInterval time.Duration `json:"lagCheckInterval" mapstructure:"lagCheckInterval"`
-	// 批量写入数据库时每个批次的最大条数
+	// 批量写入数据库时每个批次的L最大条数
 	MaxDBBatchSize int `json:"maxDBBatchSize" mapstructure:"maxDBBatchSize" validate:"min=1"`
 	// Producer in-flight limit: maximum concurrent synchronous sends allowed
 	ProducerMaxInFlight int `json:"producerMaxInFlight" mapstructure:"producerMaxInFlight" validate:"min=1"`
+	// 当前是否处于滞后保护状态（true 表示滞后超过阈值）
+	LagProtected bool `json:"lagProtected" mapstructure:"lagProtected"`
+	// 实例唯一ID（建议用 hostname、pod name、uuid 等保证全局唯一）
+	InstanceID string `json:"instanceID" mapstructure:"instanceID"`
 }
 
 // NewKafkaOptions 创建带有默认值的Kafka配置
@@ -94,10 +98,11 @@ func NewKafkaOptions() *KafkaOptions {
 		AutoCreateTopic:        true,
 		DesiredPartitions:      48, // 期望的分区数
 		AutoExpandPartitions:   true,
-		ProducerMaxInFlight:    1000,
-		LagScaleThreshold:      10000,            // 默认滞后阈值
+		ProducerMaxInFlight:    2000,
+		LagScaleThreshold:      100000,           // 默认滞后阈值
 		LagCheckInterval:       30 * time.Second, // 默认滞后检查间隔
-		MaxDBBatchSize:         100,              // 默认批量写DB大小
+		MaxDBBatchSize:         500,              // 默认批量写DB大小
+		InstanceID:             "",               // 新增字段默认值为空，建议启动时赋值
 	}
 }
 
@@ -289,6 +294,20 @@ func (k *KafkaOptions) AddFlags(fs *pflag.FlagSet) {
 
 	fs.BoolVar(&k.AutoExpandPartitions, "kafka.auto-expand-partitions", k.AutoExpandPartitions,
 		"是否自动扩展分区")
+
+	// 新增：实例ID参数
+	fs.StringVar(&k.InstanceID, "kafka.instance-id", k.InstanceID, "Kafka消费者实例唯一ID（建议用hostname、pod name、uuid等保证全局唯一）。也可通过环境变量 KAFKA_INSTANCE_ID 设置")
+	// 新增：从环境变量获取实例ID
+	if envInstanceID := os.Getenv("KAFKA_INSTANCE_ID"); envInstanceID != "" {
+		k.InstanceID = envInstanceID
+	}
+	// 若仍为空，自动用主机名兜底
+	if k.InstanceID == "" {
+		host, err := os.Hostname()
+		if err == nil {
+			k.InstanceID = host
+		}
+	}
 }
 
 // parseBrokersFromEnv 从环境变量字符串解析broker列表

@@ -133,15 +133,21 @@
 
 1) 查看当前全局限流（若启用 token，请加 header）
 
+
 ```bash
 # 示例：先在 shell 中设置示例 token（运维请替换为实际 token）
-export ADMIN_TOKEN=admin-token-EXAMPLE-123
+export ADMIN_TOKEN="admin-token-EXAMPLE-123"
+# 先确认 token 已设置
+echo "ADMIN_TOKEN: ${ADMIN_TOKEN}"
 
-# 查看当前全局限流（替换为你的 apiserver 域名/端口）
-curl -sS -X GET "http:192.168.10.8:8088/admin/ratelimit/write/admin/ratelimit/write" \
-  -H "X-Admin-Token: ${ADMIN_TOKEN}" | jq .
+# 然后执行
+curl -sS -X GET "http://192.168.10.8:8088/admin/ratelimit/write" -H "X-Admin-Token: ${ADMIN_TOKEN}" | jq .
 ```
 
+```bash
+# 查看当前全局限流（不需要token）
+curl -sS -X GET "http://192.168.10.8:8088/admin/ratelimit/write" | jq .
+```
 响应示例：
 
 ```json

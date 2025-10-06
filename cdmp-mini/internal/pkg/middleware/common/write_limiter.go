@@ -2,8 +2,10 @@ package common
 
 import (
 	"context"
+	"crypto/sha1"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -36,8 +38,20 @@ func WriteRateLimiter(redisCluster *storage.RedisCluster, limit int, window time
 			// parseInt helper moved to file scope
 		}
 
-		// 标识使用 API 路径 + 客户端 IP 作为粒度（可改为按用户）
-		identifier := "write:" + c.ClientIP() + ":" + c.FullPath()
+		// 标识使用 API 路径 + 优先使用 Authorization token（若存在）作为粒度，否则使用客户端 IP
+		idPart := c.ClientIP()
+		if auth := c.GetHeader("Authorization"); strings.TrimSpace(auth) != "" {
+			ah := strings.TrimSpace(auth)
+			if strings.HasPrefix(strings.ToLower(ah), "bearer ") {
+				ah = strings.TrimSpace(ah[7:])
+			}
+			if ah != "" {
+				// 使用 token 的 sha1 前缀作为标识，避免在 Redis key 中放置长 token
+				h := sha1.Sum([]byte(ah))
+				idPart = fmt.Sprintf("%x", h)[:16]
+			}
+		}
+		identifier := "write:" + idPart + ":" + c.FullPath()
 		rateLimitKey := buildRedisKey(redisCluster, "ratelimit:write:"+identifier)
 
 		// 本地快速检查（复用 localRateCheck 保持一致策略）

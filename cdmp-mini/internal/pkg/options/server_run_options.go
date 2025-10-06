@@ -91,6 +91,8 @@ type ServerRunOptions struct {
 	Env            string        `json:"env"    mapstructure:"env"`
 	LoginRateLimit int           `json:"loginlimit"   mapstructure:"loginlimit"`
 	LoginWindow    time.Duration `json:"loginwindow"   mapstructure:"loginwindow"`
+	// WriteRateLimit: 默认的写操作限流阈值（当 Redis 未配置 override 时使用）
+	WriteRateLimit int `json:"writeRateLimit"   mapstructure:"writeRateLimit"`
 	// AdminToken: 简单的管理API访问令牌（如果为空，只允许本地或 debug 访问）
 	AdminToken string `json:"adminToken" mapstructure:"adminToken"`
 }
@@ -98,7 +100,7 @@ type ServerRunOptions struct {
 func NewServerRunOptions() *ServerRunOptions {
 
 	return &ServerRunOptions{
-		Mode:            gin.ReleaseMode,
+		Mode:            gin.DebugMode,
 		Healthz:         true,
 		Middlewares:     []string{},
 		EnableProfiling: true,
@@ -107,7 +109,8 @@ func NewServerRunOptions() *ServerRunOptions {
 		CookieSecure:    false,
 		CtxTimeout:      30 * time.Second,
 		Env:             "development",
-		LoginRateLimit:  50000, // 5万/分钟
+		LoginRateLimit:  500000, // 5万/分钟
+		WriteRateLimit:  500000, // 写操作默认限流（每 window）
 		LoginWindow:     2 * time.Minute,
 		AdminToken:      "",
 	}
@@ -173,6 +176,10 @@ func (s *ServerRunOptions) Complete() {
 
 	if s.LoginRateLimit == 0 {
 		s.LoginRateLimit = 1000
+	}
+
+	if s.WriteRateLimit == 0 {
+		s.WriteRateLimit = 1000
 	}
 
 	if s.LoginWindow == 0 {

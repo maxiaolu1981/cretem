@@ -1,22 +1,23 @@
 digraph retry_deadletter_flow {
   rankdir=LR;
-  node [shape=box, fontname="Arial"];
+  graph [fontname="Arial"];
+  node [shape=box, fontname="Arial", fillcolor="#F7FAFC", style=filled, color="#2B6CB0"];
 
-  producer [label="Producer\n(write attempt)"];
-  retry_topic [label="Retry Topic\n(backoff consumer)", shape=folder];
-  dead [label="Dead-letter\n(inspection/replay)", shape=note, color="#aa0000"];
-  retry_consumer [label="Retry Consumer\n(exp backoff handler)"];
-  dlq_handler [label="DLQ Handler\n(alert + manual replay)"];
+  producer [label="Producer\n(write attempt)", fillcolor="#E6FFF2", color="#2F855A"];
+  retry_topic [label="Retry Topic\n(backoff consumer)", shape=folder, fillcolor="#FFF7E6", color="#B7791F"];
+  dead [label="Dead-letter\n(inspection/replay)", shape=note, color="#C53030", fillcolor="#FFF0F0", style=filled];
+  retry_consumer [label="Retry Consumer\n(exp backoff handler)", fillcolor="#E6F2FF"];
+  dlq_handler [label="DLQ Handler\n(alert + manual replay)", fillcolor="#FFFBE6"];
 
-  producer -> retry_topic [label="on transient errors", style=dashed];
-  producer -> dead [label="on permanent errors", style=dotted, color="#aa0000"];
-  retry_topic -> retry_consumer -> producer [label="retry path"];
-  dead -> dlq_handler [label="alert + analyze"];
+  producer -> retry_topic [label="on transient errors", style=dashed, color="#B7791F"];
+  producer -> dead [label="on permanent errors", style=dotted, color="#C53030"];
+  retry_topic -> retry_consumer -> producer [label="retry path", color="#2B6CB0"];
+  dead -> dlq_handler [label="alert + analyze", color="#4A5568"];
 
   subgraph cluster_ops {
     label="Operator Actions";
     style=rounded;
-    alert [label="Alert: DeadLetter spike / retry spikes"];
-    alert -> dlq_handler [style=dashed];
+    alert [label="Alert: DeadLetter spike / retry spikes", fillcolor="#FFF0F0", color="#C53030"];
+    alert -> dlq_handler [style=dashed, color="#4A5568"];
   }
 }

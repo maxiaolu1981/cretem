@@ -76,6 +76,9 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 }
 
 func (p *UserProducer) SendUserCreateMessage(ctx context.Context, user *v1.User) error {
+	// 发送扁平结构，兼容 consumer 直接反序列化 v1.User
+	// 若 user 内部有 Metadata 字段，需展开为顶层字段
+	// 这里假设 v1.User 已经是扁平结构
 	return p.sendUserMessage(ctx, user, OperationCreate, UserCreateTopic)
 }
 

@@ -1,29 +1,30 @@
 digraph overall_flow {
+  /* Unified styling */
   rankdir=LR;
-  node [shape=rectangle, style=filled, fillcolor="#f8f9fa", color="#333333", fontname="Arial"];
+  graph [fontname="Arial", fontsize=12];
+  node [fontname="Arial", shape=rectangle, style=filled, fillcolor="#EDF2F7", color="#2B6CB0"];
+  edge [fontname="Arial", color="#2B6CB0"];
 
-  client [label="Client\n(HTTP)" shape=component fillcolor="#e8f0ff"];
-  apiserver [label="API Server\n(Gin)" shape=component fillcolor="#fff0e6"];
-  write_limiter [label="WriteRateLimiter\n(local + Redis)" shape=box3d fillcolor="#ffe6e6"];
-  producer [label="Producer\n(kafka-go)" shape=component fillcolor="#e6fff2"];
-  kafka [label="Kafka Cluster\n(topics)" shape=cylinder fillcolor="#fff7e6"];
-  consumer [label="Consumer\n(worker pool, batch)" shape=component fillcolor="#e6f2ff"];
-  db [label="Database\n(GORM)" shape=cylinder fillcolor="#f0e6ff"];
+  // component nodes
+  client [label="Client\n(HTTP)", shape=component, fillcolor="#E6F2FF"];
+  apiserver [label="API Server\n(Gin)", shape=component, fillcolor="#FFF3E0"];
+  write_limiter [label="WriteRateLimiter\n(local + Redis)", shape=box3d, fillcolor="#FFECEB", color="#C53030"];
+  producer [label="Producer\n(kafka-go)", shape=component, fillcolor="#E6FFF2", color="#2F855A"];
+  kafka [label="Kafka Cluster\n(topics)", shape=cylinder, fillcolor="#FFF7E6", color="#B7791F"];
+  consumer [label="Consumer\n(worker pool, batch)", shape=component, fillcolor="#E6F2FF"];
+  db [label="Database\n(GORM)", shape=cylinder, fillcolor="#F0E6FF"];
 
-  retry [label="Retry Topic" shape=folder fillcolor="#fffbe6"];
-  dead [label="Dead-letter" shape=note fillcolor="#fff0f0"];
+  retry [label="Retry Topic", shape=folder, fillcolor="#FFFBE6", color="#B7791F"];
+  dead [label="Dead-letter", shape=note, fillcolor="#FFF0F0", color="#C53030"];
 
   client -> apiserver -> write_limiter -> producer -> kafka;
   kafka -> consumer -> db;
 
   producer -> retry [label="on transient failure", style=dashed];
-  producer -> dead [label="on permanent failure", color="#aa0000", style=dotted];
+  producer -> dead [label="on permanent failure", color="#C53030", style=dotted];
   retry -> consumer [label="retry consumer"];
 
   // admin/control plane
-  apiserver -> write_limiter [label="reads override key (redis)", style=bold, color="#666"];
+  apiserver -> write_limiter [label="reads override key (redis)", style=bold, color="#4A5568"];
   apiserver -> apiserver [label="/admin/ratelimit/write (GET/POST/DELETE)", style=dotted, fontsize=10];
-
-  // aesthetics
-  edge [fontname="Arial"];
 }

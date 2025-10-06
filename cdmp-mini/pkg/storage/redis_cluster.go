@@ -91,23 +91,7 @@ type RedisCluster struct {
 }
 
 func clusterConnectionIsOpen(cluster RedisCluster) bool {
-	// c := singleton(cluster.IsCache)
-	// if c == nil {
-	// 	log.Warn("clusterConnectionIsOpen: client instance is nil")
-	// 	return false
-	// }
-
-	// ctx := context.Background()
-	// testKey := "redis-test-" + uuid.Must(uuid.NewV4()).String()
-	// if err := c.Set(ctx, testKey, "test", time.Second).Err(); err != nil {
-	// 	log.Warnf("Error trying to set test key: %s", err.Error())
-	// 	return false
-	// }
-	// if _, err := c.Get(ctx, testKey).Result(); err != nil {
-	// 	log.Warnf("Error trying to get test key: %s", err.Error())
-	// 	return false
-	// }
-	//return true
+	
 	c := singleton(cluster.IsCache)
 	if c == nil {
 		log.Warn("clusterConnectionIsOpen: client instance is nil")
@@ -510,8 +494,8 @@ func (r *RedisCluster) SetExp(ctx context.Context, keyName string, timeout time.
 
 // SetKey creates or updates a key-value pair
 func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, timeout time.Duration) error {
-	//log.Debugf("[STORE] SET Raw key is: %s", keyName)
-	//log.Debugf("[STORE] Setting key: %s", r.fixKey(keyName))
+	log.Debugf("[STORE] SET Raw key is: %s", keyName)
+	log.Debugf("[STORE] Setting key: %s", r.fixKey(keyName))
 
 	if err := r.Up(); err != nil {
 		return err
