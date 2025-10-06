@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-contrib/pprof"
 	"github.com/gin-gonic/gin"
@@ -77,6 +78,10 @@ func (g *GenericAPIServer) installSystemRoutes() error {
 	g.GET("/version", func(c *gin.Context) {
 		core.WriteResponse(c, nil, version.Get().ToJSON())
 	})
+
+	// 注册简单的管理接口组（仅本地或debug模式可访问）
+	admin := g.Group("/admin")
+	RegisterRateLimitAdminHandlers(admin, g.redis, g.options)
 	return nil
 }
 
@@ -142,9 +147,35 @@ func (g *GenericAPIServer) installApiRoutes() error {
 			log.Error("NewUserController初始化失败")
 			return err
 		}
+		// 写入类接口使用分布式写限流 + 滞后保护，保护后端（可按需调整阈值）
+		writeLimit := common.WriteRateLimiter(g.redis, 1000, 1*time.Minute)
+		// lagProtect 查询所有消费者实例是否处于保护模式
+		lagProtect := common.LagProtectMiddleware(func() bool {
+			instances := g.getConsumerInstances()
+			if instances == nil {
+				return false
+			}
+			for _, c := range instances.createConsumers {
+				if c != nil && c.lagProtected {
+					return true
+				}
+			}
+			for _, c := range instances.deleteConsumers {
+				if c != nil && c.lagProtected {
+					return true
+				}
+			}
+			for _, c := range instances.updateConsumers {
+				if c != nil && c.lagProtected {
+					return true
+				}
+			}
+			return false
+		})
+
 		userv1.DELETE(":name", userController.Delete)
-		userv1.DELETE(":name/force", userController.ForceDelete)
-		userv1.POST("", userController.Create)
+		userv1.DELETE(":name/force", lagProtect, writeLimit, userController.ForceDelete)
+		userv1.POST("", lagProtect, writeLimit, userController.Create)
 		userv1.GET(":name", userController.Get)
 		userv1.GET("", userController.List)
 	}

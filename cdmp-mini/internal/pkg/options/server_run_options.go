@@ -91,6 +91,8 @@ type ServerRunOptions struct {
 	Env            string        `json:"env"    mapstructure:"env"`
 	LoginRateLimit int           `json:"loginlimit"   mapstructure:"loginlimit"`
 	LoginWindow    time.Duration `json:"loginwindow"   mapstructure:"loginwindow"`
+	// AdminToken: 简单的管理API访问令牌（如果为空，只允许本地或 debug 访问）
+	AdminToken string `json:"adminToken" mapstructure:"adminToken"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -107,6 +109,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		Env:             "development",
 		LoginRateLimit:  50000, // 5万/分钟
 		LoginWindow:     2 * time.Minute,
+		AdminToken:      "",
 	}
 }
 
@@ -273,4 +276,6 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 		"指定限流次数")
 	fs.DurationVar(&s.LoginWindow, "server.loginwindow", s.LoginWindow, ""+
 		"指定限流时间")
+	fs.StringVar(&s.AdminToken, "server.admin-token", s.AdminToken,
+		"管理API的简单访问令牌（默认为空，仅允许本地访问）")
 }

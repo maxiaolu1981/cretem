@@ -1,0 +1,22 @@
+HTTP/2 302 
+date: Sun, 05 Oct 2025 17:21:45 GMT
+content-type: text/plain; charset=utf-8
+content-length: 0
+location: https://www.plantuml.com/plantuml/uml/SyfFKj2rKt3CoKnELR1Io4ZDoSa700002
+cache-control: no-cache
+display: staticcontent_sol
+response: 302
+vary: Accept-Encoding,Origin
+x-ez-proxy-out: true 2.4
+x-ezoic-cdn: Bypass
+x-middleton-display: staticcontent_sol
+x-middleton-response: 302
+x-sol: pub_site
+cf-cache-status: DYNAMIC
+report-to: {"group":"cf-nel","max_age":604800,"endpoints":[{"url":"https://a.nel.cloudflare.com/report/v4?s=1YBWcZWHyQTXXOKdT2oRYnCiODue1HW44azGlnE6mmG8T6kIP%2BjANlTgRPsf9ND2QHnT4zJbSkV8FzprdFm4IiqiAT1t5zOf1dOHuehdB4U%3D"}]}
+nel: {"report_to":"cf-nel","success_fraction":0.0,"max_age":604800}
+server: cloudflare
+set-cookie: ezoictest=stable; HttpOnly; Path=/; Domain=plantuml.com; Expires=Sun, 05 Oct 2025 17:51:45 GMT
+cf-ray: 989e98e22dd1c487-SJC
+alt-svc: h3=":443"; ma=86400
+

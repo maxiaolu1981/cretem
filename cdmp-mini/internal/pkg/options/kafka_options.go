@@ -60,6 +60,14 @@ type KafkaOptions struct {
 	AutoCreateTopic      bool          `json:"autoCreateTopic" mapstructure:"autoCreateTopic"`
 	DesiredPartitions    int           `json:"desiredPartitions" mapstructure:"desiredPartitions" validate:"min=1"`
 	AutoExpandPartitions bool          `json:"autoExpandPartitions" mapstructure:"autoExpandPartitions"`
+	// 当消费者滞后超过该阈值时触发保护/扩容（单位：消息数）
+	LagScaleThreshold int64 `json:"lagScaleThreshold" mapstructure:"lagScaleThreshold"`
+	// 检查滞后间隔
+	LagCheckInterval time.Duration `json:"lagCheckInterval" mapstructure:"lagCheckInterval"`
+	// 批量写入数据库时每个批次的最大条数
+	MaxDBBatchSize int `json:"maxDBBatchSize" mapstructure:"maxDBBatchSize" validate:"min=1"`
+	// Producer in-flight limit: maximum concurrent synchronous sends allowed
+	ProducerMaxInFlight int `json:"producerMaxInFlight" mapstructure:"producerMaxInFlight" validate:"min=1"`
 }
 
 // NewKafkaOptions 创建带有默认值的Kafka配置
@@ -86,6 +94,10 @@ func NewKafkaOptions() *KafkaOptions {
 		AutoCreateTopic:        true,
 		DesiredPartitions:      48, // 期望的分区数
 		AutoExpandPartitions:   true,
+		ProducerMaxInFlight:    1000,
+		LagScaleThreshold:      10000,            // 默认滞后阈值
+		LagCheckInterval:       30 * time.Second, // 默认滞后检查间隔
+		MaxDBBatchSize:         100,              // 默认批量写DB大小
 	}
 }
 

@@ -23,6 +23,12 @@ var (
 	DeadLetterMessages    *prometheus.CounterVec
 	MessageProcessingTime *prometheus.HistogramVec
 
+	// 生产者当前未完成发送数（in-flight）
+	ProducerInFlightCurrent prometheus.Gauge
+	// 写限流触发计数
+	WriteLimiterTotal *prometheus.CounterVec
+	// initialization moved to init()
+
 	// 业务处理指标
 	BusinessProcessingTime *prometheus.HistogramVec
 	BusinessSuccess        *prometheus.CounterVec
@@ -255,6 +261,22 @@ func init() {
 			Help: "Business operation error rate percentage",
 		},
 		[]string{"service", "operation"}, // ✅ 正确
+	)
+
+	// 初始化新增指标
+	ProducerInFlightCurrent = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "kafka_producer_inflight_current",
+			Help: "Current number of in-flight synchronous producer sends",
+		},
+	)
+
+	WriteLimiterTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "write_rate_limiter_total",
+			Help: "Total number of requests blocked by write rate limiter",
+		},
+		[]string{"path", "reason"},
 	)
 
 	// -------------------------- 初始化：Kafka消费者指标 --------------------------
@@ -789,6 +811,10 @@ func init() {
 		RedisOperationDuration,
 		RedisErrors,
 		RedisCacheSize,
+
+		// 新增指标
+		ProducerInFlightCurrent,
+		WriteLimiterTotal,
 
 		// Redis集群指标
 		RedisClusterNodesTotal,

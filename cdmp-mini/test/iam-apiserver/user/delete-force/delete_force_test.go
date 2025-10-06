@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,7 +21,7 @@ import (
 
 // ==================== 压力测试配置常量 ====================
 const (
-	ServerBaseURL  = "http://localhost:8088"
+	ServerBaseURL  = "http://192.168.10.8:8088"
 	RequestTimeout = 30 * time.Second
 
 	LoginAPIPath    = "/login"
@@ -36,16 +35,16 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 创建用户并发配置
-	PreCreateUsers      = 100 // 预先创建的用户数量
-	PreCreateConcurrent = 10  // 预创建并发数
-	PreCreateBatchSize  = 100 // 进度显示批次
-	PreCreateTimeout    = 1 * time.Second
+	PreCreateUsers      = 1000000 // 预先创建的用户数量
+	PreCreateConcurrent = 1000    // 预创建并发数
+	PreCreateBatchSize  = 1000    // 进度显示批次
+	PreCreateTimeout    = 10 * time.Second
 
 	// 删除用户并发配置
-	ConcurrentDeleters = 10 // 并发删除器数量
-	DeletesPerUser     = 10 // 每个删除器执行的删除次数
-	MaxConcurrent      = 25 // 最大并发数
-	BatchSize          = 10 // 批次大小
+	ConcurrentDeleters = 100000 // 并发删除器数量
+	DeletesPerUser     = 10     // 每个删除器执行的删除次数
+	MaxConcurrent      = 100    // 最大并发数
+	BatchSize          = 100    // 批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -380,74 +379,61 @@ func createSingleUser(workerID int, token string, index int, mutex *sync.Mutex) 
 
 // ==================== 并发删除用户 ====================
 func executeConcurrentDeleteTest() {
-	semaphore := make(chan struct{}, MaxConcurrent)
+	// Prepare deletion queue: pop up to expectedDeletes users from availableUsers
+	expectedDeletes := ConcurrentDeleters * DeletesPerUser
+
+	usersMutex.Lock()
+	availableCount := len(availableUsers)
+	if availableCount == 0 {
+		usersMutex.Unlock()
+		fmt.Printf("⚠️ 无可用用户可供删除\n")
+		return
+	}
+
+	deletesToPerform := expectedDeletes
+	if availableCount < deletesToPerform {
+		fmt.Printf("⚠️ 可用用户(%d)少于预期删除数(%d)，将只删除 %d 用户\n", availableCount, expectedDeletes, availableCount)
+		deletesToPerform = availableCount
+	}
+
+	// Copy the first N users to delete (do NOT remove from availableUsers so we can audit later)
+	deleteList := make([]string, deletesToPerform)
+	copy(deleteList, availableUsers[:deletesToPerform])
+	usersMutex.Unlock()
+
+	// Create a channel as a deletion queue
+	userCh := make(chan string, deletesToPerform)
+	for _, u := range deleteList {
+		userCh <- u
+	}
+	close(userCh)
+
+	// Start workers to consume usernames from userCh. Each worker performs DeletesPerUser or until channel is closed.
 	var wg sync.WaitGroup
-
-	totalBatches := (ConcurrentDeleters + BatchSize - 1) / BatchSize
-
-	for batch := 0; batch < totalBatches; batch++ {
-		batchStart := batch * BatchSize
-		batchEnd := min((batch+1)*BatchSize, ConcurrentDeleters)
-
-		fmt.Printf("🔄 处理删除批次 %d/%d: 删除器 %d-%d\n",
-			batch+1, totalBatches, batchStart, batchEnd-1)
-
-		var batchWg sync.WaitGroup
-		for deleterID := batchStart; deleterID < batchEnd; deleterID++ {
-			batchWg.Add(1)
-			go func(did int) {
-				defer batchWg.Done()
-				sendDeleteRequests(did, semaphore, &wg)
-			}(deleterID)
-		}
-		batchWg.Wait()
-
-		if batch < totalBatches-1 {
-			time.Sleep(100 * time.Millisecond)
-			runtime.GC()
-		}
+	for did := 0; did < ConcurrentDeleters; did++ {
+		wg.Add(1)
+		go func(did int) {
+			defer wg.Done()
+			for username := range userCh {
+				// requestID is not important for this pressure test; set to 0
+				sendSingleDeleteRequestWithUsername(did, 0, username)
+				// small throttle to avoid overwhelming the server
+				time.Sleep(100 * time.Microsecond)
+			}
+		}(did)
 	}
 
 	wg.Wait()
 }
 
-func sendDeleteRequests(deleterID int, semaphore chan struct{}, wg *sync.WaitGroup) {
-	var deleterWg sync.WaitGroup
-
-	for requestID := 0; requestID < DeletesPerUser; requestID++ {
-		wg.Add(1)
-		deleterWg.Add(1)
-		semaphore <- struct{}{}
-
-		go func(did, rid int) {
-			defer wg.Done()
-			defer deleterWg.Done()
-			defer func() { <-semaphore }()
-
-			sendSingleDeleteRequest(did, rid)
-		}(deleterID, requestID)
-
-		// 控制请求间隔
-		time.Sleep(100 * time.Microsecond)
-	}
-
-	deleterWg.Wait()
-}
-
-func sendSingleDeleteRequest(deleterID, requestID int) {
+// sendSingleDeleteRequestWithUsername deletes a single username. requestID kept for compatibility with result records.
+func sendSingleDeleteRequestWithUsername(deleterID, requestID int, username string) {
 	start := time.Now()
 
 	// 获取有效Token
 	token := getValidToken()
 	if token == "" {
 		recordDeleteResult(deleterID, requestID, false, time.Since(start), "Token获取失败", "")
-		return
-	}
-
-	// 选择要删除的用户
-	username := selectUserForDeletion()
-	if username == "" {
-		recordDeleteResult(deleterID, requestID, false, time.Since(start), "无可用用户可删除", "")
 		return
 	}
 
@@ -698,13 +684,36 @@ func printFinalResults(createDuration, deleteDuration time.Duration, width int) 
 	}
 
 	// 错误分析
+	// 删除错误详细信息与聚合
 	if len(deleteErrorResults) > 0 {
-		fmt.Printf("\n🔍 删除错误分析 (前10个):\n")
-		displayErrors := min(10, len(deleteErrorResults))
+		fmt.Printf("\n🔍 删除错误分析 (前20个):\n")
+		displayErrors := min(20, len(deleteErrorResults))
 		for i := 0; i < displayErrors; i++ {
 			err := deleteErrorResults[i]
 			fmt.Printf("  %d. 删除器%d-请求%d [用户:%s]: %s (耗时: %v)\n",
 				i+1, err.DeleterID, err.RequestID, err.DeletedUser, err.Error, err.Duration.Round(time.Millisecond))
+		}
+
+		// 聚合错误计数，便于快速定位高频失败原因
+		errCount := map[string]int{}
+		for _, e := range deleteErrorResults {
+			errCount[e.Error]++
+		}
+		fmt.Printf("\n🔎 删除错误聚合统计:\n")
+		for msg, cnt := range errCount {
+			fmt.Printf("  - %d 次: %s\n", cnt, msg)
+		}
+	}
+
+	// 创建错误聚合（如果有）
+	if len(createErrorResults) > 0 {
+		fmt.Printf("\n🔍 创建错误聚合统计:\n")
+		createErrCount := map[string]int{}
+		for _, e := range createErrorResults {
+			createErrCount[e.Error]++
+		}
+		for msg, cnt := range createErrCount {
+			fmt.Printf("  - %d 次: %s\n", cnt, msg)
 		}
 	}
 

@@ -37,10 +37,10 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 并发配置（先调小进行调试）
-	ConcurrentUsers = 100000 // 并发用户数（调试阶段调小）
-	RequestsPerUser = 10     // 每用户请求数
-	MaxConcurrent   = 100    // 最大并发数
-	BatchSize       = 100    // 批次大小
+	ConcurrentUsers = 100 // 并发用户数（调试阶段调小）
+	RequestsPerUser = 10  // 每用户请求数
+	MaxConcurrent   = 100 // 最大并发数
+	BatchSize       = 100 // 批次大小
 )
 
 // ==================== 数据结构 ====================

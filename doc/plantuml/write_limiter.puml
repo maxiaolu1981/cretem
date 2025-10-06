@@ -1,0 +1,50 @@
+@startuml
+title WriteRateLimiter middleware flow (cdmp-mini)
+actor Client
+participant "Gin Handler" as Handler
+participant "WriteRateLimiter middleware" as Limiter
+participant "Local Rate Checker" as Local
+participant "RedisCluster" as Redis
+participant "Lua Script Eval" as Lua
+
+Client -> Handler: HTTP POST /v1/users
+Handler -> Limiter: invoke WriteRateLimiter
+Limiter -> Local: localRateCheck(identifier, limit, window)
+alt local over-limit
+    Local --> Limiter: reject -> return 429
+    Limiter --> Handler: 429 Too Many Requests
+else local ok
+    Local --> Limiter: ok
+    Limiter -> Redis: GET globalKey (short timeout 150ms)
+    alt redis responds with override
+        Redis --> Limiter: value
+        Limiter -> Lua: Eval(rateLimitKey, limit, windowSec)
+        Lua --> Limiter: [limited, remaining]
+        alt limited==1
+            Limiter --> Handler: 429 Too Many Requests (with retry_after)
+        else allowed
+            Limiter --> Handler: c.Next()
+        end
+    else redis timeout / error
+        Limiter -> Local: strictLocalRateCheck(identifier, limit)
+        alt strict local rejects
+            Limiter --> Handler: 429 (local fallback)
+        else
+            Limiter --> Handler: c.Next() (proceed)
+        end
+    end
+end
+
+note right
+- Redis operations have short timeouts to avoid blocking request path.
+- Lua script performs INCR+EXPIRE atomically to implement sliding/rolling window semantics.
+- Metrics.WriteLimiterTotal incremented on reasons: local_rate, redis_limit, redis_timeout.
+end note
+
+note left of Lua
+Redis keys used:
+- global key: "<KeyPrefix>ratelimit:write:global_limit" (string numeric override)
+- per-identifier key used by Lua: "<KeyPrefix>ratelimit:write:write:<clientip>:<path>:<window>"
+Lua script does: INCR -> if first set EXPIRE(windowSec) atomically
+end note
+@enduml

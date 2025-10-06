@@ -27,6 +27,8 @@ type UserProducer struct {
 	writer       *kafka.Writer
 	retryWriter  *kafka.Writer
 	kafkaOptions *options.KafkaOptions
+	// inFlightSem controls synchronous in-flight sends to provide backpressure
+	inFlightSem chan struct{}
 }
 
 // internal/pkg/server/producer.go
@@ -45,7 +47,7 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 		WriteTimeout:    30 * time.Second,
 		Balancer:        &kafka.LeastBytes{},
 		Compression:     kafka.Snappy,
-		RequiredAcks:    kafka.RequireOne,
+		RequiredAcks:    kafka.RequiredAcks(options.RequiredAcks),
 		Async:           false,
 	}
 
@@ -59,7 +61,7 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 		WriteBackoffMax: 5 * time.Second,
 		BatchSize:       1,                // 每条消息立即发送
 		WriteTimeout:    60 * time.Second, // 更长超时
-		RequiredAcks:    kafka.RequireAll, // 需要所有副本确认
+		RequiredAcks:    kafka.RequiredAcks(options.RequiredAcks),
 		Async:           false,
 		Compression:     kafka.Snappy,
 		Balancer:        &kafka.Hash{}, // 新增：使用Hash平衡器确保分区均匀分布
@@ -69,6 +71,7 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 		writer:       mainWriter,
 		retryWriter:  reliableWriter,
 		kafkaOptions: options,
+		inFlightSem:  make(chan struct{}, options.ProducerMaxInFlight),
 	}
 }
 
@@ -167,6 +170,21 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 	if err := p.validateMessage(msg); err != nil {
 		sendErr = err
 		return err
+	}
+
+	// Try acquire in-flight slot with non-blocking select to avoid long waits
+	select {
+	case p.inFlightSem <- struct{}{}:
+		// acquired
+		metrics.ProducerInFlightCurrent.Inc()
+		defer func() {
+			<-p.inFlightSem
+			metrics.ProducerInFlightCurrent.Dec()
+		}()
+	default:
+		// saturated, return a meaningful error to caller to apply backpressure
+		sendErr = fmt.Errorf("producer in-flight limit reached")
+		return errors.WithCode(code.ErrInternalServer, "系统繁忙: 写入排队已满，请重试")
 	}
 
 	// 创建新的消息

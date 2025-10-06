@@ -29,6 +29,8 @@ type UserConsumer struct {
 	groupID    string
 	instanceID int // 新增：实例ID
 	opts       *options.KafkaOptions
+	// 当前是否处于滞后保护状态（true 表示滞后超过阈值）
+	lagProtected bool
 }
 
 func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
@@ -102,6 +104,64 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 	go func() {
 		defer close(fetchLoopDone)
 		nextWorker := 0
+		// 批量聚合支持: 针对 create/update/delete，使用一个批量缓存由 worker 执行批量DB写
+		type batchItem struct {
+			op  string
+			msg kafka.Message
+		}
+
+		// 单独的批处理队列 (用于批量DB写) — 由一个轻量 goroutine 管理定时刷新
+		batchCh := make(chan batchItem, 1024)
+
+		// 批量缓冲与提交 goroutine
+		go func() {
+			ticker := time.NewTicker(c.opts.BatchTimeout)
+			defer ticker.Stop()
+			var createBatch []kafka.Message
+			var deleteBatch []kafka.Message
+			flush := func() {
+				if len(createBatch) > 0 {
+					// 批量写入创建
+					c.batchCreateToDB(ctx, createBatch)
+					createBatch = createBatch[:0]
+				}
+				if len(deleteBatch) > 0 {
+					c.batchDeleteFromDB(ctx, deleteBatch)
+					deleteBatch = deleteBatch[:0]
+				}
+			}
+			for {
+				select {
+				case bi, ok := <-batchCh:
+					if !ok {
+						flush()
+						return
+					}
+					switch bi.op {
+					case OperationCreate:
+						createBatch = append(createBatch, bi.msg)
+						if len(createBatch) >= c.opts.MaxDBBatchSize {
+							c.batchCreateToDB(ctx, createBatch)
+							createBatch = createBatch[:0]
+						}
+					case OperationDelete:
+						deleteBatch = append(deleteBatch, bi.msg)
+						if len(deleteBatch) >= c.opts.MaxDBBatchSize {
+							c.batchDeleteFromDB(ctx, deleteBatch)
+							deleteBatch = deleteBatch[:0]
+						}
+					default:
+						// ignore others for batching
+					}
+				case <-ticker.C:
+					flush()
+				case <-ctx.Done():
+					flush()
+					return
+				}
+			}
+		}()
+
 		for {
 			select {
 			case <-ctx.Done():
@@ -148,6 +208,22 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 				// dispatched
 			case <-ctx.Done():
 				return
+			case <-time.After(10 * time.Millisecond):
+				// 如果 worker 队列阻塞，尝试把消息放到批量通道以触发批量写（降低延迟）
+				op := c.getOperationFromHeaders(msg.Headers)
+				if op == OperationCreate || op == OperationDelete {
+					select {
+					case batchCh <- batchItem{op: op, msg: msg}:
+					default:
+						// 如果批量通道也满了，则继续等待正常 dispatch
+						select {
+						case jobs <- j:
+						case <-ctx.Done():
+							return
+						}
+					}
+					continue
+				}
 			}
 
 			// round-robin
@@ -624,7 +700,7 @@ func (c *UserConsumer) sendToDeadLetter(ctx context.Context, msg kafka.Message, 
 // 修改 startLagMonitor 方法
 func (c *UserConsumer) startLagMonitor(ctx context.Context) {
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(c.opts.LagCheckInterval)
 		defer ticker.Stop()
 
 		for {
@@ -637,11 +713,102 @@ func (c *UserConsumer) startLagMonitor(ctx context.Context) {
 				if stats.Lag > 0 {
 					log.Debugf("消费者延迟: topic=%s, group=%s, lag=%d", c.topic, c.groupID, stats.Lag)
 				}
+
+				// 更新保护状态
+				if int64(stats.Lag) >= c.opts.LagScaleThreshold {
+					if !c.lagProtected {
+						log.Warnf("消费者滞后超过阈值: lag=%d, threshold=%d, 进入保护模式", stats.Lag, c.opts.LagScaleThreshold)
+					}
+					c.lagProtected = true
+				} else {
+					if c.lagProtected {
+						log.Infof("消费者滞后恢复: lag=%d, threshold=%d, 退出保护模式", stats.Lag, c.opts.LagScaleThreshold)
+					}
+					c.lagProtected = false
+				}
 			case <-ctx.Done():
 				return
 			}
 		}
 	}()
+}
+
+// batchCreateToDB 使用 GORM 批量创建用户实体
+func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message) {
+	if len(msgs) == 0 {
+		return
+	}
+	var users []v1.User
+	for _, m := range msgs {
+		var u v1.User
+		if err := json.Unmarshal(m.Value, &u); err != nil {
+			log.Errorf("批量创建: 反序列化失败: %v", err)
+			// 发送到重试或者死信
+			if c.producer != nil {
+				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
+			}
+			continue
+		}
+		now := time.Now()
+		u.CreatedAt = now
+		u.UpdatedAt = now
+		users = append(users, u)
+	}
+	if len(users) == 0 {
+		return
+	}
+	// 使用事务批量插入
+	if err := c.db.WithContext(ctx).Create(&users).Error; err != nil {
+		log.Errorf("批量创建用户失败: %v", err)
+		// 记录错误指标
+		metrics.BusinessFailures.WithLabelValues("consumer", "batch_create", getErrorType(err)).Inc()
+		// 将单条消息发送到重试主题以逐条处理
+		for _, m := range msgs {
+			if c.producer != nil {
+				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_CREATE_DB_ERROR: "+err.Error())
+			}
+		}
+		return
+	}
+	log.Debugf("批量创建成功: %d 条记录", len(users))
+}
+
+// batchDeleteFromDB 批量删除用户（按 username）
+func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Message) {
+	if len(msgs) == 0 {
+		return
+	}
+	var usernames []string
+	for _, m := range msgs {
+		var deleteRequest struct {
+			Username  string `json:"username"`
+			DeletedAt string `json:"deleted_at"`
+		}
+		if err := json.Unmarshal(m.Value, &deleteRequest); err != nil {
+			log.Errorf("批量删除: 反序列化失败: %v", err)
+			if c.producer != nil {
+				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
+			}
+			continue
+		}
+		usernames = append(usernames, deleteRequest.Username)
+	}
+	if len(usernames) == 0 {
+		return
+	}
+	// 批量删除
+	if err := c.db.WithContext(ctx).Where("name IN ?", usernames).Delete(&v1.User{}).Error; err != nil {
+		log.Errorf("批量删除用户失败: %v", err)
+		metrics.BusinessFailures.WithLabelValues("consumer", "batch_delete", getErrorType(err)).Inc()
+		// fallback: 逐条发送到重试主题
+		for _, m := range msgs {
+			if c.producer != nil {
+				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_DELETE_DB_ERROR: "+err.Error())
+			}
+		}
+		return
+	}
+	log.Debugf("批量删除成功: %d 条记录", len(usernames))
 }
 
 // 唯一新增的方法
