@@ -31,3 +31,5 @@ If you want me to add the generated PNG/SVG files to git and create a commit, or
 
 ````
 - If you want SVG/PNG outputs added to the repo, I can generate them and commit (requires plantuml runtime locally or in CI).
+<!-- ci-trigger: touch to trigger render-plantuml workflow -->
+
