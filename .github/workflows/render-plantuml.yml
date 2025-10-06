@@ -1,0 +1,55 @@
+name: Render PlantUML
+
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - 'doc/plantuml/**'
+
+jobs:
+  render:
+    name: Render diagrams (PNG + SVG)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Install Graphviz
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y graphviz
+
+      - name: Download PlantUML
+        run: |
+          mkdir -p doc/plantuml
+          curl -fSL -o doc/plantuml/plantuml.jar https://github.com/plantuml/plantuml/releases/latest/download/plantuml.jar
+
+      - name: Make render script executable
+        run: chmod +x doc/plantuml/render.sh
+
+      - name: Render diagrams
+        run: |
+          cd doc/plantuml
+          ./render.sh
+
+      - name: Commit and push rendered diagrams
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add doc/plantuml/*.png doc/plantuml/*.svg doc/plantuml/*.puml doc/cdmp-mini-architecture.md || true
+          if ! git diff --cached --quiet; then
+            git commit -m "ci(plantuml): render diagrams (png/svg) [skip ci]" || true
+            git push
+          else
+            echo "No diagram changes to commit"
+          fi
