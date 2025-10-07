@@ -71,10 +71,10 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 高压力配置
-	RequestsPerUser = 10 // 每用户请求数
-	ConcurrentUsers = 10 // 增加到1万并发用户
-	MaxConcurrent   = 10 // 增加到500并发处理器
-	BatchSize       = 10 // 增大批次大小
+	RequestsPerUser = 100  // 每用户请求数
+	ConcurrentUsers = 5000 // 增加到1万并发用户
+	MaxConcurrent   = 500  // 增加到500并发处理器
+	BatchSize       = 200  // 增大批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -140,7 +140,7 @@ var (
 	userExpiries []time.Time
 	tokensMutex  sync.RWMutex
 	// 全局限流器，限制所有请求速率
-	limiter = rate.NewLimiter(rate.Limit(250), 100) // 250 QPS，突发150，可根据需要调整
+	limiter = rate.NewLimiter(rate.Limit(300), 100) // 250 QPS，突发150，可根据需要调整
 )
 
 // 统计变量

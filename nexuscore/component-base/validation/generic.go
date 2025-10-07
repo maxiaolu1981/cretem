@@ -661,12 +661,12 @@ func ValidateListOptionsBase(opts *v1.ListOptions) field.ErrorList {
 		}
 	}
 
-	if opts.APIVersion != "" {
-		labelPath := basePath.Child("APIVersion")
-		if !stringutil.StringIn(opts.APIVersion, []string{"v1", "v2"}) {
-			allErrors = append(allErrors, field.Invalid(labelPath, opts.APIVersion, "取值范围在:v1,v2范围内"))
-		}
-	}
+	// if opts.APIVersion != "" {
+	// 	labelPath := basePath.Child("APIVersion")
+	// 	if !stringutil.StringIn(opts.APIVersion, []string{"v1", "v2"}) {
+	// 		allErrors = append(allErrors, field.Invalid(labelPath, opts.APIVersion, "取值范围在:v1,v2范围内"))
+	// 	}
+	// }
 
 	return allErrors
 }

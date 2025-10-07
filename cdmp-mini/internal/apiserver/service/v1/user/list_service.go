@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/bytedance/gopkg/util/logger"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -16,17 +17,11 @@ import (
 
 func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
 	startTime := time.Now()
-	logger := log.L(ctx).WithValues(
-		"operation", "ListUsers",
-		"timeout", opts.TimeoutSeconds,
-		"limit", opts.Limit,
-		"offset", opts.Offset,
-	)
 
 	// 步骤1：查询原始用户列表
 	users, err := u.Store.Users().List(ctx, opts, u.Options)
 	if err != nil {
-		logger.Errorf("List users from storage failed: %v", err)
+		log.Errorf("List users from storage failed: %v", err)
 		return nil, errors.WithCode(code.ErrDatabase, "query raw users failed: %v", err)
 	}
 
@@ -183,10 +178,10 @@ func (u *UserService) processSingleUserWithTimeout(ctx context.Context, user *v1
 	defer cancel()
 
 	// 查询用户策略 - 取消注释并根据实际情况实现
-	//policies, err := u.store.Policies().List(ctx, user.Name, metav1.ListOptions{})
-	//if err != nil {
-	//	return nil, errors.WithCode(code.ErrDatabase, "query policies for user %s failed: %v", user.Name, err)
-	//}
+	policies, err := u.Store.Polices().List(ctx, user.Name, metav1.ListOptions{})
+	if err != nil {
+		return nil, errors.WithCode(code.ErrDatabase, "query policies for user %s failed: %v", user.Name, err)
+	}
 
 	// 组装用户数据
 	return &v1.User{
@@ -198,11 +193,11 @@ func (u *UserService) processSingleUserWithTimeout(ctx context.Context, user *v1
 			CreatedAt:  user.CreatedAt,
 			UpdatedAt:  user.UpdatedAt,
 		},
-		Nickname: user.Nickname,
-		Email:    user.Email,
-		Phone:    user.Phone,
-		//TotalPolicy: policies.TotalCount, // 取消注释
-		LoginedAt: user.LoginedAt,
+		Nickname:    user.Nickname,
+		Email:       user.Email,
+		Phone:       user.Phone,
+		TotalPolicy: policies.TotalCount, // 取消注释
+		LoginedAt:   user.LoginedAt,
 	}, nil
 }
 

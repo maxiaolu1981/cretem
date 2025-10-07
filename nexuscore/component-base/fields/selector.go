@@ -394,6 +394,7 @@ func splitTerms(fieldSelector string) []string {
 			terms = append(terms, fieldSelector[startIndex:i])
 			startIndex = i + 1
 		}
+		//c:\windows
 	}
 
 	terms = append(terms, fieldSelector[startIndex:])

@@ -11,21 +11,39 @@ import (
 )
 
 func (u *Users) List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
-	ret := &v1.UserList{}
-	ol := gormutil.Unpointer(opts.Offset, opts.Limit)
+    ret := &v1.UserList{}
+    ol := gormutil.Unpointer(opts.Offset, opts.Limit)
 
-	selector, _ := fields.ParseSelector(opts.FieldSelector)
-	username, _ := selector.RequiresExactMatch("name")
-	d := u.db.Where("name like ? and status = 1", "%"+username+"%").
-		Offset(ol.Offset).
-		Limit(ol.Limit).
-		Order("id desc").
-		Find(&ret.Items).
-		Offset(-1).
-		Limit(-1).
-		Count(&ret.TotalCount)
+    // 构建基础查询
+    query := u.db.Model(&v1.User{}).Where("status = 1")
 
-	return ret, d.Error
+    // 处理字段选择器
+    if opts.FieldSelector != "" {
+        selector, err := fields.ParseSelector(opts.FieldSelector)
+        if err != nil {
+            return nil, err
+        }
+        
+        // 只有在 selector 不为 nil 时才调用方法
+        if username, exists := selector.RequiresExactMatch("name"); exists {
+            query = query.Where("name = ?", username)
+        }
+    }
+
+    // 先获取总数
+    if err := query.Count(&ret.TotalCount).Error; err != nil {
+        return nil, err
+    }
+
+    // 再获取分页数据
+    if err := query.Offset(ol.Offset).
+        Limit(ol.Limit).
+        Order("id desc").
+        Find(&ret.Items).Error; err != nil {
+        return nil, err
+    }
+
+    return ret, nil
 }
 
 func (u *Users) ListAllUsernames(ctx context.Context) ([]string, error) {
