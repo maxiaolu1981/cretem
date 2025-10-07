@@ -87,7 +87,7 @@ func NewKafkaOptions() *KafkaOptions {
 		MaxRetries:             4,
 		MinBytes:               50 * 1024,        // 10KB
 		MaxBytes:               10 * 1024 * 1024, // 10MB
-		WorkerCount:            16,
+		WorkerCount:            64,
 		RetryWorkerCount:       3,
 		EnableMetricsRefresh:   true,
 		MetricsRefreshInterval: 30 * time.Second,
@@ -96,12 +96,12 @@ func NewKafkaOptions() *KafkaOptions {
 		BaseRetryDelay:         5 * time.Second,
 		MaxRetryDelay:          2 * time.Minute,
 		AutoCreateTopic:        true,
-		DesiredPartitions:      48, // 期望的分区数
+		DesiredPartitions:      195, // 期望的分区数
 		AutoExpandPartitions:   true,
-		ProducerMaxInFlight:    2000,
+		ProducerMaxInFlight:    5000,
 		LagScaleThreshold:      100000,           // 默认滞后阈值
 		LagCheckInterval:       30 * time.Second, // 默认滞后检查间隔
-		MaxDBBatchSize:         500,              // 默认批量写DB大小
+		MaxDBBatchSize:         100,              // 默认批量写DB大小
 		InstanceID:             "",               // 新增字段默认值为空，建议启动时赋值
 	}
 }

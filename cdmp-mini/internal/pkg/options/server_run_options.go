@@ -100,14 +100,14 @@ type ServerRunOptions struct {
 func NewServerRunOptions() *ServerRunOptions {
 
 	return &ServerRunOptions{
-		Mode:            gin.DebugMode,
+		Mode:            gin.ReleaseMode,
 		Healthz:         true,
 		Middlewares:     []string{},
 		EnableProfiling: true,
 		EnableMetrics:   true,
 		CookieDomain:    "",
 		CookieSecure:    false,
-		CtxTimeout:      30 * time.Second,
+		CtxTimeout:      50 * time.Second,
 		Env:             "development",
 		LoginRateLimit:  500000, // 5万/分钟
 		WriteRateLimit:  500000, // 写操作默认限流（每 window）

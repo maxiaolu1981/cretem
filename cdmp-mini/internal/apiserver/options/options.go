@@ -46,7 +46,6 @@ type Options struct {
 	DistributedLock        *options.DistributedLockOptions `json:"distributedLock" mapstructure:"distributedLock"`
 	MetaOptions            *options.MetaOptions            `json:"metoptions" mapstructure:"metoptions"`
 	KafkaOptions           *options.KafkaOptions           `json:"kafkaoptions" mapstructure:"kafkaoptions"`
-	BloomFilterOptions     *options.BloomFilterOptions     `json:"bloomFilteroptions" mapstructure:"bloomFilteroptions"`
 }
 
 func NewOptions() *Options {
@@ -60,7 +59,6 @@ func NewOptions() *Options {
 		DistributedLock:        options.NewDistributedLockOptions(),
 		MetaOptions:            options.NewMetaOptions(),
 		KafkaOptions:           options.NewKafkaOptions(),
-		BloomFilterOptions:     options.NewBloomFilterOptions(),
 	}
 }
 
@@ -73,7 +71,7 @@ func (o *Options) Complete() {
 	o.DistributedLock.Complete()
 	o.MetaOptions.Complete()
 	o.KafkaOptions.Complete()
-	o.BloomFilterOptions.Complete()
+
 }
 
 func (o *Options) Validate() []error {
@@ -87,7 +85,7 @@ func (o *Options) Validate() []error {
 	errs = append(errs, o.DistributedLock.Validate()...)
 	errs = append(errs, o.MetaOptions.Validate()...)
 	errs = append(errs, o.KafkaOptions.Validate()...)
-	errs = append(errs, o.BloomFilterOptions.Validate()...)
+
 	return errs
 }
 
@@ -101,6 +99,6 @@ func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.DistributedLock.AddFlags(fss.FlagSet("distributedLock"))
 	o.MetaOptions.AddFlags(fss.FlagSet("meta"))
 	o.KafkaOptions.AddFlags(fss.FlagSet("kafka"))
-	o.BloomFilterOptions.AddFlags(fss.FlagSet("bloomfilter"))
+
 	return fss
 }

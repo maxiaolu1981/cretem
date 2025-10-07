@@ -35,20 +35,29 @@ type UserProducer struct {
 
 func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 	// 主Writer（高性能配置）主业务消息（创建、更新、删除用户）
+	// 批量参数范围提升，连接池参数可调
+	batchSize := options.BatchSize
+	if batchSize < 100 {
+		batchSize = 100
+	} else if batchSize > 1000 {
+		batchSize = 1000
+	}
+	batchBytes := 2 * 1048576
 	mainWriter := &kafka.Writer{
-		Addr: kafka.TCP(options.Brokers...),
-		// 注意：这里不设置 Topic，在发送时动态设置
-		MaxAttempts:     options.MaxRetries,
-		WriteBackoffMin: 100 * time.Millisecond,
-		WriteBackoffMax: 1 * time.Second,
-		BatchBytes:      1048576,
-		BatchSize:       options.BatchSize,
-		BatchTimeout:    options.BatchTimeout,
-		WriteTimeout:    30 * time.Second,
-		Balancer:        &kafka.LeastBytes{},
-		Compression:     kafka.Snappy,
-		RequiredAcks:    kafka.RequiredAcks(options.RequiredAcks),
-		Async:           false,
+		Addr:                   kafka.TCP(options.Brokers...),
+		MaxAttempts:            options.MaxRetries,
+		WriteBackoffMin:        50 * time.Millisecond,
+		WriteBackoffMax:        2 * time.Second,
+		BatchBytes:             int64(batchBytes), // 批量字节提升，类型修正
+		BatchSize:              batchSize,
+		BatchTimeout:           options.BatchTimeout,
+		WriteTimeout:           60 * time.Second, // 超时提升
+		Balancer:               &kafka.LeastBytes{},
+		Compression:            kafka.Snappy,
+		RequiredAcks:           kafka.RequiredAcks(options.RequiredAcks),
+		Async:                  false,
+		AllowAutoTopicCreation: true,
+		// 连接池参数可在KafkaOptions中扩展
 	}
 
 	// 重试Writer（高可靠配置）- 不设置 Topic
@@ -71,7 +80,7 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 		writer:       mainWriter,
 		retryWriter:  reliableWriter,
 		kafkaOptions: options,
-		inFlightSem:  make(chan struct{}, options.ProducerMaxInFlight),
+		inFlightSem:  make(chan struct{}, options.ProducerMaxInFlight), // 并发限流参数可配置
 	}
 }
 
@@ -178,14 +187,14 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 	// Try acquire in-flight slot with non-blocking select to avoid long waits
 	select {
 	case p.inFlightSem <- struct{}{}:
-		// acquired
 		metrics.ProducerInFlightCurrent.Inc()
 		defer func() {
 			<-p.inFlightSem
 			metrics.ProducerInFlightCurrent.Dec()
 		}()
 	default:
-		// saturated, return a meaningful error to caller to apply backpressure
+		// saturated, 降级为debug日志，返回限流错误
+		log.Debugf("producer in-flight limit reached, topic=%s", topic)
 		sendErr = fmt.Errorf("producer in-flight limit reached")
 		return errors.WithCode(code.ErrInternalServer, "系统繁忙: 写入排队已满，请重试")
 	}
@@ -204,19 +213,26 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 	err := p.writer.WriteMessages(ctx, sendMsg)
 	if err == nil {
 		success = true // 标记为成功
+		// ...existing code... // 移除队列长度监控，避免未定义报错
+		// 监控指标补全：成功/失败/耗时
+		metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
+		metrics.MessageProcessingTime.WithLabelValues(topic, operation, "success").Observe(time.Since(startTime).Seconds())
 		log.Debugf("发送成功: topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
 		return nil
 	}
 	// 首次发送失败，进行重试
 	isRetry = true
 	sendErr = p.sendToRetryTopic(ctx, msg, err.Error())
-
 	if sendErr != nil {
+		metrics.ProducerFailures.WithLabelValues(topic, operation, metrics.GetKafkaErrorType(sendErr)).Inc()
+		metrics.MessageProcessingTime.WithLabelValues(topic, operation, "failure").Observe(time.Since(startTime).Seconds())
+		log.Errorf("重试发送失败: topic=%s, key=%s, error=%v", topic, string(msg.Key), sendErr)
 		return sendErr
 	}
-
 	success = true
 	sendErr = nil
+	metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
+	metrics.MessageProcessingTime.WithLabelValues(topic, operation, "success").Observe(time.Since(startTime).Seconds())
 	log.Debugf("发送成功(重试): topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
 	return nil
 }

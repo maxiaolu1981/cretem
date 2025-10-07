@@ -36,11 +36,16 @@ const (
 	TestUsername = "admin"
 	TestPassword = "Admin@2021"
 
-	// 并发配置（先调小进行调试）
-	ConcurrentUsers = 50 // 并发用户数（调试阶段调小）
-	RequestsPerUser = 10 // 每用户请求数
-	MaxConcurrent   = 10 // 最大并发数
-	BatchSize       = 10 // 批次大小
+	// 并发配置（中压）
+	//ConcurrentUsers = 5000 // 并发用户数（调试阶段调小）
+	 RequestsPerUser = 100  // 每用户请求数
+	//MaxConcurrent   = 100  // 最大并发数
+	//BatchSize       = 100  // 批次大小
+
+	// 高压力配置
+	ConcurrentUsers = 10000 // 增加到1万并发用户
+	MaxConcurrent   = 500   // 增加到500并发处理器
+	BatchSize       = 200   // 增大批次大小
 )
 
 // ==================== 数据结构 ====================

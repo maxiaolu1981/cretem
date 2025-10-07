@@ -97,11 +97,17 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 		workerID int
 	}
 
-	jobs := make(chan *job, 256)
+	jobs := make(chan *job, 2048) // 提升通道容量，支持高并发
 
 	// 启动 worker 池，只负责处理业务，不直接调用 FetchMessage/CommitMessages
 	var workerWg sync.WaitGroup
-	for i := 0; i < workerCount; i++ {
+	// worker数量与分区数动态匹配，保证每个分区有独立worker
+	partitionCount := c.opts.DesiredPartitions
+	actualWorkerCount := workerCount
+	if partitionCount > 0 && workerCount < partitionCount {
+		actualWorkerCount = partitionCount
+	}
+	for i := 0; i < actualWorkerCount; i++ {
 		workerWg.Add(1)
 		go func(workerID int) {
 			defer workerWg.Done()
@@ -135,14 +141,28 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 		}
 
 		// 单独的批处理队列 (用于批量DB写) — 由一个轻量 goroutine 管理定时刷新
-		batchCh := make(chan batchItem, 1024)
+		batchCh := make(chan batchItem, 4096) // 批量通道容量提升
 
 		// 批量缓冲与提交 goroutine
 		go func() {
-			ticker := time.NewTicker(c.opts.BatchTimeout)
+			// 批量写入超时参数提升，默认50ms-200ms
+			batchTimeout := c.opts.BatchTimeout
+			if batchTimeout < 50*time.Millisecond {
+				batchTimeout = 50 * time.Millisecond
+			} else if batchTimeout > 200*time.Millisecond {
+				batchTimeout = 200 * time.Millisecond
+			}
+			ticker := time.NewTicker(batchTimeout)
 			defer ticker.Stop()
 			var createBatch []kafka.Message
 			var deleteBatch []kafka.Message
+			// 批量写入最大条数提升，默认100-500
+			maxBatchSize := c.opts.MaxDBBatchSize
+			if maxBatchSize < 100 {
+				maxBatchSize = 100
+			} else if maxBatchSize > 500 {
+				maxBatchSize = 500
+			}
 			flush := func() {
 				if len(createBatch) > 0 {
 					c.batchCreateToDB(ctx, createBatch)
@@ -163,13 +183,13 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 					switch bi.op {
 					case OperationCreate:
 						createBatch = append(createBatch, bi.msg)
-						if len(createBatch) >= c.opts.MaxDBBatchSize {
+						if len(createBatch) >= maxBatchSize {
 							c.batchCreateToDB(ctx, createBatch)
 							createBatch = createBatch[:0]
 						}
 					case OperationDelete:
 						deleteBatch = append(deleteBatch, bi.msg)
-						if len(deleteBatch) >= c.opts.MaxDBBatchSize {
+						if len(deleteBatch) >= maxBatchSize {
 							c.batchDeleteFromDB(ctx, deleteBatch)
 							deleteBatch = deleteBatch[:0]
 						}
@@ -241,6 +261,7 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 
 			// dispatch to worker
 			j := &job{msg: msg, done: make(chan error, 1), workerID: nextWorker}
+			// ...existing code... // 移除队列长度监控，确保无限流
 			select {
 			case jobs <- j:
 				// dispatched
@@ -861,11 +882,9 @@ func (c *UserConsumer) startLagMonitor(ctx context.Context) {
 				// 3. 所有实例消费前检查保护信号
 				v, err := c.redis.GetKey(ctx, "kafka:lag:protect:ALL")
 				if err == nil && v == "1" {
-					log.Warnf("[全局] Kafka lag 超阈值, 进入全局保护模式 (全局key)")
 					metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(1)
 					// 这里可直接 return 或 sleep，阻断消费
 				} else {
-					log.Infof("[全局] Kafka lag 恢复, 退出全局保护模式 (全局key)")
 					metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(0)
 				}
 			case <-ctx.Done():
