@@ -490,12 +490,14 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error 
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
+	log.Infof("[单条插入] 尝试插入用户: %s", user.Name)
 	// 注意：这里直接使用 c.db，在集群模式下这是主库连接
 	// 在单机模式下这是唯一数据库连接
 	if err := c.db.WithContext(ctx).Create(user).Error; err != nil {
 		//	metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
 		return fmt.Errorf("数据创建失败: %v", err)
 	}
+	log.Infof("[单条插入] 成功: %s", user.Name)
 	return nil
 }
 
@@ -922,12 +924,22 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 		u.UpdatedAt = now
 		users = append(users, u)
 	}
+
+	usernames := make([]string, 0, len(msgs))
+	for _, m := range msgs {
+		var u v1.User
+		if err := json.Unmarshal(m.Value, &u); err == nil {
+			usernames = append(usernames, u.Name)
+		}
+	}
+	log.Infof("[批量插入] 尝试插入用户: %v", usernames)
+
 	if len(users) == 0 {
 		return
 	}
 	// 使用事务批量插入
 	if err := c.db.WithContext(ctx).Create(&users).Error; err != nil {
-		log.Errorf("批量创建用户失败: %v", err)
+		log.Errorf("[批量插入] 失败: %v, 用户: %v", err, usernames)
 		// 记录错误指标
 		metrics.BusinessFailures.WithLabelValues("consumer", "batch_create", getErrorType(err)).Inc()
 		// 将单条消息发送到重试主题以逐条处理
@@ -938,6 +950,7 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 		}
 		return
 	}
+	log.Infof("[批量插入] 成功: %v", usernames)
 	log.Debugf("批量创建成功: %d 条记录", len(users))
 }
 

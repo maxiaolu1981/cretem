@@ -24,6 +24,11 @@ import (
 	"golang.org/x/time/rate"
 )
 
+var (
+	successUsernamesMu sync.Mutex
+	successUsernames   []string
+)
+
 // executeConcurrentTestWithAuth 补充定义，防止未定义错误
 func executeConcurrentTestWithAuth() {
 	semaphore := make(chan struct{}, MaxConcurrent)
@@ -218,6 +223,12 @@ func TestUserCreate_RealConcurrent(t *testing.T) {
 
 	// 数据校验
 	validateResults(width)
+
+	f, _ := os.Create("success_usernames.txt")
+	for _, name := range successUsernames {
+		f.WriteString(name + "\n")
+	}
+	f.Close()
 }
 
 // ==================== 简化的Token解析 ====================
@@ -397,6 +408,9 @@ func sendSingleRequestWithAuth(userID, requestID int) {
 	success := resp.StatusCode == http.StatusCreated && apiResp.Code == RespCodeSuccess
 
 	if success {
+		successUsernamesMu.Lock()
+		successUsernames = append(successUsernames, userReq.Metadata.Name)
+		successUsernamesMu.Unlock()
 		recordResult(userID, requestID, true, duration, "")
 	} else {
 		if resp.StatusCode == http.StatusUnauthorized {
