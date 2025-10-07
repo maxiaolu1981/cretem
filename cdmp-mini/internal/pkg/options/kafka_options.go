@@ -72,6 +72,14 @@ type KafkaOptions struct {
 	LagProtected bool `json:"lagProtected" mapstructure:"lagProtected"`
 	// 实例唯一ID（建议用 hostname、pod name、uuid 等保证全局唯一）
 	InstanceID string `json:"instanceID" mapstructure:"instanceID"`
+	//初始速率
+	StartingRate int `json:"startingRate" mapstructure:"startingRate"`
+	//最小速率
+	MinRate int `json:"minRate" mapstructure:"minRate"`
+	//最大速率
+	MaxRate int `json:"maxRate" mapstructure:"maxRate"`
+	//轮询时间
+	AdjustPeriod time.Duration `json:"adjustPeriod" mapstructure:"adjustPeriod"`
 }
 
 // NewKafkaOptions 创建带有默认值的Kafka配置
@@ -99,10 +107,14 @@ func NewKafkaOptions() *KafkaOptions {
 		DesiredPartitions:      195, // 期望的分区数
 		AutoExpandPartitions:   true,
 		ProducerMaxInFlight:    5000,
-		LagScaleThreshold:      100000,           // 默认滞后阈值
+		LagScaleThreshold:      10000,            // 默认滞后阈值
 		LagCheckInterval:       30 * time.Second, // 默认滞后检查间隔
-		MaxDBBatchSize:         100,              // 默认批量写DB大小
+		MaxDBBatchSize:         200,              // 默认批量写DB大小
 		InstanceID:             "",               // 新增字段默认值为空，建议启动时赋值
+		StartingRate:           200,
+		MinRate:                50,
+		MaxRate:                300,
+		AdjustPeriod:           2 * time.Second,
 	}
 }
 

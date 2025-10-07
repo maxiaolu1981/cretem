@@ -12,15 +12,49 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"runtime"
 	"strings"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	"context"
+
 	"golang.org/x/term"
+	"golang.org/x/time/rate"
 )
+
+// executeConcurrentTestWithAuth 补充定义，防止未定义错误
+func executeConcurrentTestWithAuth() {
+	semaphore := make(chan struct{}, MaxConcurrent)
+	var wg sync.WaitGroup
+
+	totalBatches := (ConcurrentUsers + BatchSize - 1) / BatchSize
+
+	for batch := 0; batch < totalBatches; batch++ {
+		batchStart := batch * BatchSize
+		batchEnd := min((batch+1)*BatchSize, ConcurrentUsers)
+
+		fmt.Printf("🔄 处理批次 %d/%d: 用户 %d-%d\n",
+			batch+1, totalBatches, batchStart, batchEnd-1)
+
+		var batchWg sync.WaitGroup
+		for userID := batchStart; userID < batchEnd; userID++ {
+			batchWg.Add(1)
+			go func(uid int) {
+				defer batchWg.Done()
+				sendUserRequestsWithAuth(uid, semaphore, &wg)
+			}(userID)
+		}
+		batchWg.Wait()
+
+		if batch < totalBatches-1 {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	wg.Wait()
+}
 
 // ==================== 配置常量 ====================
 const (
@@ -36,16 +70,11 @@ const (
 	TestUsername = "admin"
 	TestPassword = "Admin@2021"
 
-	// 并发配置（中压）
-	//ConcurrentUsers = 5000 // 并发用户数（调试阶段调小）
-	 RequestsPerUser = 100  // 每用户请求数
-	//MaxConcurrent   = 100  // 最大并发数
-	//BatchSize       = 100  // 批次大小
-
 	// 高压力配置
-	ConcurrentUsers = 10000 // 增加到1万并发用户
-	MaxConcurrent   = 500   // 增加到500并发处理器
-	BatchSize       = 200   // 增大批次大小
+	RequestsPerUser = 10 // 每用户请求数
+	ConcurrentUsers = 10 // 增加到1万并发用户
+	MaxConcurrent   = 10 // 增加到500并发处理器
+	BatchSize       = 10 // 增大批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -110,6 +139,8 @@ var (
 	userTokens   []string
 	userExpiries []time.Time
 	tokensMutex  sync.RWMutex
+	// 全局限流器，限制所有请求速率
+	limiter = rate.NewLimiter(rate.Limit(250), 100) // 250 QPS，突发150，可根据需要调整
 )
 
 // 统计变量
@@ -276,39 +307,6 @@ func getTokenForUser(uid int) string {
 	return t
 }
 
-// ==================== 核心并发逻辑 ====================
-func executeConcurrentTestWithAuth() {
-	semaphore := make(chan struct{}, MaxConcurrent)
-	var wg sync.WaitGroup
-
-	totalBatches := (ConcurrentUsers + BatchSize - 1) / BatchSize
-
-	for batch := 0; batch < totalBatches; batch++ {
-		batchStart := batch * BatchSize
-		batchEnd := min((batch+1)*BatchSize, ConcurrentUsers)
-
-		fmt.Printf("🔄 处理批次 %d/%d: 用户 %d-%d\n",
-			batch+1, totalBatches, batchStart, batchEnd-1)
-
-		var batchWg sync.WaitGroup
-		for userID := batchStart; userID < batchEnd; userID++ {
-			batchWg.Add(1)
-			go func(uid int) {
-				defer batchWg.Done()
-				sendUserRequestsWithAuth(uid, semaphore, &wg)
-			}(userID)
-		}
-		batchWg.Wait()
-
-		if batch < totalBatches-1 {
-			time.Sleep(100 * time.Millisecond)
-			runtime.GC()
-		}
-	}
-
-	wg.Wait()
-}
-
 func sendUserRequestsWithAuth(userID int, semaphore chan struct{}, wg *sync.WaitGroup) {
 	var userWg sync.WaitGroup
 
@@ -333,6 +331,9 @@ func sendUserRequestsWithAuth(userID int, semaphore chan struct{}, wg *sync.Wait
 
 func sendSingleRequestWithAuth(userID, requestID int) {
 	start := time.Now()
+
+	// 限流：每次请求前等待令牌
+	_ = limiter.Wait(context.Background())
 
 	// 获取该用户的 token
 	token := getTokenForUser(userID)

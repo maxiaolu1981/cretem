@@ -24,6 +24,9 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/ratelimiter"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -436,9 +439,50 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	kafkaOpts := g.options.KafkaOptions
 
-	// 1. 初始化生产者,消费者在处理消息时，可能需要将处理失败的消息发送到其他主题：
+	// 1. 初始化生产端动态限速器
+	// 统计函数：返回总请求数和失败数
+	getProducerStats := func() (int, int) {
+		success := 0.0
+		fail := 0.0
+		ch := make(chan prometheus.Metric, 100)
+		metrics.ProducerSuccess.Collect(ch)
+		close(ch)
+		for m := range ch {
+			var pb dto.Metric
+			m.Write(&pb)
+			if pb.Counter != nil {
+				success += pb.Counter.GetValue()
+			}
+		}
+		ch2 := make(chan prometheus.Metric, 100)
+		metrics.ProducerFailures.Collect(ch2)
+		close(ch2)
+		for m := range ch2 {
+			var pb dto.Metric
+			m.Write(&pb)
+			if pb.Counter != nil {
+				fail += pb.Counter.GetValue()
+			}
+		}
+		return int(success + fail), int(fail)
+	}
+
+	var rateLimiter *ratelimiter.RateLimiterController
+	if g.options.ServerRunOptions.EnableRateLimiter {
+		log.Debug("初始化生产端动态限速器...")
+		rateLimiter = ratelimiter.NewRateLimiterController(
+			float64(kafkaOpts.StartingRate), // 初始速率
+			float64(kafkaOpts.MinRate),      // 最小速率
+			float64(kafkaOpts.MaxRate),      // 最大速率
+			kafkaOpts.AdjustPeriod,          // 调整周期
+			getProducerStats,
+		)
+	} else {
+		log.Infof("[Producer] 未启用限速器（EnableRateLimiter=false）")
+	}
+
 	log.Debug("初始化Kafka生产者...")
-	userProducer := NewUserProducer(kafkaOpts)
+	userProducer := NewUserProducer(kafkaOpts, rateLimiter)
 
 	// 为每个主题创建多个消费者实例
 	consumerCount := kafkaOpts.WorkerCount
@@ -463,16 +507,25 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 			createGroupID, db, g.redis) // ✅ 相同的组ID
 		createConsumers[i].SetProducer(userProducer)
 		createConsumers[i].SetInstanceID(i)
+		if g.options.ServerRunOptions.EnableRateLimiter {
+			go createConsumers[i].startLagMonitor(context.Background())
+		}
 
 		updateConsumers[i] = NewUserConsumer(kafkaOpts, UserUpdateTopic,
 			updateGroupID, db, g.redis) // ✅ 相同的组ID
 		updateConsumers[i].SetProducer(userProducer)
 		updateConsumers[i].SetInstanceID(i)
+		if g.options.ServerRunOptions.EnableRateLimiter {
+			go updateConsumers[i].startLagMonitor(context.Background())
+		}
 
 		deleteConsumers[i] = NewUserConsumer(kafkaOpts, UserDeleteTopic,
 			deleteGroupID, db, g.redis) // ✅ 相同的组ID
 		deleteConsumers[i].SetProducer(userProducer)
 		deleteConsumers[i].SetInstanceID(i)
+		if g.options.ServerRunOptions.EnableRateLimiter {
+			go deleteConsumers[i].startLagMonitor(context.Background())
+		}
 	}
 
 	log.Debugf("初始化重试消费者...")

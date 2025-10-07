@@ -13,6 +13,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	rat "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/ratelimiter"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -29,11 +30,20 @@ type UserProducer struct {
 	kafkaOptions *options.KafkaOptions
 	// inFlightSem controls synchronous in-flight sends to provide backpressure
 	inFlightSem chan struct{}
+	// 生产端限速器
+	rateLimiter *rat.RateLimiterController
 }
 
 // internal/pkg/server/producer.go
 
-func NewUserProducer(options *options.KafkaOptions) *UserProducer {
+// rateLimiter 可为nil，若不为nil则启用生产端限速
+// 日志：创建UserProducer时输出限速器初始状态
+func NewUserProducer(options *options.KafkaOptions, rateLimiter *rat.RateLimiterController) *UserProducer {
+	if rateLimiter != nil {
+		log.Infof("[Producer] 限速器初始化，初始速率=%.2f req/s", rateLimiter.GetRate())
+	} else {
+		log.Infof("[Producer] 未启用限速器")
+	}
 	// 主Writer（高性能配置）主业务消息（创建、更新、删除用户）
 	// 批量参数范围提升，连接池参数可调
 	batchSize := options.BatchSize
@@ -81,6 +91,7 @@ func NewUserProducer(options *options.KafkaOptions) *UserProducer {
 		retryWriter:  reliableWriter,
 		kafkaOptions: options,
 		inFlightSem:  make(chan struct{}, options.ProducerMaxInFlight), // 并发限流参数可配置
+		rateLimiter:  rateLimiter,
 	}
 }
 
@@ -162,6 +173,15 @@ func (p *UserProducer) validateMessage(msg kafka.Message) error {
 
 // sendWithRetry 带重试的发送逻辑
 func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
+	// 生产端限速：如有配置则等待令牌
+	if p.rateLimiter != nil {
+		curRate := p.rateLimiter.GetRate()
+		log.Debugf("[Producer限速] 当前速率=%.2f req/s, 等待令牌...", curRate)
+		if err := p.rateLimiter.Wait(ctx); err != nil {
+			log.Errorf("[Producer限速] 等待令牌失败: %v", err)
+			return fmt.Errorf("rate limit wait failed: %w", err)
+		}
+	}
 	startTime := time.Now()
 	// 添加详细的发送日志
 	//log.Errorf("准备发送消息到[测试丢失记录问题] %s: key=%s", topic, string(msg.Key))

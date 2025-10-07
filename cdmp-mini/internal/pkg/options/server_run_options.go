@@ -95,28 +95,35 @@ type ServerRunOptions struct {
 	WriteRateLimit int `json:"writeRateLimit"   mapstructure:"writeRateLimit"`
 	// AdminToken: 简单的管理API访问令牌（如果为空，只允许本地或 debug 访问）
 	AdminToken string `json:"adminToken" mapstructure:"adminToken"`
+	// 新增：生产端限流器开关
+	EnableRateLimiter bool `json:"enableRateLimiter" mapstructure:"enableRateLimiter"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
-
 	return &ServerRunOptions{
-		Mode:            gin.ReleaseMode,
-		Healthz:         true,
-		Middlewares:     []string{},
-		EnableProfiling: true,
-		EnableMetrics:   true,
-		CookieDomain:    "",
-		CookieSecure:    false,
-		CtxTimeout:      50 * time.Second,
-		Env:             "development",
-		LoginRateLimit:  500000, // 5万/分钟
-		WriteRateLimit:  500000, // 写操作默认限流（每 window）
-		LoginWindow:     2 * time.Minute,
-		AdminToken:      "",
+		Mode:              gin.ReleaseMode,
+		Healthz:           true,
+		Middlewares:       []string{},
+		EnableProfiling:   true,
+		EnableMetrics:     true,
+		CookieDomain:      "",
+		CookieSecure:      false,
+		CtxTimeout:        50 * time.Second,
+		Env:               "development",
+		LoginRateLimit:    500000, // 5万/分钟
+		WriteRateLimit:    500000, // 写操作默认限流（每 window）
+		LoginWindow:       2 * time.Minute,
+		AdminToken:        "",
+		EnableRateLimiter: true, // 默认启用生产端限流器
 	}
 }
 
 func (s *ServerRunOptions) Complete() {
+	// EnableRateLimiter: 如果为零值，设置默认值 true
+	// 注意：bool类型零值为false，只有未配置时才设为true
+	// 若希望默认关闭，改为 false
+	// 这里默认 true
+	// 不做处理即可，除非有特殊需求
 	// 如果字段为零值，设置默认值；否则保持配置的值
 
 	// Mode: 如果为空，设置默认值
@@ -263,6 +270,7 @@ func (s *ServerRunOptions) Validate() []error {
 }
 
 func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
+	fs.BoolVar(&s.EnableRateLimiter, "server.enable-rate-limiter", s.EnableRateLimiter, "是否启用生产端限流器（默认启用）")
 	fs.StringVarP(&s.Mode, "server.mode", "M", s.Mode, ""+
 		"指定服务器运行模式。支持的服务器模式：debug(调试)、test(测试)、release(发布)。")
 

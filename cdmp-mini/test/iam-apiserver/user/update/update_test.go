@@ -18,6 +18,10 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"context"
+
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -58,6 +62,8 @@ var (
 	updatesFail         int32
 	updatesFailMu       sync.Mutex
 	updatesFailByStatus = map[int]int{}
+	// 全局限流器，限制所有请求速率
+	limiter = rate.NewLimiter(rate.Limit(1000), 200) // 1000 QPS，突发200，可根据需要调整
 )
 
 type LoginRequest struct {
@@ -380,9 +386,10 @@ func getAuthTokenWithDebug() (string, error) {
 	return response.Data.AccessToken, nil
 }
 
-
-
 func sendSingleUpdate(userID, requestID int) {
+	// 限流：每次请求前等待令牌
+	_ = limiter.Wait(context.Background())
+
 	// 使用用户自己的 token
 	if userID < 0 || userID >= len(createdUsers) {
 		fmt.Printf("invalid userID %d\n", userID)

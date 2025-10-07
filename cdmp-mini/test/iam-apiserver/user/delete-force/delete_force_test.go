@@ -15,7 +15,10 @@ import (
 	"testing"
 	"time"
 
+	"context"
+
 	"golang.org/x/term"
+	"golang.org/x/time/rate"
 )
 
 // ==================== 压力测试配置常量 ====================
@@ -114,6 +117,8 @@ var (
 	deleterTokens      []string
 	deleterExpiries    []time.Time
 	deleterTokensMutex sync.RWMutex
+	// 全局限流器，限制所有请求速率
+	limiter = rate.NewLimiter(rate.Limit(1000), 200) // 1000 QPS，突发200，可根据需要调整
 )
 
 // 统计变量
@@ -453,6 +458,9 @@ func executeConcurrentDeleteTest() {
 func sendSingleDeleteRequestWithUsername(deleterID, requestID int, username string) {
 	start := time.Now()
 
+	// 限流：每次请求前等待令牌
+	_ = limiter.Wait(context.Background())
+
 	// 获取该删除器的 token
 	token := getDeleterToken(deleterID)
 	if token == "" {
@@ -507,7 +515,7 @@ func sendSingleDeleteRequestWithUsername(deleterID, requestID int, username stri
 		errorMsg = fmt.Sprintf("用户不存在: %s", username)
 	case resp.StatusCode == http.StatusUnauthorized:
 		errorMsg = "权限认证失败"
-		// 清空该 deleter 的 token，下一次会刷新
+		// 清空该 deleter 的 token，下次会刷新
 		deleterTokensMutex.Lock()
 		if deleterID >= 0 && deleterID < len(deleterTokens) {
 			deleterTokens[deleterID] = ""

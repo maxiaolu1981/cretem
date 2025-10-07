@@ -494,8 +494,8 @@ func (r *RedisCluster) SetExp(ctx context.Context, keyName string, timeout time.
 
 // SetKey creates or updates a key-value pair
 func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, timeout time.Duration) error {
-	log.Debugf("[STORE] SET Raw key is: %s", keyName)
-	log.Debugf("[STORE] Setting key: %s", r.fixKey(keyName))
+	//log.Debugf("[STORE] SET Raw key is: %s", keyName)
+	//log.Debugf("[STORE] Setting key: %s", r.fixKey(keyName))
 
 	if err := r.Up(); err != nil {
 		return err
@@ -505,7 +505,7 @@ func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, time
 		log.Errorf("Error trying to set value: %s", err.Error())
 		return err
 	}
-	log.Debugf("存储成功:key=%v", r.fixKey(keyName))
+	//log.Debugf("存储成功:key=%v", r.fixKey(keyName))
 	return nil
 }
 
