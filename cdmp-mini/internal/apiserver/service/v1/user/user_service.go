@@ -70,7 +70,7 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 	if err != nil {
 		operationErr = err
 		if errors.Is(err, redis.Nil) {
-			log.Debugf("未进行缓存缓 key=%s", cacheKey)
+		//	log.Debugf("未进行缓存缓 key=%s", cacheKey)
 			return nil, false, nil
 		}
 		log.Errorf("redis服务失败: key=%s, err=%v", cacheKey, err)
@@ -116,7 +116,7 @@ func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username, ca
 				log.Errorf("缓存设置失败", "error", err.Error())
 			}
 
-			log.Debugf("设置用户%s缓存成功", username)
+		//	log.Debugf("设置用户%s缓存成功", username)
 			return &v1.User{
 				ObjectMeta: metav1.ObjectMeta{
 					Name: RATE_LIMIT_PREVENTION, // 直接赋值

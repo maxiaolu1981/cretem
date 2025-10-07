@@ -68,7 +68,7 @@ func NewService(store interfaces.Factory,
 	redis *storage.RedisCluster,
 	options *options.Options,
 	producer producer.MessageProducer) (ServiceManager, error) {
-	// 初始化布隆过滤器（根据预期用户数量配置）
+	
 	s := &ServiceSrv{
 		Store:    store,
 		Redis:    redis,

@@ -34,17 +34,17 @@ type Datastore struct {
 }
 
 func newUsers(ds *Datastore) interfaces.UserStore {
-	log.Debugf("🔍 UserStore创建: 集群模式=%v", ds.UseCluster)
+	//log.Debugf("🔍 UserStore创建: 集群模式=%v", ds.UseCluster)
 	policyStore := newPolices(ds)
 	if ds.UseCluster {
-		log.Debugf("🚀 读写分离已启用 - 使用ClusterAwareUserStore")
+		//	log.Debugf("🚀 读写分离已启用 - 使用ClusterAwareUserStore")
 		// 集群模式下传入读写两个DB
 		return &ClusterAwareUserStore{
 			readStore:  user.NewUsers(ds.DBManager.GetReadDB(), policyStore),
 			writeStore: user.NewUsers(ds.DBManager.GetWriteDB(), policyStore),
 		}
 	}
-	log.Debug("💾 单机模式 - 使用普通Users")
+	//	log.Debug("💾 单机模式 - 使用普通Users")
 	return user.NewUsers(ds.DB, policyStore)
 }
 
@@ -82,9 +82,9 @@ func (c *ClusterAwareUserStore) DeleteCollection(ctx context.Context, usernames 
 	return c.writeStore.DeleteCollection(ctx, usernames, opts, opt) // 写操作用写库
 }
 
-func (c *ClusterAwareUserStore) List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
+func (c *ClusterAwareUserStore) List(ctx context.Context, username string, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
 	log.Debug("✏️ list操作路由到主库: username=")
-	return c.readStore.List(ctx, opts, opt) // 读操作用读库
+	return c.readStore.List(ctx, username, opts, opt) // 读操作用读库
 }
 
 func (c *ClusterAwareUserStore) ListAllUsernames(ctx context.Context) ([]string, error) {

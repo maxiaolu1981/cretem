@@ -39,6 +39,7 @@ type UserProducer struct {
 // rateLimiter 可为nil，若不为nil则启用生产端限速
 // 日志：创建UserProducer时输出限速器初始状态
 func NewUserProducer(options *options.KafkaOptions, rateLimiter *rat.RateLimiterController) *UserProducer {
+	log.Infof("[Producer] 初始化: options=%+v", options)
 	if rateLimiter != nil {
 		log.Infof("[Producer] 限速器初始化，初始速率=%.2f req/s", rateLimiter.GetRate())
 	} else {
@@ -96,6 +97,7 @@ func NewUserProducer(options *options.KafkaOptions, rateLimiter *rat.RateLimiter
 }
 
 func (p *UserProducer) SendUserCreateMessage(ctx context.Context, user *v1.User) error {
+	log.Debugf("[Producer] SendUserCreateMessage: username=%s", user.Name)
 	// 发送扁平结构，兼容 consumer 直接反序列化 v1.User
 	// 若 user 内部有 Metadata 字段，需展开为顶层字段
 	// 这里假设 v1.User 已经是扁平结构
@@ -103,10 +105,12 @@ func (p *UserProducer) SendUserCreateMessage(ctx context.Context, user *v1.User)
 }
 
 func (p *UserProducer) SendUserUpdateMessage(ctx context.Context, user *v1.User) error {
+	log.Debugf("[Producer] SendUserUpdateMessage: username=%s", user.Name)
 	return p.sendUserMessage(ctx, user, OperationUpdate, UserUpdateTopic)
 }
 
 func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username string) error {
+	log.Debugf("[Producer] SendUserDeleteMessage: username=%s", username)
 	deleteData := map[string]interface{}{
 		"username":   username,
 		"deleted_at": time.Now().Format(time.RFC3339),
@@ -131,6 +135,7 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 }
 
 func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, operation, topic string) error {
+	log.Debugf("[Producer] sendUserMessage: username=%s, operation=%s, topic=%s", user.Name, operation, topic)
 	start := time.Now()
 	var errSend error
 	defer func() {
@@ -140,7 +145,7 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 	userData, err := json.Marshal(user)
 	if err != nil {
 		errSend = err
-		log.Errorf("topic:%v operation:%v消息序列号失败:%v", topic, operation, err)
+		log.Errorf("用户:%s topic:%v operation:%v消息序列号失败:%v", user.Name, topic, operation, err)
 		return errors.WithCode(code.ErrEncodingJSON, "用户消息序列化失败")
 	}
 	now := time.Now()
@@ -162,6 +167,7 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 
 // 添加验证方法
 func (p *UserProducer) validateMessage(msg kafka.Message) error {
+	log.Debugf("[Producer] validateMessage: key=%s", string(msg.Key))
 	// 检查消息是否包含Topic字段（不应该包含）
 	if strings.TrimSpace(msg.Topic) != "" {
 		err := errors.WithCode(code.ErrMissingHeader, "必须设置topic")
@@ -173,10 +179,11 @@ func (p *UserProducer) validateMessage(msg kafka.Message) error {
 
 // sendWithRetry 带重试的发送逻辑
 func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
+	log.Debugf("[Producer] sendWithRetry: key=%s, topic=%s", string(msg.Key), topic)
 	// 生产端限速：如有配置则等待令牌
 	if p.rateLimiter != nil {
-		curRate := p.rateLimiter.GetRate()
-		log.Debugf("[Producer限速] 当前速率=%.2f req/s, 等待令牌...", curRate)
+		//	curRate := p.rateLimiter.GetRate()
+		//log.Debugf("[Producer限速] 当前速率=%.2f req/s, 等待令牌...", curRate)
 		if err := p.rateLimiter.Wait(ctx); err != nil {
 			log.Errorf("[Producer限速] 等待令牌失败: %v", err)
 			return fmt.Errorf("rate limit wait failed: %w", err)
@@ -237,7 +244,7 @@ func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, top
 		// 监控指标补全：成功/失败/耗时
 		metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
 		metrics.MessageProcessingTime.WithLabelValues(topic, operation, "success").Observe(time.Since(startTime).Seconds())
-		log.Debugf("发送成功: topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
+		log.Debugf("发送用户%s成功: topic=%s, key=%s, 耗时=%v", string(msg.Key), topic, string(msg.Key), time.Since(startTime))
 		return nil
 	}
 	// 首次发送失败，进行重试
@@ -267,6 +274,7 @@ func (p *UserProducer) getOperationFromHeaders(headers []kafka.Header) string {
 }
 
 func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
+	log.Warnf("[Producer] sendToRetryTopic: key=%s, error=%s", string(msg.Key), errorInfo)
 
 	// 空指针保护
 	if p == nil {
@@ -334,6 +342,7 @@ func (p *UserProducer) calcNextRetryTS(retryCount int) time.Time {
 }
 
 func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
+	log.Errorf("[Producer] SendToDeadLetterTopic: key=%s, error=%s", string(msg.Key), errorInfo)
 	start := time.Now()
 	operation := p.getOperationFromHeaders(msg.Headers)
 
@@ -357,6 +366,7 @@ func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Mess
 
 // recordDeadLetterOperation 记录死信队列操作指标
 func (p *UserProducer) recordDeadLetterOperation(topic, operation string, start time.Time, err error, errorInfo, messageKey string) {
+	log.Debugf("[Producer] recordDeadLetterOperation: topic=%s, operation=%s, key=%s, error=%v", topic, operation, messageKey, err)
 	duration := time.Since(start).Seconds()
 
 	// 记录死信消息计数
@@ -381,6 +391,7 @@ func (p *UserProducer) recordDeadLetterOperation(topic, operation string, start 
 }
 
 func (p *UserProducer) Close() error {
+	log.Infof("[Producer] Close called")
 	if p.writer != nil {
 		if err := p.writer.Close(); err != nil {
 			return err
@@ -397,6 +408,7 @@ func (p *UserProducer) Close() error {
 }
 
 func (p *UserProducer) updateOrAddHeader(headers []kafka.Header, key, value string) []kafka.Header {
+	log.Debugf("[Producer] updateOrAddHeader: key=%s, value=%s", key, value)
 	// 1. 基础校验：阻断空Key输入（避免无效头）
 	if key == "" {
 		panic("kafka header key cannot be empty string")
@@ -445,6 +457,7 @@ func (p *UserProducer) updateOrAddHeader(headers []kafka.Header, key, value stri
 
 // sendMessageWithRetry 增强的同步发送方法
 func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
+	log.Debugf("[Producer] sendMessageWithRetry: key=%s, topic=%s", string(msg.Key), topic)
 	const maxSendRetries = 3
 	var lastErr error
 

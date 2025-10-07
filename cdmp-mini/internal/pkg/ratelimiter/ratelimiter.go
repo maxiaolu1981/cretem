@@ -5,7 +5,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"golang.org/x/time/rate"
 )
 
@@ -48,10 +47,8 @@ func (r *RateLimiterController) Wait(ctx context.Context) error {
 // SetRate 手动调整速率
 func (r *RateLimiterController) SetRate(newRate float64) {
 	r.mu.Lock()
-	old := r.limiter.Limit()
 	r.limiter.SetLimit(rate.Limit(newRate))
 	r.limiter.SetBurst(int(newRate))
-	log.Warnf("[RateLimiter] SetRate: %.2f -> %.2f req/s", old, newRate)
 	r.mu.Unlock()
 }
 
@@ -89,7 +86,7 @@ func (r *RateLimiterController) run() {
 			if newLimit != oldLimit {
 				r.limiter.SetLimit(newLimit)
 				r.limiter.SetBurst(int(newLimit))
-				log.Warnf("[RateLimiter] 动态调整: %.2f -> %.2f req/s (failRate=%.2f%%)", oldLimit, newLimit, failRate*100)
+				//log.Warnf("[RateLimiter] 动态调整: %.2f -> %.2f req/s (failRate=%.2f%%)", oldLimit, newLimit, failRate*100)
 			}
 			r.mu.Unlock()
 		case <-r.stopCh:

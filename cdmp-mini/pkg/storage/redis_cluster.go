@@ -91,7 +91,7 @@ type RedisCluster struct {
 }
 
 func clusterConnectionIsOpen(cluster RedisCluster) bool {
-	
+
 	c := singleton(cluster.IsCache)
 	if c == nil {
 		log.Warn("clusterConnectionIsOpen: client instance is nil")
@@ -575,7 +575,7 @@ func (r *RedisCluster) GetKeys(ctx context.Context, filter string) []string {
 		filterHash = r.hashKey(filter)
 	}
 	searchStr := r.KeyPrefix + filterHash + "*"
-	log.Debugf("[STORE] Search pattern: %s", searchStr)
+	//	log.Debugf("[STORE] Search pattern: %s", searchStr)
 
 	// 内部函数：扫描单个节点的键
 	fnFetchKeys := func(nodeClient *redis.Client, nodeCtx context.Context) ([]string, error) {
@@ -630,8 +630,10 @@ func (r *RedisCluster) GetKeys(ctx context.Context, filter string) []string {
 			select {
 			case keys := <-resultCh:
 				sessions = append(sessions, keys...)
-			case err := <-errCh:
-				log.Errorf("Cluster scan failed: %v", err)
+			case err, ok := <-errCh:
+				if ok && err != nil {
+					log.Errorf("Cluster scan failed: %v", err)
+				}
 				return nil
 			case <-ctx.Done():
 				log.Errorf("GetKeys canceled: %v", ctx.Err())

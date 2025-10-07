@@ -15,15 +15,15 @@ import (
 
 func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
 
-	log.Debug("service:开始处理用户创建请求...")
+	log.Debugf("service:开始处理用户%v创建请求...", user.Name)
 
 	//判断用户是否存在
 	ruser, err := u.checkUserExist(ctx, user.Name)
 	if err != nil {
-		log.Debugf("checkUserExist 返回错误: %v", err)
+		log.Debugf("查询用户%scheckUserExist方法返回错误: %v", err, user.Name)
 	}
 	if ruser != nil && ruser.Name != RATE_LIMIT_PREVENTION {
-		log.Debug("用户已经存在,无法创建")
+		log.Debugf("用户%s已经存在,无法创建", user.Name)
 		return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在")
 	}
 

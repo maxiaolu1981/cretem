@@ -35,14 +35,14 @@ func (u *UserController) Create(ctx *gin.Context) {
 		return
 	}
 
-	log.Debug("control:开始处理用户创建请求...")
-
 	var r v1.User
 	if err := ctx.ShouldBindJSON(&r); err != nil {
 		log.Errorw("请求体绑定结构体失败", "requestID", ctx.Request.Header.Get("X-Request-ID"), "error", err)
 		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "参数绑定失败:%v", err.Error()), nil)
 		return
 	}
+	// 链路追踪日志
+	log.Debugf("[control] 用户创建请求入口: username=%s, operator=%s", r.Name, operator)
 	//校验用户名
 	username := r.Name
 	if strings.TrimSpace(username) == "" {
@@ -51,7 +51,7 @@ func (u *UserController) Create(ctx *gin.Context) {
 	}
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errsMsg := strings.Join(errs, ":")
-		log.Warnw("用户名不合法:", errsMsg)
+		log.Warnf("[control] 用户名不合法: username=%s, error=%s", username, errsMsg)
 		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errsMsg), nil)
 		return
 	}
@@ -63,13 +63,8 @@ func (u *UserController) Create(ctx *gin.Context) {
 			errDetails[fieldErr.Field] = fieldErr.ErrorBody()
 		}
 		detailsStr := fmt.Sprintf("密码设定不符合规则: %+v", errDetails)
-		err := errors.WrapC(
-			nil,                // 无原始错误，创建全新带码错误
-			code.ErrValidation, // 业务错误码
-			"%s",
-			detailsStr, // 错误消息（包含详情）
-		)
-		log.Warnw("密码生成不符合规则", detailsStr)
+		log.Warnf("[control] 密码不符合规则: username=%s, detail=%s", username, detailsStr)
+		err := errors.WrapC(nil, code.ErrValidation, "%s", detailsStr)
 		core.WriteResponse(ctx, err, nil)
 		return
 	}
@@ -92,6 +87,7 @@ func (u *UserController) Create(ctx *gin.Context) {
 
 	if err := u.srv.Users().Create(c, &r,
 		metav1.CreateOptions{}, u.options); err != nil {
+		log.Errorf("[control] 用户创建 service 层失败: username=%s, error=%v", r.Name, err)
 		core.WriteResponse(ctx, err, nil)
 		return
 	}

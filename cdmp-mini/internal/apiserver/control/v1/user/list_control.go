@@ -22,7 +22,8 @@ func (u *UserController) List(c *gin.Context) {
 		core.WriteResponse(c, errors.WithCode(code.ErrBind, "传入的参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
 		return
 	}
-	
+
+
 	errs := u.validateListOptions(&r)
 	if len(errs) > 0 {
 		errDetails := make(map[string]string, len(errs))

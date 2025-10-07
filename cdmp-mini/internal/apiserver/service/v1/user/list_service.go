@@ -11,6 +11,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/fields"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
@@ -18,19 +19,43 @@ import (
 func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
 	startTime := time.Now()
 
+	var username string
+	// 处理字段选择器
+	if opts.FieldSelector != "" {
+		selector, err := fields.ParseSelector(opts.FieldSelector)
+		if err != nil {
+			return nil, err
+		}
+		username, _ = selector.RequiresExactMatch("name")
+	}
+
+	if username == "" {
+		return nil, errors.WithCode(code.ErrInvalidParameter, "必须指定用户名进行查询")
+	}
+
+	//判断用户是否存在
+	ruser, err := u.checkUserExist(ctx, username)
+	if err != nil {
+		log.Debugf("查询用户%scheckUserExist方法返回错误: %v", err, username)
+	}
+	if ruser == nil || ruser.Name == RATE_LIMIT_PREVENTION {
+		log.Debugf("用户%s不存在,无法查询", username)
+		return nil, errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在")
+	}
+
 	// 步骤1：查询原始用户列表
-	users, err := u.Store.Users().List(ctx, opts, u.Options)
+	users, err := u.Store.Users().List(ctx, username, opts, u.Options)
 	if err != nil {
 		log.Errorf("List users from storage failed: %v", err)
 		return nil, errors.WithCode(code.ErrDatabase, "query raw users failed: %v", err)
 	}
 
 	if len(users.Items) == 0 {
-		logger.Debug("No users found in storage")
+		logger.Debugf("没有发现用户，返回空列表")
 		return &v1.UserList{ListMeta: users.ListMeta, Items: []*v1.User{}}, nil
 	}
 
-	logger.Debugf("Found %d users, starting parallel processing", len(users.Items))
+	logger.Debugf("发现 %d 用户列表, 开始并行处理", len(users.Items))
 
 	// 步骤2：初始化并行处理组件
 	const (
@@ -174,6 +199,7 @@ func (u *UserService) processUserWorker(
 
 // processSingleUserWithTimeout 带超时控制的单个用户处理
 func (u *UserService) processSingleUserWithTimeout(ctx context.Context, user *v1.User) (*v1.User, error) {
+
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 

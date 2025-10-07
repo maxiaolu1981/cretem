@@ -56,7 +56,7 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	deleteUsername := ctx.Param("name")
 	if errs := validation.IsQualifiedName(deleteUsername); len(errs) > 0 {
 		errsMsg := strings.Join(errs, ":")
-		log.Warnw("用户名不合法:", errsMsg)
+		log.Warnf("[control] 用户名不合法: username=%s, error=%s", deleteUsername, errsMsg)
 		core.WriteResponse(ctx, errors.WithCode(code.ErrInvalidParameter, "用户名不合法:%s", errsMsg), nil)
 		return
 	}
@@ -82,11 +82,10 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 		u.options,
 	)
 	if rawDelErr != nil {
-		log.Errorf("失败删除用户:[%s]: %+v", deleteUsername, rawDelErr)
-		// 用 errors.WrapC 包装删除错误，绑定“服务端错误”业务码
+		log.Errorf("[control] 用户强制删除 service 层失败: username=%s, error=%v", deleteUsername, rawDelErr)
 		err := errors.WrapC(
-			rawDelErr,              // 原始删除错误（如 DB 事务失败、锁冲突）
-			code.ErrInternalServer, // 业务码→HTTP 500
+			rawDelErr,
+			code.ErrInternalServer,
 			"用户[%s]强制删除失败，请稍后重试",
 			deleteUsername,
 		)

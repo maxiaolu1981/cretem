@@ -18,22 +18,21 @@ import (
 )
 
 func (u *UserController) Update(ctx *gin.Context) {
-
-	log.Debug("control:开始处理用户更新请求...")
+	username := ctx.Param("name") // 从URL路径获取，清晰明确
+	log.Infof("[control] 用户更新请求入口: username=%s", username)
 
 	var r v1.User
 	if err := ctx.ShouldBindJSON(&r); err != nil {
 		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "%s", err.Error()), nil)
 		return
 	}
-	username := ctx.Param("name") // 从URL路径获取，清晰明确
 	if strings.TrimSpace(username) == "" {
 		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不能为空"), nil)
 		return
 	}
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errMsg := strings.Join(errs, ":")
-		log.Errorf("用户名校验失败: %s", errMsg)
+		log.Warnf("[control] 用户名校验失败: username=%s, error=%s", username, errMsg)
 		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不合法: %s", errMsg), nil)
 		return
 	}
@@ -52,8 +51,8 @@ func (u *UserController) Update(ctx *gin.Context) {
 	}
 	//查询现有用户
 	existingUser, err := u.srv.Users().Get(c, username, metav1.GetOptions{}, u.options)
-	//数据库错误
 	if err != nil {
+		log.Errorf("[control] 用户更新 service 层查询失败: username=%s, error=%v", username, err)
 		core.WriteResponse(ctx, err, nil)
 		return
 	}
@@ -102,6 +101,7 @@ func (u *UserController) Update(ctx *gin.Context) {
 	// 传入正确的对象（existingUser）
 	if err := u.srv.Users().Update(c, existingUser,
 		metav1.UpdateOptions{}, u.options); err != nil {
+		log.Errorf("[control] 用户更新 service 层失败: username=%s, error=%v", username, err)
 		core.WriteResponse(ctx, err, nil)
 		return
 	}

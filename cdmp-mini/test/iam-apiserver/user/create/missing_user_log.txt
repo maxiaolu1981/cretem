@@ -230,3 +230,142 @@
 2025-10-07 12:29:35.295	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_1957_664493_888025"}
 2025-10-07 12:29:35.348	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_1895_866030_480664"}
 2025-10-07 12:29:35.349	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_1828_229265_79798"}
+2025-10-07 12:29:35.586	DEBUG	server/consumer.go:381	开始建立用户: username=user_1957_664493_888025
+2025-10-07 12:29:35.586	DEBUG	server/consumer.go:381	开始建立用户: username=user_1820_537094_322834
+2025-10-07 12:29:35.587	DEBUG	server/consumer.go:381	开始建立用户: username=user_1998_887153_274635
+2025-10-07 12:29:35.587	DEBUG	server/consumer.go:381	开始建立用户: username=user_1895_866030_480664
+2025-10-07 12:29:35.587	DEBUG	server/consumer.go:381	开始建立用户: username=user_1867_242781_405572
+2025-10-07 12:29:35.587	DEBUG	server/consumer.go:381	开始建立用户: username=user_1935_305222_432362
+2025-10-07 12:29:35.587	DEBUG	server/consumer.go:381	开始建立用户: username=user_1837_890807_349129
+2025-10-07 12:29:35.588	DEBUG	server/consumer.go:381	开始建立用户: username=user_1997_625482_984209
+2025-10-07 12:29:35.588	DEBUG	server/consumer.go:381	开始建立用户: username=user_1844_786716_821422
+2025-10-07 12:29:35.588	DEBUG	server/consumer.go:381	开始建立用户: username=user_1898_137816_452425
+2025-10-07 12:29:35.588	DEBUG	server/consumer.go:381	开始建立用户: username=user_1828_229265_79798
+2025-10-07 12:36:01.524	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3171_409752_522883
+2025-10-07 12:36:01.526	DEBUG	user/user_service.go:119	设置用户user_3171_409752_522883缓存成功
+2025-10-07 12:36:01.642	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3019_578153_916947
+2025-10-07 12:36:01.652	DEBUG	user/user_service.go:119	设置用户user_3019_578153_916947缓存成功
+2025-10-07 12:36:01.867	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3174_881744_693476
+2025-10-07 12:36:01.888	DEBUG	user/user_service.go:119	设置用户user_3174_881744_693476缓存成功
+2025-10-07 12:36:01.894	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3151_50632_924155
+2025-10-07 12:36:01.915	DEBUG	user/user_service.go:119	设置用户user_3151_50632_924155缓存成功
+2025-10-07 12:36:01.920	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3075_257424_818607
+2025-10-07 12:36:01.922	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3168_817482_477172
+2025-10-07 12:36:01.928	DEBUG	user/user_service.go:119	设置用户user_3075_257424_818607缓存成功
+2025-10-07 12:36:01.936	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3184_668466_395955
+2025-10-07 12:36:01.936	DEBUG	user/user_service.go:119	设置用户user_3168_817482_477172缓存成功
+2025-10-07 12:36:01.959	DEBUG	user/user_service.go:119	设置用户user_3184_668466_395955缓存成功
+2025-10-07 12:36:01.990	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3065_861419_652093
+2025-10-07 12:36:02.015	DEBUG	user/user_service.go:119	设置用户user_3065_861419_652093缓存成功
+2025-10-07 12:36:02.020	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3187_74058_810199
+2025-10-07 12:36:02.028	DEBUG	user/user_service.go:119	设置用户user_3187_74058_810199缓存成功
+2025-10-07 12:36:02.253	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3142_860489_651156
+2025-10-07 12:36:02.256	DEBUG	user/user_service.go:119	设置用户user_3142_860489_651156缓存成功
+2025-10-07 12:36:02.357	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3150_950599_924355
+2025-10-07 12:36:02.366	DEBUG	user/user_service.go:119	设置用户user_3150_950599_924355缓存成功
+2025-10-07 12:36:02.417	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_3174_881744_693476"}
+2025-10-07 12:36:02.450	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_3151_50632_924155"}
+2025-10-07 12:36:02.460	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_3075_257424_818607"}
+2025-10-07 12:36:02.468	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_3168_817482_477172"}
+2025-10-07 12:36:02.489	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_3184_668466_395955"}
+2025-10-07 12:36:02.525	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_3065_861419_652093"}
+2025-10-07 12:36:02.544	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_3151_878501_773004
+2025-10-07 12:36:02.547	DEBUG	user/user_service.go:119	设置用户user_3151_878501_773004缓存成功
+2025-10-07 12:36:02.561	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_3187_74058_810199"}
+2025-10-07 12:36:03.193	DEBUG	server/consumer.go:381	开始建立用户: username=user_3065_861419_652093
+2025-10-07 12:36:03.193	DEBUG	server/consumer.go:381	开始建立用户: username=user_3151_878501_773004
+2025-10-07 12:36:03.193	DEBUG	server/consumer.go:381	开始建立用户: username=user_3184_668466_395955
+2025-10-07 12:36:03.193	DEBUG	server/consumer.go:381	开始建立用户: username=user_3168_817482_477172
+2025-10-07 12:36:03.192	DEBUG	server/consumer.go:381	开始建立用户: username=user_3187_74058_810199
+2025-10-07 12:36:03.199	DEBUG	server/consumer.go:381	开始建立用户: username=user_3075_257424_818607
+2025-10-07 12:36:03.203	DEBUG	server/consumer.go:381	开始建立用户: username=user_3150_950599_924355
+2025-10-07 12:36:03.203	DEBUG	server/consumer.go:381	开始建立用户: username=user_3142_860489_651156
+2025-10-07 12:36:03.204	DEBUG	server/consumer.go:381	开始建立用户: username=user_3171_409752_522883
+2025-10-07 12:36:03.204	DEBUG	server/consumer.go:381	开始建立用户: username=user_3174_881744_693476
+2025-10-07 12:36:03.204	DEBUG	server/consumer.go:381	开始建立用户: username=user_3019_578153_916947
+2025-10-07 12:36:03.204	DEBUG	server/consumer.go:381	开始建立用户: username=user_3151_50632_924155
+2025-10-07 12:45:46.452	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4692_751910_640110
+2025-10-07 12:45:46.467	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4695_278037_556762
+2025-10-07 12:45:46.469	DEBUG	user/user_service.go:119	设置用户user_4692_751910_640110缓存成功
+2025-10-07 12:45:46.471	DEBUG	user/user_service.go:119	设置用户user_4695_278037_556762缓存成功
+2025-10-07 12:45:46.519	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4783_329543_984832
+2025-10-07 12:45:46.545	DEBUG	user/user_service.go:119	设置用户user_4783_329543_984832缓存成功
+2025-10-07 12:45:46.552	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4705_439441_940587
+2025-10-07 12:45:46.563	DEBUG	user/user_service.go:119	设置用户user_4705_439441_940587缓存成功
+2025-10-07 12:45:46.621	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4761_834188_928869
+2025-10-07 12:45:46.626	DEBUG	user/user_service.go:119	设置用户user_4761_834188_928869缓存成功
+2025-10-07 12:45:46.653	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4716_468584_199
+2025-10-07 12:45:46.657	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4717_594571_413495
+2025-10-07 12:45:46.664	DEBUG	user/user_service.go:119	设置用户user_4716_468584_199缓存成功
+2025-10-07 12:45:46.711	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4725_133446_236414
+2025-10-07 12:45:46.712	DEBUG	user/user_service.go:119	设置用户user_4717_594571_413495缓存成功
+2025-10-07 12:45:46.741	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4731_538258_620295
+2025-10-07 12:45:46.742	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4642_339368_895874
+2025-10-07 12:45:46.743	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4673_916317_460988
+2025-10-07 12:45:46.719	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4644_780828_480968
+2025-10-07 12:45:46.753	DEBUG	user/user_service.go:119	设置用户user_4725_133446_236414缓存成功
+2025-10-07 12:45:46.754	DEBUG	user/user_service.go:119	设置用户user_4673_916317_460988缓存成功
+2025-10-07 12:45:46.766	DEBUG	user/user_service.go:119	设置用户user_4642_339368_895874缓存成功
+2025-10-07 12:45:46.774	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4738_583952_871896
+2025-10-07 12:45:46.783	DEBUG	user/user_service.go:119	设置用户user_4738_583952_871896缓存成功
+2025-10-07 12:45:46.786	DEBUG	user/user_service.go:119	设置用户user_4644_780828_480968缓存成功
+2025-10-07 12:45:46.774	DEBUG	user/user_service.go:119	设置用户user_4731_538258_620295缓存成功
+2025-10-07 12:45:46.824	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4789_359824_76305
+2025-10-07 12:45:46.836	DEBUG	user/user_service.go:119	设置用户user_4789_359824_76305缓存成功
+2025-10-07 12:45:46.867	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4638_869039_270813
+2025-10-07 12:45:46.946	DEBUG	user/user_service.go:119	设置用户user_4638_869039_270813缓存成功
+2025-10-07 12:45:46.959	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4746_128746_334977
+2025-10-07 12:45:46.963	DEBUG	user/user_service.go:119	设置用户user_4746_128746_334977缓存成功
+2025-10-07 12:45:47.328	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4673_916317_460988"}
+2025-10-07 12:45:47.329	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4731_538258_620295"}
+2025-10-07 12:45:47.357	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4789_359824_76305"}
+2025-10-07 12:45:47.386	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4638_869039_270813"}
+2025-10-07 12:45:47.408	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4746_128746_334977"}
+2025-10-07 12:45:47.465	DEBUG	server/consumer.go:381	开始建立用户: username=user_4725_133446_236414
+2025-10-07 12:45:47.465	DEBUG	server/consumer.go:381	开始建立用户: username=user_4717_594571_413495
+2025-10-07 12:45:47.465	DEBUG	server/consumer.go:381	开始建立用户: username=user_4738_583952_871896
+2025-10-07 12:45:47.465	DEBUG	server/consumer.go:381	开始建立用户: username=user_4716_468584_199
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4705_439441_940587
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4644_780828_480968
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4783_329543_984832
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4731_538258_620295
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4673_916317_460988
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4642_339368_895874
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4638_869039_270813
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4692_751910_640110
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4695_278037_556762
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4789_359824_76305
+2025-10-07 12:45:47.466	DEBUG	server/consumer.go:381	开始建立用户: username=user_4746_128746_334977
+2025-10-07 12:45:47.470	DEBUG	server/consumer.go:381	开始建立用户: username=user_4761_834188_928869
+2025-10-07 12:45:58.650	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4723_329624_669540
+2025-10-07 12:45:58.678	DEBUG	user/user_service.go:119	设置用户user_4723_329624_669540缓存成功
+2025-10-07 12:45:58.741	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4686_440944_292661
+2025-10-07 12:45:58.748	DEBUG	user/user_service.go:119	设置用户user_4686_440944_292661缓存成功
+2025-10-07 12:45:58.859	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4624_573075_211096
+2025-10-07 12:45:58.861	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4677_291117_875422
+2025-10-07 12:45:58.868	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4667_185235_557022
+2025-10-07 12:45:58.869	DEBUG	user/user_service.go:119	设置用户user_4677_291117_875422缓存成功
+2025-10-07 12:45:58.870	DEBUG	user/user_service.go:119	设置用户user_4624_573075_211096缓存成功
+2025-10-07 12:45:58.873	DEBUG	user/user_service.go:119	设置用户user_4667_185235_557022缓存成功
+2025-10-07 12:45:58.953	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4747_950808_120963
+2025-10-07 12:45:58.960	DEBUG	user/user_service.go:119	设置用户user_4747_950808_120963缓存成功
+2025-10-07 12:45:58.981	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4785_161614_912233
+2025-10-07 12:45:58.987	DEBUG	user/user_service.go:119	设置用户user_4785_161614_912233缓存成功
+2025-10-07 12:45:58.986	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4684_470145_118948
+2025-10-07 12:45:59.012	DEBUG	user/user_service.go:119	设置用户user_4684_470145_118948缓存成功
+2025-10-07 12:45:59.647	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4677_291117_875422"}
+2025-10-07 12:45:59.485	DEBUG	user/user_service.go:73	未进行缓存缓 key=user_4656_865784_78380
+2025-10-07 12:45:59.653	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4667_185235_557022"}
+2025-10-07 12:45:59.677	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4785_161614_912233"}
+2025-10-07 12:45:59.688	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4624_573075_211096"}
+2025-10-07 12:45:59.708	DEBUG	user/user_service.go:119	设置用户user_4656_865784_78380缓存成功
+2025-10-07 12:45:59.710	DEBUG	user/create_service.go:40	用户创建请求已发送到Kafka	{"username": "user_4686_440944_292661"}
+2025-10-07 12:46:00.267	DEBUG	server/consumer.go:381	开始建立用户: username=user_4667_185235_557022
+2025-10-07 12:46:00.267	DEBUG	server/consumer.go:381	开始建立用户: username=user_4747_950808_120963
+2025-10-07 12:46:00.267	DEBUG	server/consumer.go:381	开始建立用户: username=user_4785_161614_912233
+2025-10-07 12:46:00.267	DEBUG	server/consumer.go:381	开始建立用户: username=user_4684_470145_118948
+2025-10-07 12:46:00.267	DEBUG	server/consumer.go:381	开始建立用户: username=user_4624_573075_211096
+2025-10-07 12:46:00.267	DEBUG	server/consumer.go:381	开始建立用户: username=user_4686_440944_292661
+2025-10-07 12:46:00.267	DEBUG	server/consumer.go:381	开始建立用户: username=user_4723_329624_669540
+2025-10-07 12:46:00.269	DEBUG	server/consumer.go:381	开始建立用户: username=user_4677_291117_875422
+2025-10-07 12:46:00.674	DEBUG	server/consumer.go:381	开始建立用户: username=user_4656_865784_78380

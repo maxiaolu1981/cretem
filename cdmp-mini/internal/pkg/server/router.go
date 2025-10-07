@@ -160,9 +160,9 @@ func (g *GenericAPIServer) installApiRoutes() error {
 		userv1.DELETE(":name", userController.Delete)
 		userv1.DELETE(":name/force", lagProtect, writeLimit, userController.ForceDelete)
 		userv1.POST("", lagProtect, writeLimit, userController.Create)
-		// Update should include the username in the path and use PUT
 		userv1.PUT(":name", lagProtect, writeLimit, userController.Update)
 		userv1.GET(":name", userController.Get)
+		userv1.PUT(":name/change-password", userController.ChangePassword)
 		userv1.GET("", userController.List)
 	}
 
