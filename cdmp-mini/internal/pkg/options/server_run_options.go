@@ -101,7 +101,7 @@ type ServerRunOptions struct {
 
 func NewServerRunOptions() *ServerRunOptions {
 	return &ServerRunOptions{
-		Mode:              gin.ReleaseMode,
+		Mode:              gin.DebugMode,
 		Healthz:           true,
 		Middlewares:       []string{},
 		EnableProfiling:   true,

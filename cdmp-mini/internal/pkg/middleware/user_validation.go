@@ -22,9 +22,10 @@ import (
 
 // 建议：用常量定义路由路径，避免硬编码（提升扩展性）
 const (
-	RouteUsersCreate         = "/v1/users"                       // 用户创建
+	RouteUsersCreate = "/v1/users"
+	// 查看用户详情  更新用户信息  删除用户 修改密码
 	RouteUsersDetail         = "/v1/users/:name"                 // 用户详情（查/改/删）
-	RouteUsersChangePassword = "/v1/users/:name/change_password" // 修改密码
+	RouteUsersChangePassword = "/v1/users/:name/change-password" // 修改密码
 )
 
 // Validation 权限校验中间件：确保用户有对应资源的操作权限
@@ -92,6 +93,7 @@ func checkNormalUserPermission(c *gin.Context) bool {
 			c.Abort()
 			return false
 		}
+
 		// 禁止非管理员删除自己
 		if c.Request.Method == http.MethodDelete {
 			core.WriteResponse(c,
@@ -101,6 +103,9 @@ func checkNormalUserPermission(c *gin.Context) bool {
 			c.Abort()
 			return false
 		}
+
+		// 允许操作：查看详情、更新信息、修改密码等
+		return true
 
 	case RouteUsersCreate:
 		// 非管理员仅允许创建用户（POST方法）

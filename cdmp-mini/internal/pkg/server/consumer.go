@@ -89,7 +89,7 @@ func parseInstanceID(idStr string) int {
 }
 
 // 消费
-func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
+func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, ready *sync.WaitGroup) {
 	log.Infof("[Consumer] StartConsuming: topic=%s, groupID=%s, workerCount=%d", c.topic, c.groupID, workerCount)
 	// job 用于在 fetcher 与 worker 之间传递消息，并携带一个 done 通道用于返回处理结果
 	type job struct {
@@ -99,6 +99,15 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 	}
 
 	jobs := make(chan *job, 2048) // 提升通道容量，支持高并发
+	readyOnce := sync.Once{}
+	signalReady := func() {
+		if ready != nil {
+			readyOnce.Do(func() {
+				ready.Done()
+			})
+		}
+	}
+	defer signalReady()
 
 	// 启动 worker 池，只负责处理业务，不直接调用 FetchMessage/CommitMessages
 	var workerWg sync.WaitGroup
@@ -318,6 +327,9 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 			consumeCount++
 		}
 	}()
+
+	// 在 worker 与 fetcher 启动后标记就绪
+	signalReady()
 
 	// 等待 fetcher 结束（通常由 ctx 取消触发），然后关闭 jobs 并等待 workers 退出
 	<-fetchLoopDone

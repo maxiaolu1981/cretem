@@ -1,6 +1,7 @@
 package performance
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -8,6 +9,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,16 +41,16 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 创建用户并发配置
-	PreCreateUsers      = 1 // 预先创建的用户数量
-	PreCreateConcurrent = 1 // 预创建并发数
-	PreCreateBatchSize  = 1 // 批次大小
-	PreCreateTimeout    = 1 * time.Second
+	PreCreateUsers      = 1000000 // 预先创建的用户数量
+	PreCreateConcurrent = 1000    // 预创建并发数
+	PreCreateBatchSize  = 1000    // 批次大小
+	PreCreateTimeout    = 100 * time.Second
 
 	// 删除用户并发配置
-	ConcurrentDeleters = 1 // 并发删除器数量
-	DeletesPerUser     = 1 // 每个删除器执行的删除次数
-	MaxConcurrent      = 1 // 最大并发数
-	BatchSize          = 1 // 批次大小
+	ConcurrentDeleters = 10000 // 并发删除器数量
+	DeletesPerUser     = 100   // 每个删除器执行的删除次数
+	MaxConcurrent      = 1000  // 最大并发数
+	BatchSize          = 1000  // 批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -146,6 +150,22 @@ var (
 	testRunID = fmt.Sprintf("run_%d", time.Now().UnixNano()) // 唯一测试ID
 )
 
+var (
+	_, currentFile, _, _       = runtime.Caller(0)
+	baseDir                    = filepath.Dir(currentFile)
+	outputDir                  = filepath.Join(baseDir, "output")
+	toolsDir                   = filepath.Join(baseDir, "tools")
+	targetUsernamesPath        = filepath.Join(outputDir, "target_usernames.txt")
+	baselineUsernamesPath      = filepath.Join(outputDir, "db_baseline_usernames.txt")
+	dumpDBUsernamesScript      = filepath.Join(toolsDir, "dump_db_usernames.py")
+	checkDeleteValidatorScript = filepath.Join(toolsDir, "check_user_force_delete.py")
+	validationJSONPath         = filepath.Join(outputDir, "force_delete_summary.json")
+)
+
+var protectedUsers = map[string]struct{}{
+	"admin": {},
+}
+
 // ==================== 主测试函数 ====================
 func TestUserForceDelete_RealConcurrent(t *testing.T) {
 	// 初始化环境
@@ -155,9 +175,6 @@ func TestUserForceDelete_RealConcurrent(t *testing.T) {
 	width := getTerminalWidth()
 	printHeader("🚀 开始并发创建+删除用户压力测试", width)
 	fmt.Printf("📝 测试运行ID: %s\n", testRunID)
-
-	// 0. 清理旧的测试数据
-	cleanupOldTestData()
 
 	// 1. 获取认证Token
 	fmt.Printf("🔑 获取认证Token...\n")
@@ -171,6 +188,13 @@ func TestUserForceDelete_RealConcurrent(t *testing.T) {
 	adminToken = token
 	fmt.Printf("✅ 成功获取 admin token: %s...\n", token[:min(20, len(token))])
 
+	fmt.Printf("🧹 自动清理历史测试数据并导出基线...\n")
+	if err := autoCleanupAndPrepareBaseline(token); err != nil {
+		fmt.Printf("❌ 自动清理或导出基线失败: %v\n", err)
+		return
+	}
+	fmt.Printf("📄 当前基线文件: %s\n", baselineUsernamesPath)
+
 	// 2. 并发预创建测试用户
 	fmt.Printf("👥 并发预创建测试用户...\n")
 	createStartTime := time.Now()
@@ -180,6 +204,12 @@ func TestUserForceDelete_RealConcurrent(t *testing.T) {
 	}
 	createDuration := time.Since(createStartTime)
 	fmt.Printf("✅ 并发创建完成，耗时: %v\n", createDuration.Round(time.Millisecond))
+
+	if err := persistTargetUserList(targetUsernamesPath); err != nil {
+		fmt.Printf("⚠️  写入待删除用户列表失败: %v\n", err)
+	} else {
+		fmt.Printf("🗂️  待删除用户名列表已写入: %s\n", targetUsernamesPath)
+	}
 
 	// 3. 显示测试配置
 	totalExpectedDeletes := ConcurrentDeleters * DeletesPerUser
@@ -208,23 +238,149 @@ func TestUserForceDelete_RealConcurrent(t *testing.T) {
 	deleteDuration := time.Since(deleteStartTime)
 	printFinalResults(createDuration, deleteDuration, width)
 
+	if err := runDeleteForceValidation(); err != nil {
+		fmt.Printf("⚠️  自动校验脚本执行失败: %v\n", err)
+	} else {
+		fmt.Printf("✅ 删除结果校验已自动执行，摘要输出: %s\n", validationJSONPath)
+	}
+
 	// 6. 数据校验
 	validateResults()
 }
 
-// 清理旧的测试数据
-func cleanupOldTestData() {
-	fmt.Printf("🧹 清理旧的测试数据...\n")
-
-	_, err := getAuthTokenWithDebug()
-	if err != nil {
-		fmt.Printf("⚠️  获取清理Token失败: %v\n", err)
-		return
+// 自动清理历史测试数据并生成基线
+func autoCleanupAndPrepareBaseline(token string) error {
+	if err := runDumpDBUsernames(baselineUsernamesPath); err != nil {
+		return fmt.Errorf("导出数据库用户名失败: %w", err)
 	}
 
-	// 这里可以调用批量删除API或者直接数据库清理
-	// 暂时先记录日志，手动清理
-	fmt.Printf("💡 请手动执行: DELETE FROM user WHERE name LIKE 'test  AND name NOT LIKE '%s%%';\n", testRunID)
+	currentUsers, err := readUsernamesFromFile(baselineUsernamesPath)
+	if err != nil {
+		return fmt.Errorf("读取基线文件失败: %w", err)
+	}
+
+	var toCleanup []string
+	for _, name := range currentUsers {
+		if shouldCleanupUser(name) {
+			toCleanup = append(toCleanup, name)
+		}
+	}
+
+	if len(toCleanup) > 0 {
+		fmt.Printf("🧹 发现历史测试账号 %d 个，开始自动清理...\n", len(toCleanup))
+		for _, name := range toCleanup {
+			if err := forceDeleteUserWithToken(token, name); err != nil {
+				fmt.Printf("⚠️  清理用户 %s 失败: %v\n", name, err)
+			}
+		}
+		// 清理完成后重新导出基线
+		if err := runDumpDBUsernames(baselineUsernamesPath); err != nil {
+			return fmt.Errorf("重新导出基线失败: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func runDumpDBUsernames(outputPath string) error {
+	args := []string{
+		dumpDBUsernamesScript,
+		"--output", outputPath,
+		"--db-host", "192.168.10.8",
+		"--db-fallback-host", "127.0.0.1",
+	}
+	cmd := exec.Command("python3", args...)
+	cmd.Dir = baseDir
+	output, err := cmd.CombinedOutput()
+	if len(output) > 0 {
+		fmt.Print(string(output))
+	}
+	if err == nil {
+		return nil
+	}
+
+	// 尝试使用 localhost 作为最终兜底
+	cmd = exec.Command("python3", dumpDBUsernamesScript, "--output", outputPath, "--db-host", "127.0.0.1")
+	cmd.Dir = baseDir
+	cmdOutput, secondErr := cmd.CombinedOutput()
+	if len(cmdOutput) > 0 {
+		fmt.Print(string(cmdOutput))
+	}
+	if secondErr == nil {
+		fmt.Println("ℹ️ 基线导出使用 localhost 作为 MySQL 主机")
+		return nil
+	}
+
+	return fmt.Errorf("首次导出失败: %w; localhost 重试失败: %w", err, secondErr)
+}
+
+func readUsernamesFromFile(path string) ([]string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	var names []string
+	for scanner.Scan() {
+		name := strings.TrimSpace(scanner.Text())
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return names, nil
+}
+
+func shouldCleanupUser(name string) bool {
+	if _, ok := protectedUsers[name]; ok {
+		return false
+	}
+	lower := strings.ToLower(name)
+	return strings.HasPrefix(lower, "test_") || strings.HasPrefix(lower, "stress") || strings.HasPrefix(lower, "user_")
+}
+
+func forceDeleteUserWithToken(token, username string) error {
+	deleteURL := fmt.Sprintf(ServerBaseURL+ForceDeletePath, username)
+	req, err := http.NewRequest("DELETE", deleteURL, nil)
+	if err != nil {
+		return fmt.Errorf("创建删除请求失败: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("发送删除请求失败: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+
+	body, _ := io.ReadAll(resp.Body)
+	return fmt.Errorf("删除 %s 失败: HTTP %d, 响应: %s", username, resp.StatusCode, strings.TrimSpace(string(body)))
+}
+
+func runDeleteForceValidation() error {
+	if _, err := os.Stat(checkDeleteValidatorScript); err != nil {
+		return fmt.Errorf("找不到校验脚本: %s", checkDeleteValidatorScript)
+	}
+
+	args := []string{
+		checkDeleteValidatorScript,
+		"--target-file", targetUsernamesPath,
+		"--baseline-file", baselineUsernamesPath,
+		"--dump-json", validationJSONPath,
+	}
+	cmd := exec.Command("python3", args...)
+	cmd.Dir = baseDir
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 // ==================== 并发预创建用户 ====================
@@ -880,4 +1036,27 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+func persistTargetUserList(path string) error {
+	usersMutex.RLock()
+	defer usersMutex.RUnlock()
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	for _, name := range availableUsers {
+		if _, err := file.WriteString(name + "\n"); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

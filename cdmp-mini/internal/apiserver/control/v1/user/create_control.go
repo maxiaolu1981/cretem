@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
@@ -29,30 +30,61 @@ import (
 func (u *UserController) Create(ctx *gin.Context) {
 	// 从Gin上下文获取中间件设置的信息
 	operator := common.GetUsername(ctx.Request.Context())
+	auditBase := func(outcome, message string) {
+		event := audit.BuildEventFromRequest(ctx.Request)
+		event.Action = "user.create"
+		event.ResourceType = "user"
+		event.Actor = operator
+		event.Outcome = outcome
+		if message != "" {
+			event.ErrorMessage = message
+		}
+		submitAudit(ctx, event)
+	}
 	var m metav1.CreateOptions
 	if err := ctx.ShouldBindQuery(&m); err != nil {
-		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "传入的CreateOptions参数错误"), nil) // ErrBind - 400: 100003请求体绑定结构体失败
+		err := errors.WithCode(code.ErrBind, "传入的CreateOptions参数错误")
+		core.WriteResponse(ctx, err, nil)
+		auditBase("fail", err.Error())
 		return
 	}
 
 	var r v1.User
 	if err := ctx.ShouldBindJSON(&r); err != nil {
 		log.Errorw("请求体绑定结构体失败", "requestID", ctx.Request.Header.Get("X-Request-ID"), "error", err)
-		core.WriteResponse(ctx, errors.WithCode(code.ErrBind, "参数绑定失败:%v", err.Error()), nil)
+		errBind := errors.WithCode(code.ErrBind, "参数绑定失败:%v", err.Error())
+		core.WriteResponse(ctx, errBind, nil)
+		auditBase("fail", errBind.Error())
 		return
 	}
 	// 链路追踪日志
 	log.Debugf("[control] 用户创建请求入口: username=%s, operator=%s", r.Name, operator)
 	//校验用户名
 	username := r.Name
+	auditBase = func(outcome, message string) {
+		event := audit.BuildEventFromRequest(ctx.Request)
+		event.Action = "user.create"
+		event.ResourceType = "user"
+		event.Actor = operator
+		event.ResourceID = username
+		event.Outcome = outcome
+		if message != "" {
+			event.ErrorMessage = message
+		}
+		submitAudit(ctx, event)
+	}
 	if strings.TrimSpace(username) == "" {
-		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不能为空"), nil)
+		err := errors.WithCode(code.ErrValidation, "用户名不能为空")
+		core.WriteResponse(ctx, err, nil)
+		auditBase("fail", err.Error())
 		return
 	}
 	if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 		errsMsg := strings.Join(errs, ":")
 		log.Warnf("[control] 用户名不合法: username=%s, error=%s", username, errsMsg)
-		core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errsMsg), nil)
+		err := errors.WithCode(code.ErrValidation, "用户名不合法:%s", errsMsg)
+		core.WriteResponse(ctx, err, nil)
+		auditBase("fail", err.Error())
 		return
 	}
 
@@ -66,6 +98,7 @@ func (u *UserController) Create(ctx *gin.Context) {
 		log.Warnf("[control] 密码不符合规则: username=%s, detail=%s", username, detailsStr)
 		err := errors.WrapC(nil, code.ErrValidation, "%s", detailsStr)
 		core.WriteResponse(ctx, err, nil)
+		auditBase("fail", err.Error())
 		return
 	}
 	r.Password, _ = auth.Encrypt(r.Password)
@@ -89,6 +122,7 @@ func (u *UserController) Create(ctx *gin.Context) {
 		metav1.CreateOptions{}, u.options); err != nil {
 		log.Errorf("[control] 用户创建 service 层失败: username=%s, error=%v", r.Name, err)
 		core.WriteResponse(ctx, err, nil)
+		auditBase("fail", err.Error())
 		return
 	}
 	publicUser := v1.ConvertToPublicUser(&r)
@@ -103,5 +137,6 @@ func (u *UserController) Create(ctx *gin.Context) {
 	}
 
 	core.WriteResponse(ctx, nil, successData)
+	auditBase("success", "")
 
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	sru "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/user"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
@@ -23,11 +24,25 @@ func (u *UserController) Get(ctx *gin.Context) {
 	metrics.MonitorBusinessOperation("user_service", "change_password", "http", func() error {
 		operator := common.GetUsername(ctx.Request.Context())
 		username := ctx.Param("name")
+		auditLog := func(outcome, message string) {
+			event := audit.BuildEventFromRequest(ctx.Request)
+			event.Action = "user.get"
+			event.ResourceType = "user"
+			event.ResourceID = username
+			event.Actor = operator
+			event.Outcome = outcome
+			if message != "" {
+				event.ErrorMessage = message
+			}
+			submitAudit(ctx, event)
+		}
 		if errs := validation.IsQualifiedName(username); len(errs) > 0 {
 			errMsg := strings.Join(errs, ":")
 			log.Errorf("用户名参数校验失败:", "error", errMsg)
-			core.WriteResponse(ctx, errors.WithCode(code.ErrValidation, "用户名不合法:%s", errMsg), nil)
-			return errors.WithCode(code.ErrValidation, "用户名不合法:%s", errMsg)
+			err := errors.WithCode(code.ErrValidation, "用户名不合法:%s", errMsg)
+			core.WriteResponse(ctx, err, nil)
+			auditLog("fail", err.Error())
+			return err
 		}
 
 		c := ctx.Request.Context()
@@ -48,12 +63,14 @@ func (u *UserController) Get(ctx *gin.Context) {
 		//数据库错误
 		if err != nil {
 			core.WriteResponse(ctx, err, nil)
+			auditLog("fail", err.Error())
 			return err
 		}
 		// 用户不存在（业务正常状态）
 		if user.Name == sru.RATE_LIMIT_PREVENTION {
 			err := errors.WithCode(code.ErrPasswordIncorrect, "用户名密码无效")
 			core.WriteResponse(ctx, err, nil)
+			auditLog("fail", err.Error())
 			return err
 		}
 
@@ -66,6 +83,7 @@ func (u *UserController) Get(ctx *gin.Context) {
 			"operation_type": "create",
 		}
 		core.WriteResponse(ctx, nil, successData)
+		auditLog("success", "")
 		return nil
 	})
 }

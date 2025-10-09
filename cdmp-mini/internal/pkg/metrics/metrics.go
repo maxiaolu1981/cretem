@@ -40,6 +40,9 @@ var (
 	BusinessInProgress      *prometheus.GaugeVec   // 当前处理中的业务数
 	BusinessThroughputStats *prometheus.SummaryVec // 业务吞吐量统计
 	BusinessErrorRate       *prometheus.GaugeVec   // 业务错误率
+
+	AuditEventsTotal   *prometheus.CounterVec // 审计事件计数
+	AuditEventFailures *prometheus.CounterVec // 审计失败计数
 )
 
 var (
@@ -261,6 +264,22 @@ func init() {
 			Help: "Business operation error rate percentage",
 		},
 		[]string{"service", "operation"}, // ✅ 正确
+	)
+
+	AuditEventsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "audit_events_total",
+			Help: "Total number of audit events emitted",
+		},
+		[]string{"action", "resource_type", "outcome"},
+	)
+
+	AuditEventFailures = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "audit_event_failures_total",
+			Help: "Total number of audit events with non-success outcome",
+		},
+		[]string{"action", "resource_type"},
 	)
 
 	// 初始化新增指标
@@ -787,6 +806,8 @@ func init() {
 		BusinessInProgress,
 		BusinessThroughputStats,
 		BusinessErrorRate,
+		AuditEventsTotal,
+		AuditEventFailures,
 
 		// 消费者指标
 		ConsumerMessagesReceived,
@@ -1214,6 +1235,31 @@ func RecordBusinessQPS(service, operation string, qps float64) {
 // RecordBusinessErrorRate 记录业务错误率
 func RecordBusinessErrorRate(service, operation string, errorRate float64) {
 	BusinessErrorRate.WithLabelValues(service, operation).Set(errorRate)
+}
+
+// RecordAuditEvent 记录审计事件发生次数。
+func RecordAuditEvent(action, resourceType, outcome string) {
+	if action == "" {
+		action = "unknown"
+	}
+	if resourceType == "" {
+		resourceType = "unknown"
+	}
+	if outcome == "" {
+		outcome = "unknown"
+	}
+	AuditEventsTotal.WithLabelValues(action, resourceType, outcome).Inc()
+}
+
+// RecordAuditFailure 记录审计事件失败次数。
+func RecordAuditFailure(action, resourceType string) {
+	if action == "" {
+		action = "unknown"
+	}
+	if resourceType == "" {
+		resourceType = "unknown"
+	}
+	AuditEventFailures.WithLabelValues(action, resourceType).Inc()
 }
 
 // GetBusinessOperationLabels 获取业务操作的标准标签

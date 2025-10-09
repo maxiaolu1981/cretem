@@ -28,27 +28,27 @@ type RedisOptions struct {
 }
 
 func NewRedisOptions() *RedisOptions {
-    return &RedisOptions{
-        Addrs: []string{
-            "192.168.10.14:6379",
-            "192.168.10.14:6380", 
-            "192.168.10.14:6381",
-        },
-        Username:              "",
-        Password:              "", 
-        Database:              0,
-        MasterName:            "",
-        MaxIdle:               50,                  // 空闲连接数
-        MaxActive:             200,                 // 最大活跃连接数
-        Timeout:               5 * time.Second,     // 连接超时
-        EnableCluster:         true,                // 集群模式
-        UseSSL:                false,
-        SSLInsecureSkipVerify: false,
-        IdleTimeout:           120 * time.Second,   // 空闲超时2分钟
-        MaxConnLifetime:       1800 * time.Second,  // 连接生命周期30分钟
-        Wait:                  true,                // 池耗尽时等待
-        PoolSize:              200,                 // 🔥 与MaxActive一致
-    }
+	return &RedisOptions{
+		Addrs: []string{
+			"192.168.10.14:6379",
+			"192.168.10.14:6380",
+			"192.168.10.14:6381",
+		},
+		Username:              "",
+		Password:              "",
+		Database:              0,
+		MasterName:            "",
+		MaxIdle:               50,              // 空闲连接数
+		MaxActive:             200,             // 最大活跃连接数
+		Timeout:               5 * time.Second, // 连接超时
+		EnableCluster:         true,            // 集群模式
+		UseSSL:                false,
+		SSLInsecureSkipVerify: false,
+		IdleTimeout:           120 * time.Second,  // 空闲超时2分钟
+		MaxConnLifetime:       1800 * time.Second, // 连接生命周期30分钟
+		Wait:                  true,               // 池耗尽时等待
+		PoolSize:              200,                // 🔥 与MaxActive一致
+	}
 }
 
 // Complete 补全Redis配置选项，处理默认值和依赖关系

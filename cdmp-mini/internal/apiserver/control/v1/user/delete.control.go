@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 
@@ -54,10 +55,24 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	// 校验：提取并检查待删除用户名（参数无效场景）
 	operator := common.GetUsername(ctx.Request.Context())
 	deleteUsername := ctx.Param("name")
+	auditLog := func(outcome, message string) {
+		event := audit.BuildEventFromRequest(ctx.Request)
+		event.Action = "user.delete"
+		event.ResourceType = "user"
+		event.ResourceID = deleteUsername
+		event.Actor = operator
+		event.Outcome = outcome
+		if message != "" {
+			event.ErrorMessage = message
+		}
+		submitAudit(ctx, event)
+	}
 	if errs := validation.IsQualifiedName(deleteUsername); len(errs) > 0 {
 		errsMsg := strings.Join(errs, ":")
 		log.Warnf("[control] 用户名不合法: username=%s, error=%s", deleteUsername, errsMsg)
-		core.WriteResponse(ctx, errors.WithCode(code.ErrInvalidParameter, "用户名不合法:%s", errsMsg), nil)
+		err := errors.WithCode(code.ErrInvalidParameter, "用户名不合法:%s", errsMsg)
+		core.WriteResponse(ctx, err, nil)
+		auditLog("fail", err.Error())
 		return
 	}
 
@@ -90,6 +105,7 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 			deleteUsername,
 		)
 		core.WriteResponse(ctx, err, nil)
+		auditLog("fail", err.Error())
 		return
 	}
 
@@ -104,4 +120,5 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 	}
 
 	core.WriteResponse(ctx, nil, successData)
+	auditLog("success", "")
 }

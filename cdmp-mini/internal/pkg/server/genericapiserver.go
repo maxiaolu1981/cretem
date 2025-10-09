@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	stdErrors "errors"
 	"os"
 	"sync"
 
@@ -12,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
@@ -32,7 +35,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
-	"golang.org/x/sync/errgroup"
 	"gorm.io/gorm"
 )
 
@@ -46,10 +48,163 @@ type GenericAPIServer struct {
 	producer       *UserProducer
 	consumerCtx    context.Context
 	consumerCancel context.CancelFunc
+	audit          *audit.Manager
+	shutdownOnce   sync.Once
 	//createConsumer *UserConsumer
 	//updateConsumer *UserConsumer
 	//deleteConsumer *UserConsumer
 	//retryConsumer  *RetryConsumer
+}
+
+func (g *GenericAPIServer) isDebugMode() bool {
+	return strings.EqualFold(g.options.ServerRunOptions.Mode, gin.DebugMode)
+}
+
+func (g *GenericAPIServer) shutdownAudit() {
+	if g.audit == nil {
+		return
+	}
+	timeout := g.options.AuditOptions.ShutdownTimeout
+	if timeout <= 0 {
+		timeout = 5 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := g.audit.Shutdown(ctx); err != nil {
+		log.Warnf("审计管理器关闭超时: %v", err)
+	}
+}
+
+func (g *GenericAPIServer) submitAuditEvent(ctx context.Context, event audit.Event) {
+	if g.audit == nil {
+		return
+	}
+	g.audit.Submit(ctx, event)
+}
+
+func (g *GenericAPIServer) auditMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		audit.InjectToGinContext(c, g.audit)
+		c.Next()
+	}
+}
+
+func (g *GenericAPIServer) auditServiceEvent(service, stage, outcome string, err error) {
+	if g == nil || g.audit == nil {
+		return
+	}
+	event := audit.Event{
+		Action:       fmt.Sprintf("%s.%s", service, stage),
+		ResourceType: "service",
+		ResourceID:   service,
+		Target:       service,
+		Outcome:      outcome,
+		Actor:        "system",
+		OccurredAt:   time.Now(),
+		Metadata: map[string]any{
+			"stage": stage,
+		},
+	}
+	if err != nil {
+		event.ErrorMessage = err.Error()
+	}
+	g.audit.Submit(context.Background(), event)
+}
+
+func (g *GenericAPIServer) closeWithAudit(ctx context.Context, service string, fn func(context.Context) error) {
+	g.auditServiceEvent(service, "shutdown", "start", nil)
+	if fn == nil {
+		g.auditServiceEvent(service, "shutdown", "success", nil)
+		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := fn(ctx); err != nil {
+		g.auditServiceEvent(service, "shutdown", "fail", err)
+	} else {
+		g.auditServiceEvent(service, "shutdown", "success", nil)
+	}
+}
+
+func (g *GenericAPIServer) performShutdown(ctx context.Context) {
+	g.shutdownOnce.Do(func() {
+		shutdownCtx := ctx
+		if shutdownCtx == nil {
+			shutdownCtx = context.Background()
+		}
+		g.closeWithAudit(shutdownCtx, "kafka", g.shutdownKafka)
+		g.closeWithAudit(shutdownCtx, "redis", g.shutdownRedis)
+		g.closeWithAudit(shutdownCtx, "mysql", g.shutdownMySQL)
+		// 审计管理器最后关闭，避免丢失前面的关闭事件
+		g.shutdownAudit()
+	})
+}
+
+func (g *GenericAPIServer) shutdownKafka(ctx context.Context) error {
+	var combined error
+	if g.consumerCancel != nil {
+		g.consumerCancel()
+	}
+	instances := g.getConsumerInstances()
+	if instances != nil {
+		for _, consumer := range instances.createConsumers {
+			if consumer != nil {
+				if err := consumer.Close(); err != nil {
+					combined = stdErrors.Join(combined, err)
+				}
+			}
+		}
+		for _, consumer := range instances.updateConsumers {
+			if consumer != nil {
+				if err := consumer.Close(); err != nil {
+					combined = stdErrors.Join(combined, err)
+				}
+			}
+		}
+		for _, consumer := range instances.deleteConsumers {
+			if consumer != nil {
+				if err := consumer.Close(); err != nil {
+					combined = stdErrors.Join(combined, err)
+				}
+			}
+		}
+		for _, consumer := range instances.retryConsumers {
+			if consumer != nil {
+				if err := consumer.Close(); err != nil {
+					combined = stdErrors.Join(combined, err)
+				}
+			}
+		}
+	}
+	if g.producer != nil {
+		if err := g.producer.Close(); err != nil {
+			combined = stdErrors.Join(combined, err)
+		}
+	}
+	return combined
+}
+
+func (g *GenericAPIServer) shutdownRedis(ctx context.Context) error {
+	if g.redisCancel != nil {
+		g.redisCancel()
+	}
+	if g.redis == nil {
+		return nil
+	}
+	client := g.redis.GetClient()
+	if client == nil {
+		return nil
+	}
+	return client.Close()
+}
+
+func (g *GenericAPIServer) shutdownMySQL(ctx context.Context) error {
+	factory := interfaces.Client()
+	if factory == nil {
+		return nil
+	}
+	return factory.Close()
 }
 
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
@@ -67,18 +222,37 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		initOnce: sync.Once{},
 	}
 
+	auditMgr, err := audit.NewManager(audit.Config{
+		Enabled:         opts.AuditOptions.Enabled,
+		BufferSize:      opts.AuditOptions.BufferSize,
+		ShutdownTimeout: opts.AuditOptions.ShutdownTimeout,
+		LogFile:         opts.AuditOptions.LogFile,
+		EnableMetrics:   opts.AuditOptions.EnableMetrics,
+	})
+	if err != nil {
+		log.Errorf("初始化审计管理器失败: %v", err)
+	} else {
+		g.audit = auditMgr
+		g.auditServiceEvent("audit", "startup", "success", nil)
+	}
+
+	g.Use(g.auditMiddleware())
+
 	//设置gin运行模式
 	if err := g.configureGin(); err != nil {
 		return nil, err
 	}
 	// 初始化mysql
+	g.auditServiceEvent("mysql", "startup", "start", nil)
 	storeIns, dbIns, err := mysql.GetMySQLFactoryOr(opts.MysqlOptions)
 	if err != nil {
 		log.Error("mysql服务器启动失败")
+		g.auditServiceEvent("mysql", "startup", "fail", err)
 		return nil, err
 	}
 	interfaces.SetClient(storeIns)
 	log.Debug("mysql服务器初始化成功")
+	g.auditServiceEvent("mysql", "startup", "success", nil)
 
 	// ========== 新增：增强版集群状态检查和初始化 ==========
 	if datastore, ok := storeIns.(*mysql.Datastore); ok {
@@ -98,15 +272,21 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		}
 	}
 
-	time.Sleep(10 * time.Second)
+	if err := waitForMySQLReady(dbIns, 30*time.Second); err != nil {
+		log.Error("mysql服务器未就绪")
+		g.auditServiceEvent("mysql", "startup", "fail", err)
+		return nil, err
+	}
 
 	//初始化redis
+	g.auditServiceEvent("redis", "startup", "start", nil)
 	if err := g.initRedisStore(); err != nil {
 		log.Error("redis服务器启动失败")
+		g.auditServiceEvent("redis", "startup", "fail", err)
 		return nil, err
 	}
 	log.Debug("redis服务器启动成功")
-	time.Sleep(3 * time.Second)
+	g.auditServiceEvent("redis", "startup", "success", nil)
 	// 生成唯一的 KAFKA_INSTANCE_ID
 	instanceID := os.Getenv("KAFKA_INSTANCE_ID")
 	if instanceID == "" {
@@ -121,12 +301,14 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		opts.KafkaOptions.InstanceID = instanceID
 		log.Infof("[Kafka] 自动生成唯一 InstanceID = %s", instanceID)
 	}
+	g.auditServiceEvent("kafka", "startup", "start", nil)
 	if err := g.initKafkaComponents(dbIns); err != nil {
 		log.Error("kafka服务启动失败")
+		g.auditServiceEvent("kafka", "startup", "fail", err)
 		return nil, err
 	}
 	log.Debug("kafka服务器启动成功")
-	time.Sleep(3 * time.Second)
+	g.auditServiceEvent("kafka", "startup", "success", nil)
 
 	// 启动消费者
 	ctx, cancel := context.WithCancel(context.Background())
@@ -135,17 +317,26 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 
 	// 获取所有消费者实例
 	instances := g.getConsumerInstances()
+	var consumerReady sync.WaitGroup
 	if instances != nil {
-		// 启动所有消费者实例（每个实例1个worker）
+		workerCount := g.options.KafkaOptions.WorkerCount
+		if workerCount < 1 {
+			workerCount = 1
+		}
+
+		// 启动所有消费者实例（每个实例1个worker或者配置中的数量）
 		for i := 0; i < len(instances.createConsumers); i++ {
 			if instances.createConsumers[i] != nil {
-				go instances.createConsumers[i].StartConsuming(ctx, options.NewOptions().KafkaOptions.WorkerCount) // 每个实例1个worker
+				consumerReady.Add(1)
+				go instances.createConsumers[i].StartConsuming(ctx, workerCount, &consumerReady)
 			}
 			if instances.updateConsumers[i] != nil {
-				go instances.updateConsumers[i].StartConsuming(ctx, 1)
+				consumerReady.Add(1)
+				go instances.updateConsumers[i].StartConsuming(ctx, 1, &consumerReady)
 			}
 			if instances.deleteConsumers[i] != nil {
-				go instances.deleteConsumers[i].StartConsuming(ctx, 1)
+				consumerReady.Add(1)
+				go instances.deleteConsumers[i].StartConsuming(ctx, 1, &consumerReady)
 			}
 		}
 
@@ -155,10 +346,17 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 			partitionCount := 0
 			brokers := g.options.KafkaOptions.Brokers
 			if len(brokers) > 0 {
-				if p, err := getTopicPartitionCount(ctx, brokers, UserRetryTopic); err == nil {
+				retryCtx, retryCancel := context.WithTimeout(ctx, 5*time.Second)
+				p, err := getTopicPartitionCount(retryCtx, brokers, UserRetryTopic)
+				retryCancel()
+				if err == nil {
 					partitionCount = p
 				} else {
-					log.Warnf("无法获取 topic %s 的分区信息: %v", UserRetryTopic, err)
+					if stdErrors.Is(err, context.DeadlineExceeded) {
+						log.Warnf("获取 topic %s 分区信息超时，将稍后重试: %v", UserRetryTopic, err)
+					} else {
+						log.Warnf("获取 topic %s 分区信息失败: %v", UserRetryTopic, err)
+					}
 				}
 			}
 
@@ -187,7 +385,8 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 
 			for i := 0; i < len(instances.retryConsumers); i++ {
 				if instances.retryConsumers[i] != nil {
-					go instances.retryConsumers[i].StartConsuming(ctx, workersPerInstance)
+					consumerReady.Add(1)
+					go instances.retryConsumers[i].StartConsuming(ctx, workersPerInstance, &consumerReady)
 				}
 			}
 
@@ -241,7 +440,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		log.Debugf("已启动 %d 个消费者实例", len(instances.createConsumers))
 	}
 
-	time.Sleep(10 * time.Second) // 等待其他组件完全初始化
+	consumerReady.Wait()
 	// 如果我们未创建按实例存储（回退模式），启动单个全局重试消费者
 
 	log.Debug("所有Kafka消费者已启动")
@@ -318,84 +517,125 @@ func (g *GenericAPIServer) configureGin() error {
 	return nil
 }
 
-func (g *GenericAPIServer) Run() error {
-	address := net.JoinHostPort(g.options.InsecureServingOptions.BindAddress, strconv.Itoa((g.options.InsecureServingOptions.BindPort)))
+func (g *GenericAPIServer) Run(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	g.auditServiceEvent("api-server", "startup", "start", nil)
+
+	address := net.JoinHostPort(g.options.InsecureServingOptions.BindAddress, strconv.Itoa(g.options.InsecureServingOptions.BindPort))
 
 	g.insecureServer = &http.Server{
-		Addr:    address,
-		Handler: g,
-		// 服务器性能优化
+		Addr:              address,
+		Handler:           g,
 		ReadTimeout:       30 * time.Second,
 		ReadHeaderTimeout: 10 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       30 * time.Second,
-
-		// 连接控制
-		MaxHeaderBytes: 1 << 20, // 1MB
-		// 新增：连接数限制
+		MaxHeaderBytes:    1 << 20,
 		ConnState: func(conn net.Conn, state http.ConnState) {
-			// 监控连接状态，防止过多连接
+			// 预留连接状态监控
 		},
 	}
 
-	var eg errgroup.Group
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		wrapped := fmt.Errorf("创建监听器失败: %w", err)
+		g.auditServiceEvent("api-server", "startup", "fail", wrapped)
+		g.performShutdown(context.Background())
+		return wrapped
+	}
 
-	// 创建服务器启动信号通道
+	serverErr := make(chan error, 1)
 	serverStarted := make(chan struct{})
 
-	eg.Go(func() error {
-		log.Debugf("正在 %s 启动 GenericAPIServer 服务", address)
-
-		// 创建监听器，确保端口可用
-		listener, err := net.Listen("tcp", address)
-		if err != nil {
-			return fmt.Errorf("创建监听器失败: %w", err)
-		}
-
-		log.Debug("端口监听成功，开始接受连接")
+	go func() {
 		close(serverStarted)
-
-		// 启动服务器
-		err = g.insecureServer.Serve(listener)
-		if errors.Is(err, http.ErrServerClosed) {
-			log.Debugf("GenericAPIServer服务器已正常关闭")
-			return nil
+		log.Debugf("正在 %s 启动 GenericAPIServer 服务", address)
+		if serveErr := g.insecureServer.Serve(listener); serveErr != nil {
+			serverErr <- serveErr
+			return
 		}
-		if err != nil {
-			return fmt.Errorf("GenericAPIServer服务器启动失败: %w", err)
-		}
+		serverErr <- nil
+	}()
 
-		log.Debugf("停止 %s 运行的 GenericAPIServer 服务", address)
-		return nil
-	})
-
-	// 等待服务器开始监听
 	select {
 	case <-serverStarted:
+		g.auditServiceEvent("api-server", "startup", "success", nil)
 		log.Debug("GenericAPIServer服务器已开始监听，准备进行健康检查...")
+	case <-ctx.Done():
+		listener.Close()
+		reason := fmt.Errorf("启动被取消: %w", ctx.Err())
+		g.auditServiceEvent("api-server", "startup", "fail", reason)
+		g.performShutdown(context.Background())
+		return ctx.Err()
 	case <-time.After(10 * time.Second):
-		return fmt.Errorf("GenericAPIServer服务器启动超时，无法在5秒内开始监听")
+		err := fmt.Errorf("GenericAPIServer服务器启动超时，无法在10秒内开始监听")
+		g.auditServiceEvent("api-server", "startup", "fail", err)
+		_ = g.insecureServer.Close()
+		g.performShutdown(context.Background())
+		return err
 	}
 
 	if g.options.ServerRunOptions.Healthz {
-		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		healthCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 
-		// 先等待端口就绪
-		if err := g.waitForPortReady(ctx, address, 10*time.Second); err != nil {
-			return fmt.Errorf("端口就绪检测失败: %w", err)
+		if err := g.waitForPortReady(healthCtx, address, 10*time.Second); err != nil {
+			err := fmt.Errorf("端口就绪检测失败: %w", err)
+			g.auditServiceEvent("api-server", "startup", "fail", err)
+			_ = g.insecureServer.Close()
+			g.performShutdown(context.Background())
+			return err
 		}
-
-		// 执行健康检查
-		if err := g.ping(ctx, address); err != nil {
-			return fmt.Errorf("健康检查失败: %w", err)
+		if err := g.ping(healthCtx, address); err != nil {
+			err := fmt.Errorf("健康检查失败: %w", err)
+			g.auditServiceEvent("api-server", "startup", "fail", err)
+			_ = g.insecureServer.Close()
+			g.performShutdown(context.Background())
+			return err
 		}
 	}
 
-	if err := eg.Wait(); err != nil {
-		return fmt.Errorf("服务器运行错误: %w", err)
+	for {
+		select {
+		case err := <-serverErr:
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				wrapped := fmt.Errorf("GenericAPIServer服务器运行失败: %w", err)
+				g.auditServiceEvent("api-server", "runtime", "fail", wrapped)
+				g.performShutdown(ctx)
+				return wrapped
+			}
+			g.auditServiceEvent("api-server", "shutdown", "success", nil)
+			g.performShutdown(ctx)
+			if err == nil || errors.Is(err, http.ErrServerClosed) {
+				return nil
+			}
+			return err
+		case <-ctx.Done():
+			g.auditServiceEvent("api-server", "shutdown", "start", ctx.Err())
+			shutdownTimeout := g.options.AuditOptions.ShutdownTimeout
+			if shutdownTimeout <= 0 {
+				shutdownTimeout = 10 * time.Second
+			}
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+			errShutdown := g.insecureServer.Shutdown(shutdownCtx)
+			cancel()
+			if errShutdown != nil {
+				g.auditServiceEvent("api-server", "shutdown", "fail", errShutdown)
+			} else {
+				g.auditServiceEvent("api-server", "shutdown", "success", nil)
+			}
+			g.performShutdown(ctx)
+			if serveErr := <-serverErr; serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+				return serveErr
+			}
+			if errShutdown != nil {
+				return errShutdown
+			}
+			return nil
+		}
 	}
-	return nil
 }
 
 // waitForPortReady 等待端口就绪
@@ -508,7 +748,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		createConsumers[i].SetProducer(userProducer)
 		createConsumers[i].SetInstanceID(i)
 		if g.options.ServerRunOptions.EnableRateLimiter {
-		//	go createConsumers[i].startLagMonitor(context.Background())
+			//	go createConsumers[i].startLagMonitor(context.Background())
 		}
 
 		updateConsumers[i] = NewUserConsumer(kafkaOpts, UserUpdateTopic,
@@ -516,7 +756,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		updateConsumers[i].SetProducer(userProducer)
 		updateConsumers[i].SetInstanceID(i)
 		if g.options.ServerRunOptions.EnableRateLimiter {
-		//	go updateConsumers[i].startLagMonitor(context.Background())
+			//	go updateConsumers[i].startLagMonitor(context.Background())
 		}
 
 		deleteConsumers[i] = NewUserConsumer(kafkaOpts, UserDeleteTopic,
@@ -524,7 +764,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		deleteConsumers[i].SetProducer(userProducer)
 		deleteConsumers[i].SetInstanceID(i)
 		if g.options.ServerRunOptions.EnableRateLimiter {
-		//	go deleteConsumers[i].startLagMonitor(context.Background())
+			//	go deleteConsumers[i].startLagMonitor(context.Background())
 		}
 	}
 
@@ -640,17 +880,39 @@ func (g *GenericAPIServer) initRedisStore() error {
 	// 同步等待Redis完全启动
 	log.Debugf("等待Redis集群完全启动...")
 
-	// 第一阶段：等待基础连接
-	if err := g.waitForBasicConnection(10 * time.Second); err != nil {
-		return err
+	debugMode := g.isDebugMode()
+	basicTimeout := 60 * time.Second
+	healthyTimeout := 90 * time.Second
+	if debugMode {
+		basicTimeout = 5 * time.Second
+		healthyTimeout = 10 * time.Second
+		log.Debugf("调试模式启用快速启动策略: basicTimeout=%v healthyTimeout=%v", basicTimeout, healthyTimeout)
 	}
 
-	// 第二阶段：等待健康检查通过
-	if err := g.waitForHealthyCluster(ctx, 20*time.Second); err != nil {
-		return err
+	basicErr := g.waitForBasicConnection(basicTimeout)
+	if basicErr != nil {
+		if !debugMode {
+			return basicErr
+		}
+		log.Warnf("调试模式: Redis基础连接未就绪，将继续启动（err=%v）", basicErr)
 	}
 
-	log.Debug("✅ Redis集群完全启动并验证成功")
+	var healthyErr error
+	if basicErr == nil {
+		healthyErr = g.waitForHealthyCluster(ctx, healthyTimeout)
+		if healthyErr != nil {
+			if !debugMode {
+				return healthyErr
+			}
+			log.Warnf("调试模式: Redis健康检查未通过，将在后台持续重试（err=%v）", healthyErr)
+		}
+	}
+
+	if basicErr == nil && healthyErr == nil {
+		log.Debug("✅ Redis集群完全启动并验证成功")
+	} else if debugMode {
+		log.Warn("⚠️ 调试模式降级: Redis尚未完全就绪，相关功能可能受限，后台重连成功后会自动恢复")
+	}
 
 	// 启动监控
 	go g.monitorRedisConnection(ctx)
@@ -892,6 +1154,43 @@ func (g *GenericAPIServer) setConsumerInstances(create, update, delete []*UserCo
 
 func (g *GenericAPIServer) getConsumerInstances() *consumerInstances {
 	return consumerInstancesStore
+}
+
+func waitForMySQLReady(db *gorm.DB, timeout time.Duration) error {
+	if db == nil {
+		return fmt.Errorf("mysql数据库连接为空")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	attempt := 0
+
+	for {
+		err := db.WithContext(ctx).Exec("SELECT 1").Error
+		attempt++
+		if err == nil {
+			log.Debugf("MySQL就绪（尝试 %d 次）", attempt)
+			return nil
+		}
+
+		if ctx.Err() != nil {
+			return fmt.Errorf("MySQL就绪检查超时: %w", ctx.Err())
+		}
+
+		if attempt%3 == 0 {
+			log.Debugf("等待MySQL就绪...（尝试 %d 次, 错误: %v）", attempt, err)
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("MySQL就绪检查被取消: %w", ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }
 
 // ========== 新增：集群初始化函数 ==========

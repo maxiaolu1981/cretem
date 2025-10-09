@@ -25,14 +25,27 @@ Run(cfg *config.Config) error
 package apiserver
 
 import (
+	"context"
+	"os/signal"
+	"syscall"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 )
 
 func Run(opts *options.Options) error {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	server, err := newApiServer(opts)
 	if err != nil {
 		return err
 	}
-	return server.run()
+
+	if err := server.run(ctx); err != nil {
+		if err == context.Canceled {
+			return nil
+		}
+		return err
+	}
+	return nil
 }

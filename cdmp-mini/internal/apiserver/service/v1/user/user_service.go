@@ -1,3 +1,29 @@
+/*
+聚焦分析 checkUserExist 新参数在各业务流程里的用法，我先拆成两步：1) 解释 checkUserExist 的内部机制与 forceRefresh 的作用；2) 对照 create/update/delete/list/changePassword 等调用点说明为何选择不同的布尔值。
+
+checkUserExist 的原理
+缓存优先 + 可选回源：入口在 user_service.go 的 checkUserExist(ctx, username, forceRefresh)。它先通过 tryGetFromCache 查询 Redis（见 get_service.go），命中真实用户就直接返回；命中的是我们自己写入的负缓存 RATE_LIMIT_PREVENTION 时，会根据 forceRefresh 判断是否继续。
+forceRefresh=false：直接把负缓存返回，认为“这个用户不存在”。
+forceRefresh=true：即便命中了负缓存，也会日志提示“命中负缓存, 强制回源校验”，然后继续往数据库查一遍。
+防止击穿的负缓存：getUserFromDBAndSetCache 查库找不到用户时，会调用 cacheNullValue，通过新改动后的 Redis.SetNX 写入带统一前缀的空值，短期内阻挡重复查询。
+数据库兜底：缓存未命中或强制回源时，使用 util.RetryWithBackoff + singleflight 查询数据库，再把结果写回缓存。这段逻辑保证并发下只打一次 DB，同时对临时错误做重试。
+不同业务场景如何传 forceRefresh
+场景	代码位置	参数	理由
+创建	create_service.go 第 15 行附近 checkUserExist(ctx, user.Name, false)	false	创建时我们只需要知道“目前是否有人占用这个用户名”。如果缓存里已经有负缓存，说明之前查库确认过不存在，可以放心创建；命中真实用户则阻止重复创建。
+更新	update_service.go 第 14 行 checkUserExist(ctx, user.Name, true)	true	更新必须保证用户真实存在。即便缓存说不存在（可能是老的负缓存），也要强制回源 DB，避免误报“用户不存在”导致 404。
+删除 / 批量删除	delete_service.go 第 17、31 行	true	删除尤其是强制删时，需要跨缓存验证，防止负缓存阻挡真实存在的用户被删除。
+改密码	change_password_servcice.go 第 15 行	true	密码修改只针对现有用户，必须强制回源确认，不让负缓存阻塞。
+查询（List/Get 前置过滤）	list_service.go 第 33 行等	true	列表在进入存储层前也要确认用户存在；否则负缓存会让查询直接中断，实际库里的用户就查不到了。Get 本身通过缓存->singleflight 也是强制最终一致。
+总结来说，写操作里区分“是否需要强一致性”：
+
+创造性动作（Create）允许负缓存阻挡，避免多余回源；
+读取/变更/删除类操作为了强一致，统一传 true，强制绕过负缓存；
+配合 checkUserExist 新增的 forceRefresh 逻辑，就能既保留负缓存的抗击穿效果，又避免它影响后续真实存在的用户操作。
+
+GPT-5-Codex (Preview) • 1x
+
+
+*/
 package user
 
 import (

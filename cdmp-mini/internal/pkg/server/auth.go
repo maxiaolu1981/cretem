@@ -18,6 +18,7 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
@@ -39,6 +40,69 @@ import (
 type loginInfo struct {
 	Username string `form:"username" json:"username" ` // 仅校验非空
 	Password string `form:"password" json:"password" ` // 仅校验非空
+}
+
+func (g *GenericAPIServer) auditLoginAttempt(c *gin.Context, username, outcome string, err error) {
+	if g == nil {
+		return
+	}
+	event := audit.BuildEventFromRequest(c.Request)
+	if username != "" {
+		event.Actor = username
+		event.ResourceID = username
+	}
+	event.Action = "auth.login"
+	event.ResourceType = "auth"
+	event.Outcome = outcome
+	if err != nil {
+		event.ErrorMessage = err.Error()
+	}
+	if event.Metadata == nil {
+		event.Metadata = map[string]any{}
+	}
+	if route := c.FullPath(); route != "" {
+		event.Metadata["route"] = route
+	}
+	g.submitAuditEvent(c.Request.Context(), event)
+}
+
+func (g *GenericAPIServer) auditLogoutEvent(c *gin.Context, username, outcome, reason string) {
+	if g == nil {
+		return
+	}
+	event := audit.BuildEventFromRequest(c.Request)
+	if username != "" {
+		event.Actor = username
+		event.ResourceID = username
+	}
+	event.Action = "auth.logout"
+	event.ResourceType = "auth"
+	event.Outcome = outcome
+	if reason != "" {
+		event.ErrorMessage = reason
+	}
+	if event.Metadata == nil {
+		event.Metadata = map[string]any{}
+	}
+	if route := c.FullPath(); route != "" {
+		event.Metadata["route"] = route
+	}
+	g.submitAuditEvent(c.Request.Context(), event)
+}
+
+func submitAuditFromGinContext(c *gin.Context, event audit.Event) {
+	if c == nil {
+		return
+	}
+	if event.Metadata == nil {
+		event.Metadata = map[string]any{}
+	}
+	if route := c.FullPath(); route != "" {
+		event.Metadata["route"] = route
+	}
+	if mgr := audit.FromGinContext(c); mgr != nil {
+		mgr.Submit(c.Request.Context(), event)
+	}
 }
 
 // 认证策略工厂
@@ -205,6 +269,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	}
 	if err != nil {
 		log.Errorf("parse authentication info failed: %v", err)
+		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
 	}
@@ -216,6 +281,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	}
 	if failCount > maxLoginFails {
 		err := errors.WithCode(code.ErrPasswordIncorrect, "登录失败次数太多,15分钟后重试")
+		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
 	}
@@ -224,6 +290,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		errsMsg := strings.Join(errs, ":")
 		log.Warnw("用户名不合法:", errsMsg)
 		err := errors.WithCode(code.ErrInvalidParameter, "%s", errsMsg)
+		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
 
@@ -232,6 +299,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	if err := validation.IsValidPassword(login.Password); err != nil {
 		errMsg := "密码不合法：" + err.Error()
 		err := errors.WithCode(code.ErrInvalidParameter, "%s", errMsg)
+		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
 	}
@@ -240,6 +308,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	user, err := interfaces.Client().Users().Get(c, login.Username, metav1.GetOptions{}, g.options)
 	if err != nil {
 		log.Errorf("获取用户信息失败: username=%s, error=%v", login.Username, err)
+		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
 	}
@@ -249,6 +318,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		log.Errorf("password compare failed: username=%s", login.Username)
 		// 场景：密码不正确 → 用通用授权错误码 ErrPasswordIncorrect（100206，401）
 		err := errors.WithCode(code.ErrPasswordIncorrect, "密码校验失败：用户名【%s】的密码不正确", login.Username)
+		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
 	}
@@ -262,6 +332,8 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	if updateErr := interfaces.Client().Users().Update(c, user, metav1.UpdateOptions{}, g.options); updateErr != nil {
 		log.Warnf("update user logined time failed: username=%s, error=%v", login.Username, updateErr)
 	}
+
+	g.auditLoginAttempt(c, login.Username, "success", nil)
 	// 新增：在返回前打印 user 信息，确认非 nil
 	// 5. 关键：打印返回前的用户数据，确认有效
 	//	log.Debugf("authenticate: 成功返回用户数据，username=%s，InstanceID=%s，user=%+v",
@@ -277,8 +349,11 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 
 	g.clearAuthCookies(c)
 
+	username := ""
+
 	if err != nil {
 		// 降级处理：只清理客户端Cookie
+		g.auditLogoutEvent(c, username, "fail", err.Error())
 
 		if !errors.IsWithCode(err) {
 			// 非预期错误类型，返回默认未授权
@@ -298,6 +373,7 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 			return
 		}
 		if bid == code.ErrExpired {
+			g.auditLogoutEvent(c, username, "timeout", "令牌已经过期")
 			c.JSON(http.StatusUnauthorized, gin.H{
 				"code":    code.ErrExpired,
 				"message": "令牌已经过期,请重新登录",
@@ -312,6 +388,9 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 		})
 		return
 	}
+	if claims != nil {
+		username = claims.Username
+	}
 
 	//异步或后台执行可能失败的操作（黑名单、会话清理）
 	go g.executeBackgroundCleanup(claims)
@@ -320,6 +399,7 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 	log.Debugf("登出成功，user_id=%s", claims.UserID)
 	// 🔧 优化4：成功场景也通过core.WriteResponse，确保格式统一（code=成功码，message=成功消息）
 	core.WriteResponse(c, nil, "登出成功")
+	g.auditLogoutEvent(c, username, "success", "")
 }
 
 func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomClaims) {
@@ -839,6 +919,18 @@ func handleUnauthorized(c *gin.Context, httpCode int, message string) {
 	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
 	// 1. 从上下文提取业务码（优先使用HTTPStatusMessageFunc映射后的withCode错误）
 	bizCode := extractBizCode(c, message)
+	if bizCode == code.ErrExpired {
+		event := audit.BuildEventFromRequest(c.Request)
+		event.Action = "auth.logout"
+		event.ResourceType = "auth"
+		event.Outcome = "timeout"
+		event.ErrorMessage = message
+		if actor := c.GetHeader("X-User"); actor != "" {
+			event.Actor = actor
+			event.ResourceID = actor
+		}
+		submitAuditFromGinContext(c, event)
+	}
 
 	// 2. 日志分级：基于业务码重要性输出差异化日志（含request-id便于追踪）
 	LogWithLevelByBizCode(c, bizCode, message)

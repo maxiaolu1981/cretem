@@ -45,6 +45,7 @@ type Options struct {
 	RedisOptions           *options.RedisOptions           `json:"redis"    mapstructure:"redis"`
 	MetaOptions            *options.MetaOptions            `json:"metoptions" mapstructure:"metoptions"`
 	KafkaOptions           *options.KafkaOptions           `json:"kafkaoptions" mapstructure:"kafkaoptions"`
+	AuditOptions           *options.AuditOptions           `json:"audit" mapstructure:"audit"`
 }
 
 func NewOptions() *Options {
@@ -57,6 +58,7 @@ func NewOptions() *Options {
 		RedisOptions:           options.NewRedisOptions(),
 		MetaOptions:            options.NewMetaOptions(),
 		KafkaOptions:           options.NewKafkaOptions(),
+		AuditOptions:           options.NewAuditOptions(),
 	}
 }
 
@@ -68,6 +70,7 @@ func (o *Options) Complete() {
 	o.Log.Complete()
 	o.MetaOptions.Complete()
 	o.KafkaOptions.Complete()
+	o.AuditOptions.Complete()
 
 }
 
@@ -81,6 +84,7 @@ func (o *Options) Validate() []error {
 	errs = append(errs, o.RedisOptions.Validate()...)
 	errs = append(errs, o.MetaOptions.Validate()...)
 	errs = append(errs, o.KafkaOptions.Validate()...)
+	errs = append(errs, o.AuditOptions.Validate()...)
 
 	return errs
 }
@@ -94,6 +98,7 @@ func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.RedisOptions.AddFlags(fss.FlagSet("redis"))
 	o.MetaOptions.AddFlags(fss.FlagSet("meta"))
 	o.KafkaOptions.AddFlags(fss.FlagSet("kafka"))
+	o.AuditOptions.AddFlags(fss.FlagSet("audit"))
 
 	return fss
 }

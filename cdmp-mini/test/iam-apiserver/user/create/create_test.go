@@ -76,10 +76,10 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 高压力配置
-	RequestsPerUser = 1 // 每用户请求数
-	ConcurrentUsers = 1 // 增加到1万并发用户
-	MaxConcurrent   = 1 // 增加到500并发处理器
-	BatchSize       = 1 // 增大批次大小小
+	RequestsPerUser = 500  // 每用户请求数
+	ConcurrentUsers = 1000 // 增加到1万并发用户
+	MaxConcurrent   = 500  // 增加到500并发处理器
+	BatchSize       = 1000 // 增大批次大小小
 )
 
 // ==================== 数据结构 ====================

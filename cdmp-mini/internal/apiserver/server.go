@@ -102,6 +102,8 @@ Redis缓存: 异步连接Redis并进行健康监测
 package apiserver
 
 import (
+	"context"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server"
 
@@ -127,7 +129,6 @@ func newApiServer(opts *options.Options) (*apiServer, error) {
 	}, nil
 }
 
-func (a *apiServer) run() error {
-
-	return a.genericAPIServer.Run()
+func (a *apiServer) run(ctx context.Context) error {
+	return a.genericAPIServer.Run(ctx)
 }

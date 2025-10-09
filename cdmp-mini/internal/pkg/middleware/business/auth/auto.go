@@ -175,6 +175,7 @@ func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 		}
 
 		// 第五步：获取并校验用户名
+		
 		username := operator.GetUsername()
 		if username == "" {
 			err := errors.WithCode(

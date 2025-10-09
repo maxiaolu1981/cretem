@@ -57,15 +57,23 @@ func (rc *RetryConsumer) Close() error {
 	return nil
 }
 
-func (rc *RetryConsumer) StartConsuming(ctx context.Context, workerCount int) {
+func (rc *RetryConsumer) StartConsuming(ctx context.Context, workerCount int, ready *sync.WaitGroup) {
 	log.Debugf("StartConsuming 开始，worker数量: %d", workerCount)
 	log.Debugf("上下文状态: %v", ctx.Err())
 	log.Debugf("Reader已初始化: %v", rc.reader != nil)
 	var wg sync.WaitGroup
+	readyOnce := sync.Once{}
+	signalReady := func() {
+		if ready != nil {
+			readyOnce.Do(func() {
+				ready.Done()
+			})
+		}
+	}
+	defer signalReady()
 
 	if rc.reader == nil {
 		log.Warn("Reader未初始化，等待...")
-		time.Sleep(3 * time.Second)
 		if rc.reader == nil {
 			log.Warn("Reader仍然未初始化，退出")
 			return
@@ -79,6 +87,8 @@ func (rc *RetryConsumer) StartConsuming(ctx context.Context, workerCount int) {
 			rc.retryWorker(ctx, workerID)
 		}(i)
 	}
+
+	signalReady()
 	log.Debug("等待所有worker完成...")
 	wg.Wait()
 	log.Debug("所有worker已完成，StartConsuming返回")

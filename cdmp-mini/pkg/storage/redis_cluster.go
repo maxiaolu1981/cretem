@@ -71,14 +71,22 @@ func singleton(cache bool) redis.UniversalClient {
 
 // nolint: unparam
 func connectSingleton(cache bool, config *options.RedisOptions) bool {
-	if singleton(cache) == nil {
-		log.Debug("Connecting to redis cluster")
-		if cache {
-			singleCachePool.Store(NewRedisClusterPool(cache, config))
-			return true
-		}
-		singlePool.Store(NewRedisClusterPool(cache, config))
+	if existing := singleton(cache); existing != nil {
 		return true
+	}
+
+	log.Debug("Connecting to redis cluster")
+
+	client := NewRedisClusterPool(cache, config)
+	if client == nil {
+		log.Error("Redis cluster client creation returned nil, will retry")
+		return false
+	}
+
+	if cache {
+		singleCachePool.Store(client)
+	} else {
+		singlePool.Store(client)
 	}
 	return true
 }
@@ -98,18 +106,36 @@ func clusterConnectionIsOpen(cluster RedisCluster) bool {
 		return false
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
+	const maxAttempts = 5
+	const attemptInterval = 300 * time.Millisecond
 
-	// 尝试多次Ping
-	for i := 0; i < 3; i++ {
-		if err := c.Ping(ctx).Err(); err == nil {
-			return true // 成功
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		pingCtx, pingCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		err := c.Ping(pingCtx).Err()
+		pingCancel()
+		if err == nil {
+			if attempt > 1 {
+				log.Debugf("Redis cluster ping成功（第%d次尝试）", attempt)
+			}
+			return true
 		}
-		time.Sleep(100 * time.Millisecond) // 短暂延迟后重试
+
+		lastErr = err
+		if errors.Is(err, context.DeadlineExceeded) {
+			log.Debugf("Redis cluster ping第%d次尝试超时，继续重试", attempt)
+		} else {
+			log.Debugf("Redis cluster ping第%d次尝试失败: %v", attempt, err)
+		}
+
+		time.Sleep(attemptInterval)
 	}
 
-	log.Warn("Redis cluster health check failed after 3 attempts")
+	if lastErr != nil {
+		log.Warnf("Redis cluster health check failed after %d attempts: %v", maxAttempts, lastErr)
+	} else {
+		log.Warnf("Redis cluster health check failed after %d attempts", maxAttempts)
+	}
 	return false
 }
 
@@ -202,9 +228,11 @@ func NewRedisClusterPool(isCache bool, config *options.RedisOptions) redis.Unive
 		client = redis.NewClient(opts.simple())
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 	if err := client.Ping(ctx).Err(); err != nil {
 		log.Errorf("新创建的Redis客户端验证失败: %v", err)
+		_ = client.Close()
 		return nil
 	}
 	//log.Info("新创建的Redis客户端验证成功")
