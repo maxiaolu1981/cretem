@@ -1346,12 +1346,20 @@ func (r *RedisCluster) Eval(ctx context.Context, script string, keys []string, a
 		return nil, err
 	}
 
+	var fixedKeys []string
+	if len(keys) > 0 {
+		fixedKeys = make([]string, len(keys))
+		for i, key := range keys {
+			fixedKeys[i] = r.fixKey(key)
+		}
+	}
+
 	client := r.singleton()
 	switch v := client.(type) {
 	case *redis.ClusterClient:
-		return v.Eval(ctx, script, keys, args).Result()
+		return v.Eval(ctx, script, fixedKeys, args).Result()
 	case *redis.Client:
-		return v.Eval(ctx, script, keys, args).Result()
+		return v.Eval(ctx, script, fixedKeys, args).Result()
 	default:
 		return nil, errors.New("unsupported redis client type")
 	}
@@ -1363,12 +1371,20 @@ func (r *RedisCluster) EvalSha(ctx context.Context, sha1 string, keys []string, 
 		return nil, err
 	}
 
+	var fixedKeys []string
+	if len(keys) > 0 {
+		fixedKeys = make([]string, len(keys))
+		for i, key := range keys {
+			fixedKeys[i] = r.fixKey(key)
+		}
+	}
+
 	client := r.singleton()
 	switch v := client.(type) {
 	case *redis.ClusterClient:
-		return v.EvalSha(ctx, sha1, keys, args).Result()
+		return v.EvalSha(ctx, sha1, fixedKeys, args).Result()
 	case *redis.Client:
-		return v.EvalSha(ctx, sha1, keys, args).Result()
+		return v.EvalSha(ctx, sha1, fixedKeys, args).Result()
 	default:
 		return nil, errors.New("unsupported redis client type")
 	}
@@ -1397,7 +1413,8 @@ func (r *RedisCluster) SetNX(ctx context.Context, keyName string, value interfac
 		return false, err
 	}
 
-	result, err := r.singleton().SetNX(ctx, keyName, value, expiration).Result()
+	fixedKey := r.fixKey(keyName)
+	result, err := r.singleton().SetNX(ctx, fixedKey, value, expiration).Result()
 	if err != nil {
 		log.Errorf("redis服务出现问题,请马上修改: %s", err.Error())
 		return false, err

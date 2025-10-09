@@ -12,15 +12,31 @@ import (
 )
 
 func (u *UserService) DeleteCollection(ctx context.Context, username []string, force bool, opts metav1.DeleteOptions, opt *options.Options) error {
+	//检查用户是否存在
+
+	//判断用户是否存在
+	for _, name := range username {
+		ruser, err := u.checkUserExist(ctx, name, true)
+		if err != nil || ruser == nil || ruser.Name == RATE_LIMIT_PREVENTION {
+			continue
+		} else {
+			u.Delete(ctx, name, true, opts, opt)
+		}
+	}
 	return nil
 }
 
 func (u *UserService) Delete(ctx context.Context, username string, force bool, opts metav1.DeleteOptions, opt *options.Options) error {
 
 	//检查用户是否存在
-	_, err := u.checkUserExist(ctx, username)
+	ruser, err := u.checkUserExist(ctx, username, true)
+	log.Debugf("ruser=%v, err=%v", ruser, err)
 	if err != nil {
-		return err
+		log.Debugf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", username, err)
+	}
+	if ruser != nil && ruser.Name == RATE_LIMIT_PREVENTION {
+		log.Debugf("用户%s不存在,无法删除", username)
+		return errors.WithCode(code.ErrUserNotFound, "用户不存在,无法删除")
 	}
 
 	//物理删除

@@ -1,4 +1,4 @@
-package gormutil
+package util
 
 // DefaultLimit define the default number of records to be retrieved.
 const DefaultLimit = 1000

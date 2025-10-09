@@ -2,7 +2,6 @@ package main
 
 import (
 	"math/rand"
-	"runtime/debug"
 	"time"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver"
@@ -22,8 +21,8 @@ func main() {
 	// 或者直接设置为固定值
 	// runtime.GOMAXPROCS(8)
 
-	debug.SetGCPercent(100)
-	debug.SetMemoryLimit(4 << 30) // 增加到 4GB
+	//debug.SetGCPercent(100)
+	//debug.SetMemoryLimit(4 << 30) // 增加到 4GB
 
 	//version.CheckVersionAndExit()
 	apiserver.NewApp("iam-apiserver").Run()

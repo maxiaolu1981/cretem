@@ -63,8 +63,8 @@ func (u *UserController) ChangePassword(c *gin.Context) {
 		}
 
 		if err := user.Compare(r.OldPassword); err != nil {
-			core.WriteResponse(c, errors.WithCode(code.ErrPasswordIncorrect, err.Error()), nil)
-			return errors.WithCode(code.ErrPasswordIncorrect, err.Error())
+			core.WriteResponse(c, errors.WithCode(code.ErrPasswordIncorrect, "%s", err.Error()), nil)
+			return errors.WithCode(code.ErrPasswordIncorrect,"%s", err.Error())
 		}
 
 		user.Password, _ = auth.Encrypt(r.NewPassword)

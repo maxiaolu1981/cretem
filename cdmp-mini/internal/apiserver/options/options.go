@@ -43,7 +43,6 @@ type Options struct {
 	ServerRunOptions       *options.ServerRunOptions       `json:"server"   mapstructure:"server"`
 	Log                    *log.Options                    `json:"log"      mapstructure:"log"`
 	RedisOptions           *options.RedisOptions           `json:"redis"    mapstructure:"redis"`
-	DistributedLock        *options.DistributedLockOptions `json:"distributedLock" mapstructure:"distributedLock"`
 	MetaOptions            *options.MetaOptions            `json:"metoptions" mapstructure:"metoptions"`
 	KafkaOptions           *options.KafkaOptions           `json:"kafkaoptions" mapstructure:"kafkaoptions"`
 }
@@ -56,7 +55,6 @@ func NewOptions() *Options {
 		ServerRunOptions:       options.NewServerRunOptions(),
 		Log:                    log.NewOptions(),
 		RedisOptions:           options.NewRedisOptions(),
-		DistributedLock:        options.NewDistributedLockOptions(),
 		MetaOptions:            options.NewMetaOptions(),
 		KafkaOptions:           options.NewKafkaOptions(),
 	}
@@ -68,7 +66,6 @@ func (o *Options) Complete() {
 	o.ServerRunOptions.Complete()
 	o.MysqlOptions.Complete()
 	o.Log.Complete()
-	o.DistributedLock.Complete()
 	o.MetaOptions.Complete()
 	o.KafkaOptions.Complete()
 
@@ -82,7 +79,6 @@ func (o *Options) Validate() []error {
 	errs = append(errs, o.ServerRunOptions.Validate()...)
 	errs = append(errs, o.Log.Validate()...)
 	errs = append(errs, o.RedisOptions.Validate()...)
-	errs = append(errs, o.DistributedLock.Validate()...)
 	errs = append(errs, o.MetaOptions.Validate()...)
 	errs = append(errs, o.KafkaOptions.Validate()...)
 
@@ -96,7 +92,6 @@ func (o *Options) Flags() (fss cliFlag.NamedFlagSets) {
 	o.ServerRunOptions.AddFlags(fss.FlagSet("server"))
 	o.Log.AddFlags(fss.FlagSet("log"))
 	o.RedisOptions.AddFlags(fss.FlagSet("redis"))
-	o.DistributedLock.AddFlags(fss.FlagSet("distributedLock"))
 	o.MetaOptions.AddFlags(fss.FlagSet("meta"))
 	o.KafkaOptions.AddFlags(fss.FlagSet("kafka"))
 

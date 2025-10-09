@@ -14,11 +14,11 @@ import (
 func (u *UserService) ChangePassword(ctx context.Context, user *v1.User, opt *options.Options) error {
 
 	//判断用户是否存在
-	ruser, err := u.checkUserExist(ctx, user.Name)
+	ruser, err := u.checkUserExist(ctx, user.Name, true)
 	if err != nil {
-		log.Debugf("查询用户%scheckUserExist方法返回错误: %v", err, user.Name)
+		log.Debugf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", user.Name, err)
 	}
-	if ruser == nil || ruser.Name == RATE_LIMIT_PREVENTION {
+	if ruser != nil && ruser.Name == RATE_LIMIT_PREVENTION {
 		log.Debugf("用户%s不存在,无法修改密码", user.Name)
 		return errors.WithCode(code.ErrUserNotFound, "用户不存在")
 	}

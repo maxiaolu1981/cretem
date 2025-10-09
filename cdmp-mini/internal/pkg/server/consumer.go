@@ -67,7 +67,7 @@ func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm
 		// 新增：实例ID赋值
 		instanceID: parseInstanceID(opts.InstanceID),
 	}
-	go consumer.startLagMonitor(context.Background())
+	//go consumer.startLagMonitor(context.Background())
 	return consumer
 
 }
@@ -155,9 +155,9 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 			}
 			ticker := time.NewTicker(batchTimeout)
 			defer ticker.Stop()
-					   var createBatch []kafka.Message
-					   var deleteBatch []kafka.Message
-					   var updateBatch []kafka.Message
+			var createBatch []kafka.Message
+			var deleteBatch []kafka.Message
+			var updateBatch []kafka.Message
 			// 批量写入最大条数提升，默认100-500
 			maxBatchSize := c.opts.MaxDBBatchSize
 			if maxBatchSize < 100 {
@@ -165,56 +165,56 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 			} else if maxBatchSize > 500 {
 				maxBatchSize = 500
 			}
-		       flush := func() {
-			       if len(createBatch) > 0 {
-				       c.batchCreateToDB(ctx, createBatch)
-				       createBatch = createBatch[:0]
-			       }
-			       if len(deleteBatch) > 0 {
-				       c.batchDeleteFromDB(ctx, deleteBatch)
-				       deleteBatch = deleteBatch[:0]
-			       }
-			       if len(updateBatch) > 0 {
-				       c.batchUpdateToDB(ctx, updateBatch)
-				       updateBatch = updateBatch[:0]
-			       }
-		       }
-		       for {
-			       select {
-			       case bi, ok := <-batchCh:
-				       if !ok {
-					       flush()
-					       return
-				       }
-				       switch bi.op {
-				       case OperationCreate:
-					       createBatch = append(createBatch, bi.msg)
-					       if len(createBatch) >= maxBatchSize {
-						       c.batchCreateToDB(ctx, createBatch)
-						       createBatch = createBatch[:0]
-					       }
-				       case OperationDelete:
-					       deleteBatch = append(deleteBatch, bi.msg)
-					       if len(deleteBatch) >= maxBatchSize {
-						       c.batchDeleteFromDB(ctx, deleteBatch)
-						       deleteBatch = deleteBatch[:0]
-					       }
-				       case OperationUpdate:
-					       updateBatch = append(updateBatch, bi.msg)
-					       if len(updateBatch) >= maxBatchSize {
-						       c.batchUpdateToDB(ctx, updateBatch)
-						       updateBatch = updateBatch[:0]
-					       }
-				       default:
-					       // ignore others for batching
-				       }
-			       case <-ticker.C:
-				       flush()
-			       case <-ctx.Done():
-				       flush()
-				       return
-			       }
-		       }
+			flush := func() {
+				if len(createBatch) > 0 {
+					c.batchCreateToDB(ctx, createBatch)
+					createBatch = createBatch[:0]
+				}
+				if len(deleteBatch) > 0 {
+					c.batchDeleteFromDB(ctx, deleteBatch)
+					deleteBatch = deleteBatch[:0]
+				}
+				if len(updateBatch) > 0 {
+					c.batchUpdateToDB(ctx, updateBatch)
+					updateBatch = updateBatch[:0]
+				}
+			}
+			for {
+				select {
+				case bi, ok := <-batchCh:
+					if !ok {
+						flush()
+						return
+					}
+					switch bi.op {
+					case OperationCreate:
+						createBatch = append(createBatch, bi.msg)
+						if len(createBatch) >= maxBatchSize {
+							c.batchCreateToDB(ctx, createBatch)
+							createBatch = createBatch[:0]
+						}
+					case OperationDelete:
+						deleteBatch = append(deleteBatch, bi.msg)
+						if len(deleteBatch) >= maxBatchSize {
+							c.batchDeleteFromDB(ctx, deleteBatch)
+							deleteBatch = deleteBatch[:0]
+						}
+					case OperationUpdate:
+						updateBatch = append(updateBatch, bi.msg)
+						if len(updateBatch) >= maxBatchSize {
+							c.batchUpdateToDB(ctx, updateBatch)
+							updateBatch = updateBatch[:0]
+						}
+					default:
+						// ignore others for batching
+					}
+				case <-ticker.C:
+					flush()
+				case <-ctx.Done():
+					flush()
+					return
+				}
+			}
 		}()
 
 		// ====== 消费速率统计相关变量 ======
@@ -273,30 +273,29 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int) {
 
 			// dispatch to worker
 			j := &job{msg: msg, done: make(chan error, 1), workerID: nextWorker}
-		       // ...existing code... // 移除队列长度监控，确保无限流
-		       select {
-		       case jobs <- j:
-			       // dispatched
-		       case <-ctx.Done():
-			       return
-		       case <-time.After(10 * time.Millisecond):
-			       // 如果 worker 队列阻塞，尝试把消息放到批量通道以触发批量写（降低延迟）
-			       op := c.getOperationFromHeaders(msg.Headers)
-			       if op == OperationCreate || op == OperationDelete || op == OperationUpdate {
-				       select {
-				       case batchCh <- batchItem{op: op, msg: msg}:
-				       default:
-					       // 如果批量通道也满了，则继续等待正常 dispatch
-					       select {
-					       case jobs <- j:
-					       case <-ctx.Done():
-						       return
-					       }
-				       }
-				       continue
-			       }
-		       }
-
+			// ...existing code... // 移除队列长度监控，确保无限流
+			select {
+			case jobs <- j:
+				// dispatched
+			case <-ctx.Done():
+				return
+			case <-time.After(10 * time.Millisecond):
+				// 如果 worker 队列阻塞，尝试把消息放到批量通道以触发批量写（降低延迟）
+				op := c.getOperationFromHeaders(msg.Headers)
+				if op == OperationCreate || op == OperationDelete || op == OperationUpdate {
+					select {
+					case batchCh <- batchItem{op: op, msg: msg}:
+					default:
+						// 如果批量通道也满了，则继续等待正常 dispatch
+						select {
+						case jobs <- j:
+						case <-ctx.Done():
+							return
+						}
+					}
+					continue
+				}
+			}
 
 			// round-robin
 			nextWorker = (nextWorker + 1) % workerCount
@@ -389,11 +388,13 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	var user v1.User
 	if err := json.Unmarshal(msg.Value, &user); err == nil {
 		if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
-			return err
+			// 字段校验失败，直接写入死信区
+			return c.sendToDeadLetter(ctx, msg, err.Error())
 		}
 		log.Debugf("开始建立用户: username=%s", user.Name)
 		if err := c.createUserInDB(ctx, &user); err != nil {
-			return fmt.Errorf("创建用户失败: %w", err)
+			// 数据库写入失败，直接写入死信区
+			return c.sendToDeadLetter(ctx, msg, "CREATE_DB_ERROR: "+err.Error())
 		}
 		if err := c.setUserCache(ctx, &user); err != nil {
 			log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
@@ -403,48 +404,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		log.Debugf("用户创建成功: username=%s", user.Name)
 		return nil
 	}
-	// 尝试兼容 metadata 嵌套结构
-	var metaUser struct {
-		Metadata struct {
-			Name      string    `json:"name"`
-			CreatedAt time.Time `json:"createdAt"`
-			UpdatedAt time.Time `json:"updatedAt"`
-		} `json:"metadata"`
-		Status      int    `json:"status"`
-		Nickname    string `json:"nickname"`
-		Password    string `json:"password"`
-		Email       string `json:"email"`
-		Phone       string `json:"phone"`
-		TotalPolicy int    `json:"totalPolicy"`
-		Role        string `json:"role"`
-		LoginedAt   string `json:"loginedAt"`
-	}
-	if err := json.Unmarshal(msg.Value, &metaUser); err != nil {
-		return fmt.Errorf("UNMARSHAL_ERROR: %w", err)
-	}
-	// 转换为 v1.User
-	user.Name = metaUser.Metadata.Name
-	if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
-		return err
-	}
-	user.CreatedAt = metaUser.Metadata.CreatedAt
-	user.UpdatedAt = metaUser.Metadata.UpdatedAt
-	user.Status = metaUser.Status
-	user.Nickname = metaUser.Nickname
-	user.Password = metaUser.Password
-	user.Email = metaUser.Email
-	user.Phone = metaUser.Phone
-	// 其他字段按需补充
-	log.Debugf("开始建立用户(meta): username=%s", user.Name)
-	if err := c.createUserInDB(ctx, &user); err != nil {
-		return fmt.Errorf("创建用户失败: %w", err)
-	}
-	if err := c.setUserCache(ctx, &user); err != nil {
-		log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
-	} else {
-		log.Debugf("用户%s缓存成功", user.Name)
-	}
-	log.Debugf("用户创建成功: username=%s", user.Name)
+
 	return nil
 }
 
@@ -969,6 +929,14 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 		metrics.BusinessSuccess.WithLabelValues("consumer", "batch_create", "success").Inc()
 		log.Infof("[批量插入] 成功: %v", usernames)
 		log.Debugf("批量创建成功: %d 条记录", len(users))
+		// 批量写入缓存
+		for i := range users {
+			if err := c.setUserCache(ctx, &users[i]); err != nil {
+				log.Warnf("批量创建后缓存设置失败: username=%s, error=%v", users[i].Name, err)
+			} else {
+				log.Debugf("批量创建后缓存成功: username=%s", users[i].Name)
+			}
+		}
 	}
 	duration := time.Since(start).Seconds()
 	metrics.BusinessProcessingTime.WithLabelValues("consumer", "batch_create").Observe(duration)
@@ -1023,6 +991,14 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 	} else {
 		metrics.BusinessSuccess.WithLabelValues("consumer", "batch_delete", "success").Inc()
 		log.Debugf("批量删除成功: %d 条记录", len(usernames))
+		// 批量删除缓存
+		for _, username := range usernames {
+			if err := c.deleteUserCache(ctx, username); err != nil {
+				log.Warnf("批量删除后缓存删除失败: username=%s, error=%v", username, err)
+			} else {
+				log.Debugf("批量删除后缓存删除成功: username=%s", username)
+			}
+		}
 	}
 	duration := time.Since(start).Seconds()
 	metrics.BusinessProcessingTime.WithLabelValues("consumer", "batch_delete").Observe(duration)
@@ -1052,65 +1028,64 @@ func (c *UserConsumer) Close() error {
 	return nil
 }
 
-
 // batchUpdateToDB 批量更新用户（按 username）
 func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message) {
-    log.Debugf("[Consumer] batchUpdateToDB: msgs=%d", len(msgs))
-    if len(msgs) == 0 {
-        return
-    }
-    start := time.Now()
-    metrics.BusinessOperationsTotal.WithLabelValues("consumer", "batch_update", "kafka").Inc()
-    metrics.BusinessInProgress.WithLabelValues("consumer", "batch_update").Inc()
-    defer metrics.BusinessInProgress.WithLabelValues("consumer", "batch_update").Dec()
-    var opErr error
-    var updatedCount int
-    for _, m := range msgs {
-        var u v1.User
-        if err := json.Unmarshal(m.Value, &u); err != nil {
-            log.Errorf("批量更新: 反序列化失败: %v", err)
-            if c.producer != nil {
-                _ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
-            }
-            continue
-        }
-        if err := validation.ValidateUserFields(u.Name, u.Nickname, u.Password, u.Email, u.Phone); err != nil {
-            log.Errorf("批量更新: %v", err)
-            if c.producer != nil {
-                _ = c.producer.SendToDeadLetterTopic(ctx, m, err.Error())
-            }
-            continue
-        }
-        u.UpdatedAt = time.Now()
-        if err := c.db.WithContext(ctx).Model(&v1.User{}).
-            Where("name = ?", u.Name).
-            Updates(map[string]interface{}{
-                "email":     u.Email,
-                "password":  u.Password,
-                "status":    u.Status,
-                "updatedAt": u.UpdatedAt,
-            }).Error; err != nil {
-            opErr = err
-            log.Errorf("批量更新失败: %v, 用户: %s", err, u.Name)
-            metrics.BusinessFailures.WithLabelValues("consumer", "batch_update", getErrorType(err)).Inc()
-            if c.producer != nil {
-                _ = c.producer.sendToRetryTopic(ctx, m, "BATCH_UPDATE_DB_ERROR: "+err.Error())
-            }
-            continue
-        }
-        updatedCount++
-        metrics.BusinessSuccess.WithLabelValues("consumer", "batch_update", "success").Inc()
-        _ = c.setUserCache(ctx, &u)
-    }
-    duration := time.Since(start).Seconds()
-    metrics.BusinessProcessingTime.WithLabelValues("consumer", "batch_update").Observe(duration)
-    metrics.BusinessThroughputStats.WithLabelValues("consumer", "batch_update").Observe(duration)
-    if opErr != nil {
-        errorRate := 1.0
-        metrics.BusinessErrorRate.WithLabelValues("consumer", "batch_update").Set(errorRate)
-    } else {
-        errorRate := 0.0
-        metrics.BusinessErrorRate.WithLabelValues("consumer", "batch_update").Set(errorRate)
-    }
-    log.Infof("[批量更新] 成功: %d 条记录", updatedCount)
+	log.Debugf("[Consumer] batchUpdateToDB: msgs=%d", len(msgs))
+	if len(msgs) == 0 {
+		return
+	}
+	start := time.Now()
+	metrics.BusinessOperationsTotal.WithLabelValues("consumer", "batch_update", "kafka").Inc()
+	metrics.BusinessInProgress.WithLabelValues("consumer", "batch_update").Inc()
+	defer metrics.BusinessInProgress.WithLabelValues("consumer", "batch_update").Dec()
+	var opErr error
+	var updatedCount int
+	for _, m := range msgs {
+		var u v1.User
+		if err := json.Unmarshal(m.Value, &u); err != nil {
+			log.Errorf("批量更新: 反序列化失败: %v", err)
+			if c.producer != nil {
+				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
+			}
+			continue
+		}
+		if err := validation.ValidateUserFields(u.Name, u.Nickname, u.Password, u.Email, u.Phone); err != nil {
+			log.Errorf("批量更新: %v", err)
+			if c.producer != nil {
+				_ = c.producer.SendToDeadLetterTopic(ctx, m, err.Error())
+			}
+			continue
+		}
+		u.UpdatedAt = time.Now()
+		if err := c.db.WithContext(ctx).Model(&v1.User{}).
+			Where("name = ?", u.Name).
+			Updates(map[string]interface{}{
+				"email":     u.Email,
+				"password":  u.Password,
+				"status":    u.Status,
+				"updatedAt": u.UpdatedAt,
+			}).Error; err != nil {
+			opErr = err
+			log.Errorf("批量更新失败: %v, 用户: %s", err, u.Name)
+			metrics.BusinessFailures.WithLabelValues("consumer", "batch_update", getErrorType(err)).Inc()
+			if c.producer != nil {
+				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_UPDATE_DB_ERROR: "+err.Error())
+			}
+			continue
+		}
+		updatedCount++
+		metrics.BusinessSuccess.WithLabelValues("consumer", "batch_update", "success").Inc()
+		_ = c.setUserCache(ctx, &u)
+	}
+	duration := time.Since(start).Seconds()
+	metrics.BusinessProcessingTime.WithLabelValues("consumer", "batch_update").Observe(duration)
+	metrics.BusinessThroughputStats.WithLabelValues("consumer", "batch_update").Observe(duration)
+	if opErr != nil {
+		errorRate := 1.0
+		metrics.BusinessErrorRate.WithLabelValues("consumer", "batch_update").Set(errorRate)
+	} else {
+		errorRate := 0.0
+		metrics.BusinessErrorRate.WithLabelValues("consumer", "batch_update").Set(errorRate)
+	}
+	log.Infof("[批量更新] 成功: %d 条记录", updatedCount)
 }

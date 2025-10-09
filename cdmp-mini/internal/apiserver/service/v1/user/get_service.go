@@ -21,7 +21,7 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 
 	cacheKey := u.generateUserCacheKey(username)
 	// 先尝试无锁查询缓存（大部分请求应该在这里返回）
-	user, found, err := u.tryGetFromCache(ctx, cacheKey)
+	user, found, err := u.tryGetFromCache(ctx, username)
 	if err != nil {
 		// 缓存查询错误，记录但继续流程
 		log.Errorf("缓存查询异常，继续流程", "error", err.Error(), "username", username)
@@ -35,7 +35,7 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 
 	// 缓存未命中，使用singleflight保护数据库查询
 	result, err, shared := u.group.Do(cacheKey, func() (interface{}, error) {
-		return u.getUserFromDBAndSetCache(ctx, username, cacheKey)
+		return u.getUserFromDBAndSetCache(ctx, username)
 	})
 	if shared {
 		log.Debugf("数据库查询被合并，共享结果", "username", username)
@@ -53,7 +53,7 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 }
 
 // 专门处理缓存查询，不包含降级逻辑
-func (u *UserService) tryGetFromCache(ctx context.Context, cacheKey string) (*v1.User, bool, error) {
+func (u *UserService) tryGetFromCache(ctx context.Context, username string) (*v1.User, bool, error) {
 	redisTimeout := u.Options.RedisOptions.Timeout
 	if redisTimeout == 0 {
 		redisTimeout = 5 * u.Options.RedisOptions.Timeout
@@ -62,6 +62,7 @@ func (u *UserService) tryGetFromCache(ctx context.Context, cacheKey string) (*v1
 	redisCtx, cancel := context.WithTimeout(ctx, redisTimeout)
 	defer cancel()
 
+	cacheKey := u.generateUserCacheKey(username)
 	cachedUser, isCached, err := u.getFromCache(redisCtx, cacheKey)
 	if err != nil {
 		u.recordCacheError(err, "get_from_cache")

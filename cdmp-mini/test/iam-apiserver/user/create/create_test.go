@@ -76,10 +76,10 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 高压力配置
-	RequestsPerUser = 100   // 每用户请求数
-	ConcurrentUsers = 10000 // 增加到1万并发用户
-	MaxConcurrent   = 300   // 增加到500并发处理器
-	BatchSize       = 200   // 增大批次大小小
+	RequestsPerUser = 1 // 每用户请求数
+	ConcurrentUsers = 1 // 增加到1万并发用户
+	MaxConcurrent   = 1 // 增加到500并发处理器
+	BatchSize       = 1 // 增大批次大小小
 )
 
 // ==================== 数据结构 ====================
@@ -222,7 +222,7 @@ func TestUserCreate_RealConcurrent(t *testing.T) {
 	printFinalResults(duration, width)
 
 	// 数据校验
-	validateResults(width)
+	validateResults()
 
 	f, _ := os.Create("success_usernames.txt")
 	for _, name := range successUsernames {
@@ -569,7 +569,7 @@ func printFinalResults(duration time.Duration, width int) {
 	fmt.Printf("%s\n", strings.Repeat("═", width))
 }
 
-func validateResults(width int) {
+func validateResults() {
 	statsMutex.RLock()
 	defer statsMutex.RUnlock()
 

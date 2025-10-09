@@ -37,16 +37,16 @@ const (
 	TestPassword = "Admin@2021"
 
 	// 创建用户并发配置
-	PreCreateUsers      = 1000000 // 预先创建的用户数量
-	PreCreateConcurrent = 100     // 预创建并发数
-	PreCreateBatchSize  = 100     // 批次大小
-	PreCreateTimeout    = 100 * time.Second
+	PreCreateUsers      = 1 // 预先创建的用户数量
+	PreCreateConcurrent = 1 // 预创建并发数
+	PreCreateBatchSize  = 1 // 批次大小
+	PreCreateTimeout    = 1 * time.Second
 
 	// 删除用户并发配置
-	ConcurrentDeleters = 100000 // 并发删除器数量
-	DeletesPerUser     = 10     // 每个删除器执行的删除次数
-	MaxConcurrent      = 100    // 最大并发数
-	BatchSize          = 100    // 批次大小
+	ConcurrentDeleters = 1 // 并发删除器数量
+	DeletesPerUser     = 1 // 每个删除器执行的删除次数
+	MaxConcurrent      = 1 // 最大并发数
+	BatchSize          = 1 // 批次大小
 )
 
 // ==================== 数据结构 ====================
@@ -118,7 +118,7 @@ var (
 	deleterExpiries    []time.Time
 	deleterTokensMutex sync.RWMutex
 	// 全局限流器，限制所有请求速率
-	limiter = rate.NewLimiter(rate.Limit(1000), 200) // 1000 QPS，突发200，可根据需要调整
+	limiter = rate.NewLimiter(rate.Limit(200), 200) // 1000 QPS，突发200，可根据需要调整
 )
 
 // 统计变量

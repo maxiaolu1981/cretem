@@ -1,4 +1,3 @@
-
 // 提供增强型错误处理功能，支持错误消息包装、堆栈跟踪记录和错误码关联
 //
 // 该包在标准库 error 接口的基础上扩展了以下核心能力：
@@ -42,6 +41,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -493,4 +493,59 @@ func HTTPStatusMessageFunc(e error, c *gin.Context) string {
 
 	return errMsg
 }
-//todo
+
+// isUnrecoverableError 判断是否为不可恢复的错误（与 shouldRetry 保持一致）
+func isUnrecoverableError(errStr string) bool {
+	unrecoverableErrors := []string{
+		"Duplicate entry", "1062", "23000", "duplicate key value", "23505",
+		"用户已存在", "UserAlreadyExist",
+		"UNMARSHAL_ERROR", "invalid json", "unknown operation", "poison message",
+		"definer", "DEFINER", "1449", "permission denied",
+		"does not exist", "not found", "record not found", "ErrRecordNotFound",
+		"constraint", "foreign key", "1451", "1452", "syntax error",
+		"Data too long for column", "1406",
+		"ErrInvalidData", "ErrInvalidTransaction", "ErrNotImplemented", "ErrMissingWhereClause", "ErrPrimaryKeyRequired", "ErrModelValueRequired", "ErrUnsupportedRelation", "ErrRegistered", "ErrInvalidField", "ErrEmptySlice", "ErrDryRunModeUnsupported",
+		"invalid format", "validation failed",
+	}
+	for _, unrecoverableErr := range unrecoverableErrors {
+		if strings.Contains(errStr, unrecoverableErr) {
+			return true
+		}
+	}
+	return false
+}
+
+// isRecoverableError 判断是否为可恢复的错误（与 shouldRetry 保持一致）
+func isRecoverableError(errStr string) bool {
+	recoverableErrors := []string{
+		"timeout", "deadline exceeded", "connection refused", "network error",
+		"connection reset", "broken pipe", "no route to host",
+		"database is closed", "deadlock", "1213", "40001",
+		"temporary", "busy", "lock", "try again",
+		"resource temporarily unavailable", "too many connections",
+		"ErrInvalidTransaction", "ErrDryRunModeUnsupported",
+	}
+	for _, recoverableErr := range recoverableErrors {
+		if strings.Contains(errStr, recoverableErr) {
+			return true
+		}
+	}
+	return false
+}
+
+// Temporary 实现标准临时错误接口，便于统一重试和监控判断
+// 结合 shouldRetry 逻辑，优先字符串判定，其次业务码区间
+func (e *withCode) Temporary() bool {
+	errStr := ""
+	if e != nil && e.err != nil {
+		errStr = e.err.Error()
+	}
+	if isUnrecoverableError(errStr) {
+		return false
+	}
+	if isRecoverableError(errStr) {
+		return true
+	}
+	// 兜底：5xx 业务码为临时错误
+	return e.code >= 500 && e.code < 600
+}

@@ -28,29 +28,27 @@ type RedisOptions struct {
 }
 
 func NewRedisOptions() *RedisOptions {
-	return &RedisOptions{
-		Host: "192.168.10.14", // 单机模式备用
-		Port: 6379,            // 单机模式备用
-		Addrs: []string{
-			"192.168.10.14:6379",
-			"192.168.10.14:6380",
-			"192.168.10.14:6381",
-		},
-		Username:              "",
-		Password:              "",
-		Database:              0,
-		MasterName:            "",
-		MaxIdle:               50,              //幅降低空闲连接数
-		MaxActive:             200,             // 最大活跃连接数
-		Timeout:               5 * time.Second, // 连接超时5秒
-		EnableCluster:         true,            // 启用集群模式
-		UseSSL:                false,
-		SSLInsecureSkipVerify: false,
-		IdleTimeout:           120 * time.Second,  // 空闲连接超时120秒
-		MaxConnLifetime:       1800 * time.Second, // 连接最大生命周期
-		Wait:                  true,               // 连接池耗尽时等待
-		PoolSize:              10,                 // 每个节点的连接池大小
-	}
+    return &RedisOptions{
+        Addrs: []string{
+            "192.168.10.14:6379",
+            "192.168.10.14:6380", 
+            "192.168.10.14:6381",
+        },
+        Username:              "",
+        Password:              "", 
+        Database:              0,
+        MasterName:            "",
+        MaxIdle:               50,                  // 空闲连接数
+        MaxActive:             200,                 // 最大活跃连接数
+        Timeout:               5 * time.Second,     // 连接超时
+        EnableCluster:         true,                // 集群模式
+        UseSSL:                false,
+        SSLInsecureSkipVerify: false,
+        IdleTimeout:           120 * time.Second,   // 空闲超时2分钟
+        MaxConnLifetime:       1800 * time.Second,  // 连接生命周期30分钟
+        Wait:                  true,                // 池耗尽时等待
+        PoolSize:              200,                 // 🔥 与MaxActive一致
+    }
 }
 
 // Complete 补全Redis配置选项，处理默认值和依赖关系

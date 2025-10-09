@@ -508,7 +508,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		createConsumers[i].SetProducer(userProducer)
 		createConsumers[i].SetInstanceID(i)
 		if g.options.ServerRunOptions.EnableRateLimiter {
-			go createConsumers[i].startLagMonitor(context.Background())
+		//	go createConsumers[i].startLagMonitor(context.Background())
 		}
 
 		updateConsumers[i] = NewUserConsumer(kafkaOpts, UserUpdateTopic,
@@ -516,7 +516,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		updateConsumers[i].SetProducer(userProducer)
 		updateConsumers[i].SetInstanceID(i)
 		if g.options.ServerRunOptions.EnableRateLimiter {
-			go updateConsumers[i].startLagMonitor(context.Background())
+		//	go updateConsumers[i].startLagMonitor(context.Background())
 		}
 
 		deleteConsumers[i] = NewUserConsumer(kafkaOpts, UserDeleteTopic,
@@ -524,7 +524,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		deleteConsumers[i].SetProducer(userProducer)
 		deleteConsumers[i].SetInstanceID(i)
 		if g.options.ServerRunOptions.EnableRateLimiter {
-			go deleteConsumers[i].startLagMonitor(context.Background())
+		//	go deleteConsumers[i].startLagMonitor(context.Background())
 		}
 	}
 

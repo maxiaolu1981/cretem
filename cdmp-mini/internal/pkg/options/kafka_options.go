@@ -104,7 +104,7 @@ func NewKafkaOptions() *KafkaOptions {
 		BaseRetryDelay:         5 * time.Second,
 		MaxRetryDelay:          2 * time.Minute,
 		AutoCreateTopic:        true,
-		DesiredPartitions:      195, // 期望的分区数
+		DesiredPartitions:      96, //CPU 核数的 2~4 倍设置（如 32、48、64）
 		AutoExpandPartitions:   true,
 		ProducerMaxInFlight:    5000,
 		LagScaleThreshold:      10000,            // 默认滞后阈值
