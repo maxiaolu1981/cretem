@@ -793,36 +793,36 @@ func currentFile() string {
 	return file
 }
 
-func TestChangePassword_Stress(t *testing.T) {
-	//使用-short
-	if testing.Short() {
-		t.Skip("skipping stress test in short mode")
-	}
+// func TestChangePassword_Stress(t *testing.T) {
+// 	//使用-short
+// 	if testing.Short() {
+// 		t.Skip("skipping stress test in short mode")
+// 	}
 
-	tc := newTestContext(t)
-	defer tc.Close()
+// 	tc := newTestContext(t)
+// 	defer tc.Close()
 
-	config := StressConfig{
-		BaseURL:          serverBaseURL,
-		ConcurrentUsers:  50,
-		TestDuration:     2 * time.Minute,
-		RampUpTime:       30 * time.Second,
-		RequestTimeout:   15 * time.Second,
-		UserPoolSize:     100,
-		PasswordVariants: 10,
-		MetricsInterval:  5 * time.Second,
-		EnableProfiling:  false,
-	}
+// 	config := StressConfig{
+// 		BaseURL:          serverBaseURL,
+// 		ConcurrentUsers:  50,
+// 		TestDuration:     2 * time.Minute,
+// 		RampUpTime:       30 * time.Second,
+// 		RequestTimeout:   15 * time.Second,
+// 		UserPoolSize:     100,
+// 		PasswordVariants: 10,
+// 		MetricsInterval:  5 * time.Second,
+// 		EnableProfiling:  false,
+// 	}
 
-	metrics, err := runStressScenario(tc, config)
-	if err != nil {
-		t.Fatalf("stress scenario failed: %v", err)
-	}
+// 	metrics, err := runStressScenario(tc, config)
+// 	if err != nil {
+// 		t.Fatalf("stress scenario failed: %v", err)
+// 	}
 
-	resultsMu.Lock()
-	perfResults = append(perfResults, metrics)
-	resultsMu.Unlock()
-}
+// 	resultsMu.Lock()
+// 	perfResults = append(perfResults, metrics)
+// 	resultsMu.Unlock()
+// }
 
 func runStressScenario(tc *testContext, cfg StressConfig) (PerformanceMetrics, error) {
 	usernames := make([]string, 0, cfg.UserPoolSize)

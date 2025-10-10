@@ -9,7 +9,7 @@ import (
 
 	policy "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/policy"
 	secret "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/secret"
-	user "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/user"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/user"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
@@ -68,7 +68,7 @@ func NewService(store interfaces.Factory,
 	redis *storage.RedisCluster,
 	options *options.Options,
 	producer producer.MessageProducer) (ServiceManager, error) {
-	
+
 	s := &ServiceSrv{
 		Store:    store,
 		Redis:    redis,

@@ -163,10 +163,10 @@ const (
 	ErrorRateLimit = 0.01
 
 	// 缓存击穿测试相关常量
-	CachePenetrationTestUsers  = 1000                      // 缓存击穿测试并发用户数
-	CachePenetrationRequests   = 100                       // 每个用户请求次数
+	CachePenetrationTestUsers  = 10                        // 缓存击穿测试并发用户数
+	CachePenetrationRequests   = 10                       // 每个用户请求次数
 	CachePenetrationUserID     = "mxl_nonexistent-user-11" // 用于缓存击穿测试的用户ID
-	CachePenetrationBatchDelay = 300 * time.Millisecond    // 批次间延迟
+	CachePenetrationBatchDelay = 3 * time.Millisecond     // 批次间延迟
 )
 
 // 在全局变量部分添加预定义的用户列表

@@ -79,11 +79,12 @@ import (
 )
 
 type ServerRunOptions struct {
-	Mode            string   `json:"mode"        mapstructure:"mode"`
-	Healthz         bool     `json:"healthz"     mapstructure:"healthz"`
-	Middlewares     []string `json:"middlewares" mapstructure:"middlewares"`
-	EnableProfiling bool     `json:"enableProfiling" mapstructure:"enableProfiling"`
-	EnableMetrics   bool     `json:"enableMetrics" mapstructure:"enableMetrics"`
+	Mode             string   `json:"mode"        mapstructure:"mode"`
+	Healthz          bool     `json:"healthz"     mapstructure:"healthz"`
+	Middlewares      []string `json:"middlewares" mapstructure:"middlewares"`
+	EnableProfiling  bool     `json:"enableProfiling" mapstructure:"enableProfiling"`
+	EnableMetrics    bool     `json:"enableMetrics" mapstructure:"enableMetrics"`
+	FastDebugStartup bool     `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
 	// 新增：Cookie相关配置
 	CookieDomain   string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
 	CookieSecure   bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
@@ -106,6 +107,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		Middlewares:       []string{},
 		EnableProfiling:   true,
 		EnableMetrics:     true,
+		FastDebugStartup:  false,
 		CookieDomain:      "",
 		CookieSecure:      false,
 		CtxTimeout:        50 * time.Second,
@@ -293,4 +295,5 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 		"指定限流时间")
 	fs.StringVar(&s.AdminToken, "server.admin-token", s.AdminToken,
 		"管理API的简单访问令牌（默认为空，仅允许本地访问）")
+	fs.BoolVar(&s.FastDebugStartup, "server.fast-debug-startup", s.FastDebugStartup, "调试模式下是否跳过耗时的依赖等待，加速本地调试启动")
 }

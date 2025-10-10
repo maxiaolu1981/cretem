@@ -13,6 +13,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator/jwtvalidator"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/auth"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -95,7 +96,15 @@ func (u *UserController) ChangePassword(c *gin.Context) {
 		}
 
 		user.Password, _ = auth.Encrypt(r.NewPassword)
-		if err := u.srv.Users().ChangePassword(c, user, u.options); err != nil {
+		token := c.GetHeader("Authorization")
+		claims, err := jwtvalidator.ValidateToken(token, u.options.JwtOptions.Key)
+		if err != nil {
+			core.WriteResponse(c, err, nil)
+			auditLog("fail", err.Error())
+			return err
+		}
+
+		if err := u.srv.Users().ChangePassword(c.Request.Context(), user, claims, u.options); err != nil {
 			core.WriteResponse(c, err, nil)
 			auditLog("fail", err.Error())
 			return err

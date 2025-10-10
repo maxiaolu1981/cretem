@@ -19,6 +19,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
+	authkeys "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/auth/keys"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 
 	middleware "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
@@ -163,6 +164,7 @@ func (g *GenericAPIServer) newJWTAuth() (middleware.AuthStrategy, error) {
 		Authenticator: func(c *gin.Context) (interface{}, error) {
 			return g.authenticate(c)
 		},
+		//生成访问令牌
 		PayloadFunc: func(data interface{}) jwt.MapClaims {
 			return g.generateAccessTokenClaims(data)
 		},
@@ -191,9 +193,10 @@ func (g *GenericAPIServer) identityHandler(c *gin.Context) interface{} {
 				if originalUser.Name != "" && originalUser.InstanceID != "" {
 					// 检查黑名单（原有逻辑保留）
 					claims := jwt.ExtractClaims(c)
+					userID := getUserIDString(claims["user_id"])
 					jti, ok := claims["jti"].(string)
 					if ok && jti != "" {
-						isBlacklisted, err := isTokenInBlacklist(g, c, jti)
+						isBlacklisted, err := isTokenInBlacklist(g, c, userID, jti)
 						if err != nil {
 							log.Errorf("IdentityHandler: 检查黑名单失败，error=%v", err)
 							return nil
@@ -213,6 +216,7 @@ func (g *GenericAPIServer) identityHandler(c *gin.Context) interface{} {
 		}
 
 		claims := jwt.ExtractClaims(c)
+		userID := getUserIDString(claims["user_id"])
 		//优先从 jwt.IdentityKey 提取（与 payload 对应）
 		username, ok := claims[jwt.IdentityKey].(string)
 
@@ -230,7 +234,7 @@ func (g *GenericAPIServer) identityHandler(c *gin.Context) interface{} {
 		}
 
 		if ok && jti != "" {
-			isBlacklisted, err := isTokenInBlacklist(g, c, jti)
+			isBlacklisted, err := isTokenInBlacklist(g, c, userID, jti)
 			if err != nil {
 				return errors.New("安全服务不可用,拒绝服务")
 			}
@@ -407,66 +411,52 @@ func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomC
 	defer cancel()
 
 	userID := claims.UserID
-	userSessionsKey := redisUserSessionsPrefix + userID // 这个已经是 "usersessions:user123"
+	userSessionsKey := authkeys.UserSessionsKey(userID)
 	jti := claims.ID
 	expTimestamp := claims.ExpiresAt.Time
+	refreshPrefix := authkeys.RefreshTokenPrefix(userID)
+	blacklistPrefix := authkeys.BlacklistPrefix(g.options.JwtOptions.Blacklist_key_prefix, userID)
 
 	// Lua 脚本实现原子操作
 	luaScript := `
-    -- KEYS[1]: 通用前缀
-    -- KEYS[2]: 用户会话键前缀（usersessions:）
-    -- KEYS[3]: refresh token 前缀（refreshtoken:）
-    -- KEYS[4]: 黑名单前缀（blacklist:）
-    -- ARGV[1]: userID
-    -- ARGV[2]: jti
-    -- ARGV[3]: 过期时间戳
-    -- ARGV[4]: 当前时间戳
-    
-    local genericPrefix = KEYS[1]
-    local userSessionsPrefix = KEYS[2]
-    local refreshTokenPrefix = KEYS[3]
-    local blacklistPrefix = KEYS[4]
-    local userID = ARGV[1]
-    local jti = ARGV[2]
-    local expireTimestamp = tonumber(ARGV[3])
-    local currentTime = tonumber(ARGV[4])
-    
-    -- 构建完整的键名
-    local userSessionsKey = genericPrefix .. userSessionsPrefix .. userID
-    local blacklistKey = genericPrefix .. blacklistPrefix .. jti
-    
-    -- 1. 获取用户的所有Refresh Token并删除会话集合
-    local tokens = redis.call('SMEMBERS', userSessionsKey)
-    redis.call('DEL', userSessionsKey)
-    
-    -- 2. 使所有Refresh Token失效（需要添加完整前缀）
-    for _, token in ipairs(tokens) do
-        local rtKey = genericPrefix .. refreshTokenPrefix .. token
-        redis.call('DEL', rtKey)
-    end
-    
-    -- 3. 将当前Access Token加入黑名单
-    local ttl = expireTimestamp - currentTime + 3600  -- 过期时间+1小时
-    
-    if ttl > 0 then
-        redis.call('SETEX', blacklistKey, ttl, '1')
-    else
-        redis.call('SETEX', blacklistKey, 3600, '1')  -- 默认1小时
-    end
-    
-    return #tokens
-    `
+	-- KEYS[1]: 用户会话集合的完整键名
+	-- ARGV[1]: Refresh Token键前缀（含哈希标签，以冒号结尾）
+	-- ARGV[2]: 黑名单键前缀（含哈希标签，以冒号结尾）
+	-- ARGV[3]: jti
+	-- ARGV[4]: 过期时间戳
+	-- ARGV[5]: 当前时间戳
 
-	// 执行Lua脚本
+	local userSessionsKey = KEYS[1]
+	local refreshTokenPrefix = ARGV[1]
+	local blacklistPrefix = ARGV[2]
+	local jti = ARGV[3]
+	local expireTimestamp = tonumber(ARGV[4])
+	local currentTime = tonumber(ARGV[5])
+
+	local tokens = redis.call('SMEMBERS', userSessionsKey)
+	redis.call('DEL', userSessionsKey)
+
+	for _, token in ipairs(tokens) do
+		redis.call('DEL', refreshTokenPrefix .. token)
+	end
+
+	local blacklistKey = blacklistPrefix .. jti
+	local ttl = expireTimestamp - currentTime + 3600
+
+	if ttl > 0 then
+		redis.call('SETEX', blacklistKey, ttl, '1')
+	else
+		redis.call('SETEX', blacklistKey, 3600, '1')
+	end
+
+	return #tokens
+	`
+
 	result, err := g.redis.GetClient().Eval(ctx, luaScript,
-		[]string{
-			redisGenericapiserverPrefix,               // "genericapiserver:"
-			redisUserSessionsPrefix,                   // "usersessions:"
-			redisRefreshTokenPrefix,                   // "refreshtoken:"
-			g.options.JwtOptions.Blacklist_key_prefix, // "blacklist:"
-		},
+		[]string{userSessionsKey},
 		[]interface{}{
-			userID,
+			refreshPrefix,
+			blacklistPrefix,
 			jti,
 			expTimestamp.Unix(),
 			time.Now().Unix(),
@@ -489,7 +479,7 @@ func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomC
 
 	log.Debugf("用户登出清理完成: user_id=%s, 清理了%d个refresh token, jti=%s",
 		userID, tokenCount, jti)
-	log.Debugf("登出-用户会话Key: %s", redisGenericapiserverPrefix+userSessionsKey)
+	log.Debugf("登出-用户会话Key: %s", userSessionsKey)
 }
 
 // clearAuthCookies 清理客户端Cookie
@@ -773,20 +763,32 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 		return
 	}
 
-	//验证Refresh Token有效性
-	rtKey := redisRefreshTokenPrefix + r.RefreshToken
-	userid, err := g.redis.GetKey(c, rtKey)
+	// 解析刷新令牌获取用户信息
+	rtClaims, err := parseTokenWithoutValidation(r.RefreshToken)
 	if err != nil {
 		core.WriteResponse(c, errors.WithCode(code.ErrTokenInvalid, "刷新令牌无效或已过期"), nil)
 		return
 	}
-	if userid == "" {
-		log.Warn("刷新令牌授权已经过期,请重新登录")
+	rtUserID := getUserIDString(rtClaims["user_id"])
+	if rtUserID == "" {
+		core.WriteResponse(c, errors.WithCode(code.ErrTokenInvalid, "刷新令牌缺少用户标识"), nil)
+		return
+	}
+	refreshTokenKey := authkeys.RefreshTokenKey(rtUserID, r.RefreshToken)
+	storedUserID, err := g.redis.GetKey(c, refreshTokenKey)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			core.WriteResponse(c, errors.WithCode(code.ErrExpired, "刷新令牌已经过期,请重新登录"), nil)
+			return
+		}
+		core.WriteResponse(c, errors.WithCode(code.ErrTokenInvalid, "刷新令牌无效或已过期"), nil)
+		return
+	}
+	if storedUserID == "" {
 		core.WriteResponse(c, errors.WithCode(code.ErrExpired, "刷新令牌已经过期,请重新登录"), nil)
 		return
 	}
-	// 验证Refresh Token是否在户会话集合中
-	userSessionsKey := redisUserSessionsPrefix + userid
+	userSessionsKey := authkeys.UserSessionsKey(rtUserID)
 	isMember, err := g.redis.IsMemberOfSet(c, userSessionsKey, r.RefreshToken)
 	if err != nil {
 		log.Errorf("验证Refresh Token会话失败: %v", err)
@@ -799,8 +801,8 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 	}
 
 	//验证用户一致性
-	claimsUserID, ok := claims["user_id"].(string)
-	if !ok || claimsUserID != userid {
+	claimsUserID := getUserIDString(claims["user_id"])
+	if claimsUserID == "" || claimsUserID != rtUserID {
 		core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "用户身份不匹配"), nil)
 		return
 	}
@@ -1084,9 +1086,8 @@ func getRequestID(c *gin.Context) string {
 	return c.GetHeader("X-Request-ID")
 }
 
-func isTokenInBlacklist(g *GenericAPIServer, c *gin.Context, jti string) (bool, error) {
-
-	key := g.options.JwtOptions.Blacklist_key_prefix + jti
+func isTokenInBlacklist(g *GenericAPIServer, c *gin.Context, userID, jti string) (bool, error) {
+	key := authkeys.BlacklistKey(g.options.JwtOptions.Blacklist_key_prefix, userID, jti)
 	exists, err := g.redis.Exists(c, key)
 	if err != nil {
 		return false, errors.WithCode(code.ErrDatabase, "redis:查询令牌黑名单失败: %v", err)
@@ -1096,7 +1097,7 @@ func isTokenInBlacklist(g *GenericAPIServer, c *gin.Context, jti string) (bool, 
 
 func (g *GenericAPIServer) getLoginFailCount(ctx *gin.Context, username string) (int, error) {
 
-	key := redisLoginFailPrefix + username
+	key := authkeys.LoginFailKey(username)
 	val, err := g.redis.GetKey(ctx, key)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
@@ -1128,7 +1129,7 @@ func (g *GenericAPIServer) restLoginFailCount(username string) error {
 		log.Warnf("Redis不可用,无法重置登录失败次数:username:%s", username)
 		return nil
 	}
-	key := redisLoginFailPrefix + username
+	key := authkeys.LoginFailKey(username)
 	if _, err := g.redis.DeleteKey(context.TODO(), key); err != nil {
 		return errors.New("重置登录次数失败")
 	}
@@ -1376,6 +1377,28 @@ func getUsernameFromClaims(claims map[string]interface{}) (string, bool) {
 	return "", false
 }
 
+func getUserIDString(value interface{}) string {
+	if value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatInt(int64(v), 10)
+	case int:
+		return strconv.Itoa(v)
+	case int32:
+		return strconv.Itoa(int(v))
+	case int64:
+		return strconv.FormatInt(v, 10)
+	case json.Number:
+		return v.String()
+	default:
+		return fmt.Sprintf("%v", v)
+	}
+}
+
 func (g *GenericAPIServer) validateSameSession(accessToken, refreshToken string) error {
 	// 解析AT
 	atClaims, err := parseTokenWithoutValidation(accessToken)
@@ -1471,20 +1494,13 @@ func (g *GenericAPIServer) storeCompleteAuthSession(userID, refreshToken string)
 
 	//atExpire := g.options.JwtOptions.Timeout
 	rtExpire := g.options.JwtOptions.MaxRefresh
+	refreshTokenKey := authkeys.RefreshTokenKey(userID, refreshToken)
+	userSessionsKey := authkeys.UserSessionsKey(userID)
 
 	_, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		// 1. AT Session存储
-		//pipe.Set(ctx, redisGenericapiserverPrefix+redisAtSessionIDPrefix+userID, sessionID, atExpire)
-
-		// 2. RT Session存储
-		//pipe.Set(ctx, redisGenericapiserverPrefix+redisRtSessionIDPrefix+userID, sessionID, rtExpire)
-
-		// 3. Refresh Token映射存储
-		pipe.Set(ctx, redisGenericapiserverPrefix+redisRefreshTokenPrefix+refreshToken, userID, rtExpire)
-
-		// 4. 用户会话集合添加
-		pipe.SAdd(ctx, redisGenericapiserverPrefix+redisUserSessionsPrefix+userID, refreshToken)
-		pipe.Expire(ctx, redisGenericapiserverPrefix+redisUserSessionsPrefix+userID, rtExpire)
+		pipe.Set(ctx, refreshTokenKey, userID, rtExpire)
+		pipe.SAdd(ctx, userSessionsKey, refreshToken)
+		pipe.Expire(ctx, userSessionsKey, rtExpire)
 
 		return nil
 	})
@@ -1496,21 +1512,14 @@ func (g *GenericAPIServer) storeCompleteAuthSession(userID, refreshToken string)
 func (g *GenericAPIServer) rollbackAuthSession(userID, refreshToken string) {
 	ctx := context.Background()
 	client := g.redis.GetClient()
+	refreshTokenKey := authkeys.RefreshTokenKey(userID, refreshToken)
+	userSessionsKey := authkeys.UserSessionsKey(userID)
 
 	log.Warnf("执行登录会话回滚: user_id=%s", userID)
 
 	_, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		// 1. 删除新创建的AT Session（无论原来是否存在）
-		//pipe.Del(ctx, redisAtSessionIDPrefix+userID)
-
-		// 2. 删除新创建的RT Session（无论原来是否存在）
-		//pipe.Del(ctx, redisRtSessionIDPrefix+userID)
-
-		// 3. 删除新创建的Refresh Token映射
-		pipe.Del(ctx, redisRefreshTokenPrefix+refreshToken)
-
-		// 4. 从用户会话集合中移除新Token
-		pipe.SRem(ctx, redisUserSessionsPrefix+userID, refreshToken)
+		pipe.Del(ctx, refreshTokenKey)
+		pipe.SRem(ctx, userSessionsKey, refreshToken)
 
 		return nil
 	})

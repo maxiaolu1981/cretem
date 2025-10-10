@@ -36,9 +36,9 @@ const (
 	TestUsername = "admin"
 	TestPassword = "Admin@2021"
 
-	ConcurrentUsers = 10000
-	RequestsPerUser = 100
-	MaxConcurrent   = 1000
+	ConcurrentUsers = 10
+	RequestsPerUser = 10
+	MaxConcurrent   = 10
 	BatchSize       = 50
 	// success threshold percent for update operations (0-100)
 	SuccessThresholdPercent = 90

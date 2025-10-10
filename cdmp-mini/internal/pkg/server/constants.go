@@ -1,13 +1,5 @@
 package server
 
-// Redis键名常量（统一前缀避免冲突）
-const (
-	redisGenericapiserverPrefix = "genericapiserver:"
-	redisRefreshTokenPrefix     = "auth:refresh_token:"
-	redisLoginFailPrefix        = "auth:login_fail:"
-	redisUserSessionsPrefix     = "auth:user_sessions:"
-)
-
 // 登录失败限制配置
 const (
 	maxLoginFails = 5

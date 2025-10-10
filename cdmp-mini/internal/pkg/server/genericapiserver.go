@@ -28,6 +28,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/ratelimiter"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
@@ -45,7 +46,7 @@ type GenericAPIServer struct {
 	redis          *storage.RedisCluster
 	redisCancel    context.CancelFunc
 	initOnce       sync.Once
-	producer       *UserProducer
+	producer       producer.MessageProducer
 	consumerCtx    context.Context
 	consumerCancel context.CancelFunc
 	audit          *audit.Manager
@@ -54,6 +55,13 @@ type GenericAPIServer struct {
 
 func (g *GenericAPIServer) isDebugMode() bool {
 	return strings.EqualFold(g.options.ServerRunOptions.Mode, gin.DebugMode)
+}
+
+func (g *GenericAPIServer) fastDebugStartupEnabled() bool {
+	if g == nil || g.options == nil || g.options.ServerRunOptions == nil {
+		return false
+	}
+	return g.isDebugMode() && g.options.ServerRunOptions.FastDebugStartup
 }
 
 func (g *GenericAPIServer) shutdownAudit() {
@@ -269,10 +277,25 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		}
 	}
 
-	if err := waitForMySQLReady(dbIns, 30*time.Second); err != nil {
-		log.Error("mysql服务器未就绪")
-		g.auditServiceEvent("mysql", "startup", "fail", err)
-		return nil, err
+	mysqlWait := 30 * time.Second
+	if g.fastDebugStartupEnabled() {
+		mysqlWait = 5 * time.Second
+	}
+	if err := waitForMySQLReady(dbIns, mysqlWait); err != nil {
+		if !g.fastDebugStartupEnabled() {
+			log.Error("mysql服务器未就绪")
+			g.auditServiceEvent("mysql", "startup", "fail", err)
+			return nil, err
+		}
+		log.Warnf("调试快速启动: MySQL 未在 %v 内就绪，将降级继续启动（err=%v）", mysqlWait, err)
+		g.auditServiceEvent("mysql", "startup", "degraded", err)
+		go func() {
+			if followErr := waitForMySQLReady(dbIns, 30*time.Second); followErr != nil {
+				log.Warnf("调试快速启动: 后台等待 MySQL 仍失败: %v", followErr)
+			} else {
+				log.Infof("调试快速启动: MySQL 已在后台就绪")
+			}
+		}()
 	}
 
 	//初始化redis
@@ -301,11 +324,18 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	g.auditServiceEvent("kafka", "startup", "start", nil)
 	if err := g.initKafkaComponents(dbIns); err != nil {
 		log.Error("kafka服务启动失败")
-		g.auditServiceEvent("kafka", "startup", "fail", err)
-		return nil, err
+		if !g.fastDebugStartupEnabled() {
+			g.auditServiceEvent("kafka", "startup", "fail", err)
+			return nil, err
+		}
+		log.Warnf("调试快速启动: Kafka 初始化失败，将使用空生产者继续运行（err=%v）", err)
+		g.auditServiceEvent("kafka", "startup", "degraded", err)
+		g.producer = newNoopProducer()
+		g.setConsumerInstances(nil, nil, nil, nil)
+	} else {
+		log.Debug("kafka服务器启动成功")
+		g.auditServiceEvent("kafka", "startup", "success", nil)
 	}
-	log.Debug("kafka服务器启动成功")
-	g.auditServiceEvent("kafka", "startup", "success", nil)
 
 	// 启动消费者
 	ctx, cancel := context.WithCancel(context.Background())
@@ -410,23 +440,23 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 								if len(instances.retryConsumers) == 0 {
 									metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(float64(p))
 									if isDebug {
-									log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), p)
+										//	log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), p)
 									}
 								} else {
 									if noOwner, err := getPartitionsWithoutOwner(ctx, brokers, retryGroupId, UserRetryTopic); err == nil {
 										metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(float64(noOwner))
 										if isDebug {
-											log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), noOwner)
+											//			log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), noOwner)
 										}
 									} else {
 										// 回退到启发式
 										metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(0)
-										log.Debugf("周期更新: 无法计算无主分区，使用回退值 0: %v", err)
+										//		log.Debugf("周期更新: 无法计算无主分区，使用回退值 0: %v", err)
 									}
 								}
 							} else {
 								if g.options.ServerRunOptions.Mode == "debug" {
-									log.Debugf("周期更新: 无法读取 topic %s 分区信息: %v", UserRetryTopic, err)
+									//		log.Debugf("周期更新: 无法读取 topic %s 分区信息: %v", UserRetryTopic, err)
 								}
 							}
 						}
@@ -877,7 +907,7 @@ func (g *GenericAPIServer) initRedisStore() error {
 	// 同步等待Redis完全启动
 	log.Debugf("等待Redis集群完全启动...")
 
-	debugMode := g.isDebugMode()
+	debugMode := g.fastDebugStartupEnabled()
 	basicTimeout := 60 * time.Second
 	healthyTimeout := 90 * time.Second
 	if debugMode {

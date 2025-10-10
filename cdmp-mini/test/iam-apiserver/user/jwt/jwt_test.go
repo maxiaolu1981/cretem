@@ -49,6 +49,7 @@ import (
 	"github.com/fatih/color"
 	redisV8 "github.com/go-redis/redis/v8"
 	"github.com/golang-jwt/jwt"
+	authkeys "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/auth/keys"
 	"golang.org/x/term"
 )
 
@@ -87,8 +88,6 @@ const (
 
 	JWTSigningKey = "dfVpOK8LZeJLZHYmHdb1VdyRrACKpqoo"
 	JWTAlgorithm  = "HS256"
-
-	RTRedisPrefix = "genericapiserver:auth:refresh_token:"
 
 	RespCodeSuccess       = 100001
 	RespCodeRTRequired    = 110004
@@ -681,7 +680,7 @@ func TestCase7_RTExpired_Concurrent(t *testing.T) {
 		}
 
 		// 设置RT过期
-		rtKey := fmt.Sprintf("%s%s", RTRedisPrefix, ctx.RefreshToken)
+		rtKey := authkeys.RefreshTokenKey(ctx.Userid, ctx.RefreshToken)
 		redisCtx := context.Background()
 		redisClient.Expire(redisCtx, rtKey, 1*time.Second)
 		time.Sleep(2 * time.Second)

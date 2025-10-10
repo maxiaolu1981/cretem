@@ -767,8 +767,8 @@ func (r *RedisCluster) DeleteKey(ctx context.Context, keyName string) (bool, err
 	if err := r.Up(); err != nil {
 		return false, err
 	}
-	//log.Debugf("DEL Key was: %s", keyName)
-	//log.Debugf("DEL Key became: %s", r.fixKey(keyName))
+	//	log.Debugf("DEL Key was: %s", keyName)
+	//	log.Debugf("DEL Key became: %s", r.fixKey(keyName))
 	n, err := r.singleton().Del(ctx, r.fixKey(keyName)).Result()
 	if err != nil {
 		// 根据错误类型提供更具体的错误信息

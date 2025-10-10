@@ -43,6 +43,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator/jwtvalidator"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
@@ -79,7 +80,7 @@ type UserSrv interface {
 	Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error)
 	List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error)
 	ListWithBadPerformance(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error)
-	ChangePassword(ctx context.Context, user *v1.User, opt *options.Options) error
+	ChangePassword(ctx context.Context, user *v1.User, claims *jwtvalidator.CustomClaims, opt *options.Options) error
 }
 
 // getFromCache 从Redis获取缓存数据
