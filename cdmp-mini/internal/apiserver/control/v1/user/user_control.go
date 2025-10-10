@@ -44,4 +44,3 @@ func (u *UserController) validateListOptions(opts *v1.ListOptions) field.ErrorLi
 	}
 	return validation.ValidateListOptionsBase(opts)
 }
-

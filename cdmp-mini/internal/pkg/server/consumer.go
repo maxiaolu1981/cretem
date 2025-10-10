@@ -751,7 +751,7 @@ func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) err
 	if err != nil {
 		return err
 	}
-	log.Debugf("删除:%s成功", cacheKey)
+	log.Debugf("删除用户%s cacheKey:%s成功", username, cacheKey)
 	return nil
 }
 

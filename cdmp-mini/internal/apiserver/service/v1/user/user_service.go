@@ -21,8 +21,6 @@ forceRefresh=true：即便命中了负缓存，也会日志提示“命中负缓
 配合 checkUserExist 新增的 forceRefresh 逻辑，就能既保留负缓存的抗击穿效果，又避免它影响后续真实存在的用户操作。
 
 GPT-5-Codex (Preview) • 1x
-
-
 */
 package user
 
@@ -233,7 +231,7 @@ func (u *UserService) checkUserExist(ctx context.Context, username string, force
 	}
 
 	// 缓存未命中，重试DB查询（带独立ctx）
-	result, err := util.RetryWithBackoff(3, isRetryableError, func() (interface{}, error) {
+	result, err := util.RetryWithBackoff(u.Options.RedisOptions.MaxRetries, isRetryableError, func() (interface{}, error) {
 		dbCtx, cancel := context.WithTimeout(context.Background(), time.Second) // 独立1s超时
 		defer cancel()
 		r, err, shared := u.group.Do(username, func() (interface{}, error) {

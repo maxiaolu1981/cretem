@@ -8,18 +8,18 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"context"
 
 	"golang.org/x/time/rate"
 )
@@ -43,6 +43,17 @@ const (
 	// success threshold percent for update operations (0-100)
 	SuccessThresholdPercent = 90
 )
+
+var (
+	serverBaseURL = resolveServerBaseURL()
+)
+
+func resolveServerBaseURL() string {
+	if override := os.Getenv("IAM_APISERVER_BASEURL"); override != "" {
+		return override
+	}
+	return ServerBaseURL
+}
 
 var (
 	httpClient   = createHTTPClient()
@@ -100,6 +111,10 @@ type CreateUserRequest struct {
 }
 
 func TestUserUpdate_Concurrent(t *testing.T) {
+	if os.Getenv("IAM_APISERVER_E2E") == "" {
+		t.Skip("跳过耗时的集成测试：设置 IAM_APISERVER_E2E=1 并指向运行中的 IAM API Server 才会执行")
+	}
+
 	// 1. 获取 admin token 并并发预创建要更新的用户
 	adminToken, err := getAuthTokenWithDebug()
 	if err != nil {
@@ -135,7 +150,7 @@ func TestUserUpdate_Concurrent(t *testing.T) {
 	// Probe: verify the running server supports PUT /v1/users/:name
 	// Use admin token to avoid permission issues
 	probeUsername := createdUsers[0]
-	probeURL := fmt.Sprintf(ServerBaseURL+UsersAPIPath+"/%s", probeUsername)
+	probeURL := fmt.Sprintf(serverBaseURL+UsersAPIPath+"/%s", probeUsername)
 	probeBody := UpdateUserRequest{Nickname: "probe"}
 	pb, _ := json.Marshal(probeBody)
 	req, _ := http.NewRequest("PUT", probeURL, bytes.NewReader(pb))
@@ -220,7 +235,7 @@ func preCreateTestUsersConcurrent(adminToken string, count int) error {
 			created := false
 			for attempt := 1; attempt <= 3; attempt++ {
 				b, _ := json.Marshal(reqBody)
-				req, _ := http.NewRequest("POST", ServerBaseURL+UsersAPIPath, bytes.NewReader(b))
+				req, _ := http.NewRequest("POST", serverBaseURL+UsersAPIPath, bytes.NewReader(b))
 				req.Header.Set("Content-Type", "application/json")
 				req.Header.Set("Authorization", "Bearer "+adminToken)
 				client := &http.Client{Timeout: 10 * time.Second}
@@ -325,7 +340,7 @@ func preCreateTestUsersConcurrent(adminToken string, count int) error {
 func getAuthTokenForUser(username, password string) (string, error) {
 	req := LoginRequest{Username: username, Password: password}
 	b, _ := json.Marshal(req)
-	resp, err := httpClient.Post(ServerBaseURL+LoginAPIPath, "application/json", bytes.NewReader(b))
+	resp, err := httpClient.Post(serverBaseURL+LoginAPIPath, "application/json", bytes.NewReader(b))
 	if err != nil {
 		return "", err
 	}
@@ -362,7 +377,7 @@ func getAuthTokenWithDebug() (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("登录请求序列化失败: %v", err)
 	}
-	resp, err := httpClient.Post(ServerBaseURL+LoginAPIPath, "application/json", bytes.NewReader(jsonData))
+	resp, err := httpClient.Post(serverBaseURL+LoginAPIPath, "application/json", bytes.NewReader(jsonData))
 	if err != nil {
 		return "", fmt.Errorf("登录请求失败: %v", err)
 	}
@@ -413,7 +428,7 @@ func sendSingleUpdate(userID, requestID int) {
 		Email:    fmt.Sprintf("up_%d_%d@example.com", userID, requestID),
 	}
 	jsonData, _ := json.Marshal(update)
-	url := fmt.Sprintf(ServerBaseURL+UsersAPIPath+"/%s", username)
+	url := fmt.Sprintf(serverBaseURL+UsersAPIPath+"/%s", username)
 	req, err := http.NewRequest("PUT", url, bytes.NewReader(jsonData))
 	if err != nil {
 		fmt.Printf("构建请求失败: %v\n", err)

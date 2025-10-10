@@ -87,24 +87,24 @@ type LogSink struct{}
 func (LogSink) Name() string { return "log" }
 
 func (LogSink) Write(_ context.Context, event Event) error {
-	fields := map[string]any{
-		"actor":         event.Actor,
-		"actor_id":      event.ActorID,
-		"action":        event.Action,
-		"resource_type": event.ResourceType,
-		"resource_id":   event.ResourceID,
-		"target":        event.Target,
-		"outcome":       event.Outcome,
-		"error":         event.ErrorMessage,
-		"request_id":    event.RequestID,
-		"ip":            event.IP,
-		"user_agent":    event.UserAgent,
-		"occurred_at":   event.OccurredAt.Format(time.RFC3339Nano),
+	keysAndValues := []any{
+		"actor", event.Actor,
+		"actor_id", event.ActorID,
+		"action", event.Action,
+		"resource_type", event.ResourceType,
+		"resource_id", event.ResourceID,
+		"target", event.Target,
+		"outcome", event.Outcome,
+		"error", event.ErrorMessage,
+		"request_id", event.RequestID,
+		"ip", event.IP,
+		"user_agent", event.UserAgent,
+		"occurred_at", event.OccurredAt.Format(time.RFC3339Nano),
 	}
 	if len(event.Metadata) > 0 {
-		fields["metadata"] = event.Metadata
+		keysAndValues = append(keysAndValues, "metadata", event.Metadata)
 	}
-	log.Infow("audit event", fields)
+	log.Infow("audit event", keysAndValues...)
 	return nil
 }
 

@@ -25,6 +25,8 @@ type RedisOptions struct {
 	MaxConnLifetime       time.Duration `json:"max-conn-lifetime"        mapstructure:"max-conn-lifetime"        description:"Maximum connection lifetime in seconds"`
 	Wait                  bool          `json:"wait"                     mapstructure:"wait"                     description:"Wait for available connection when pool is exhausted"`
 	PoolSize              int           `json:"pool-size"                mapstructure:"pool-size"                description:"Connection pool size per node (cluster mode)"`
+	MaxRetries            int           `json:"max-retries"        mapstructure:"max-retries"`
+	MaxRetryDelay         time.Duration `json:"max-retry-delay"   mapstructure:"max-retry-delay"`
 }
 
 func NewRedisOptions() *RedisOptions {
@@ -48,6 +50,8 @@ func NewRedisOptions() *RedisOptions {
 		MaxConnLifetime:       1800 * time.Second, // 连接生命周期30分钟
 		Wait:                  true,               // 池耗尽时等待
 		PoolSize:              200,                // 🔥 与MaxActive一致
+		MaxRetries:            3,
+		MaxRetryDelay:         30 * time.Second,
 	}
 }
 
@@ -113,6 +117,14 @@ func (r *RedisOptions) Complete() {
 	if r.Database < 0 {
 		r.Database = 0 // 确保数据库索引不小于0
 	}
+
+	if r.MaxRetries < 0 {
+		r.MaxRetries = 3 // 默认重试次数
+	}
+
+	if r.MaxRetryDelay <= 0 {
+		r.MaxRetryDelay = 30 * time.Second // 默认最大重试延迟
+	}
 }
 
 // Validate 验证Redis配置选项的有效性，返回所有验证错误
@@ -162,6 +174,14 @@ func (r *RedisOptions) Validate() []error {
 		errors = append(errors, fmt.Errorf("redis配置警告：仅当UseSSL为true时才能设置SSLInsecureSkipVerify"))
 	}
 
+	if r.MaxRetries < 0 {
+		errors = append(errors, fmt.Errorf("redis配置警告：最大重试次数不能为负数"))
+	}
+
+	if r.MaxRetryDelay < 0 {
+		errors = append(errors, fmt.Errorf("redis配置警告：最大重试延迟不能为负数"))
+	}
+
 	return errors
 }
 
@@ -193,4 +213,7 @@ func (r *RedisOptions) AddFlags(fs *pflag.FlagSet) {
 	// SSL/TLS安全配置
 	fs.BoolVar(&r.UseSSL, "redis.use-ssl", r.UseSSL, "Enable SSL/TLS for Redis connections")
 	fs.BoolVar(&r.SSLInsecureSkipVerify, "redis.ssl-insecure-skip-verify", r.SSLInsecureSkipVerify, "Skip SSL certificate verification (insecure, not recommended for production)")
+
+	fs.IntVar(&r.MaxRetries, "redis.max-retries", r.MaxRetries, "Maximum number of retries before giving up (default 3)")
+	fs.DurationVar(&r.MaxRetryDelay, "redis.max-retry-delay", r.MaxRetryDelay, "Maximum delay between retry attempts (default 30s)")		
 }

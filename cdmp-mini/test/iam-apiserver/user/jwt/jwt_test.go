@@ -52,6 +52,8 @@ import (
 	"golang.org/x/term"
 )
 
+var serverBaseURL = ServerBaseURL
+
 var testUsers = []struct {
 	username string
 	password string
@@ -141,6 +143,17 @@ var (
 	redisClient *redisV8.Client
 	cyan        = color.New(color.FgCyan)
 )
+
+func TestMain(m *testing.M) {
+	if override := os.Getenv("IAM_APISERVER_BASEURL"); override != "" {
+		serverBaseURL = override
+	}
+	if os.Getenv("IAM_APISERVER_E2E") == "" {
+		fmt.Println("[skip] 设置 IAM_APISERVER_E2E=1 才会执行 IAM API Server 集成测试")
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
 
 // ==================== 修复的响应码统计函数 ====================
 func printResponseCodeSummary(results []TestResult) {

@@ -1,3 +1,50 @@
+/*
+当前已接入审计的事件
+GenericAPIServer 服务生命周期
+api-server.startup：启动成功/失败/被取消
+api-server.runtime：运行期异常
+api-server.shutdown：优雅关停开始/成功/失败
+关键基础组件启动/关停
+mysql.startup / mysql.shutdown
+redis.startup / redis.shutdown
+kafka.startup / kafka.shutdown
+审计管理器自身：audit.startup（成功）
+用户相关控制器
+user.change_password：输入校验失败、密码比对失败、修改成功
+user.delete（强制删除接口）：参数错误、服务层错误、删除成功
+user.delete_collection：参数缺失、批量删除失败、成功
+user.get：参数非法、查询失败、用户不存在、查询成功
+user.create / user.update / user.list / user.login / user.logout 等完整 CRUD + 登录流程
+这些事件都会记录操作者（system 或登陆用户）、目标资源、结果以及错误信息，并通过审计管理器写到日志/文件/指标。
+
+建议未来补充审计的事件
+结合现有功能和常见安全要求，可以按板块补齐：
+
+用户 & 鉴权
+用户角色、权限绑定 / 解绑
+密码重置、锁定/解锁、账号禁用/启用
+Token、Session、API Key 相关操作
+资源管理（按业务模块拆分）
+角色、策略、租户、项目等 CRUD
+资源授权、撤销、批量导入导出
+敏感配置变更（如策略模板、密钥、证书）
+运维与系统操作
+管理后台配置变更（开关、限流、配额、审计策略）
+系统任务执行（批量同步、数据迁移、脚本操作）
+后台手动触发的补偿/重放/重试任务
+服务自身行为
+子组件异常恢复、重启、重连事件
+关键健康检查失败、重试、恢复
+配置热更新、版本升级、回滚
+安全事件
+认证失败、鉴权拒绝
+违规访问/频繁操作（配合风控/告警）
+审计日志本身的读取、导出
+审计功能扩展
+新增外部 sink（Kafka、ES、Webhook 等）启停与失败
+审计配置调整（启停、文件路径、缓冲配置、过滤规则
+*/
+
 package server
 
 import (

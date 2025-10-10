@@ -50,10 +50,6 @@ type GenericAPIServer struct {
 	consumerCancel context.CancelFunc
 	audit          *audit.Manager
 	shutdownOnce   sync.Once
-	//createConsumer *UserConsumer
-	//updateConsumer *UserConsumer
-	//deleteConsumer *UserConsumer
-	//retryConsumer  *RetryConsumer
 }
 
 func (g *GenericAPIServer) isDebugMode() bool {
@@ -233,6 +229,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		log.Errorf("初始化审计管理器失败: %v", err)
 	} else {
 		g.audit = auditMgr
+		// 记录审计服务自身启动事件
 		g.auditServiceEvent("audit", "startup", "success", nil)
 	}
 
@@ -413,7 +410,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 								if len(instances.retryConsumers) == 0 {
 									metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(float64(p))
 									if isDebug {
-										log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), p)
+									log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), p)
 									}
 								} else {
 									if noOwner, err := getPartitionsWithoutOwner(ctx, brokers, retryGroupId, UserRetryTopic); err == nil {

@@ -20,7 +20,7 @@ func NewAuditOptions() *AuditOptions {
 		Enabled:         true,
 		BufferSize:      512,
 		ShutdownTimeout: 5 * time.Second,
-		LogFile:         "log/audit.log",
+		LogFile:         "/var/log/iam/audit.log",
 		EnableMetrics:   true,
 	}
 }
