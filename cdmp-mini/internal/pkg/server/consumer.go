@@ -434,15 +434,25 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 
 	log.Debugf("开始删除用户: username=%s", deleteRequest.Username)
 
+	var userID uint64
+	if deleteRequest.Username != "" {
+		var existing v1.User
+		if err := c.db.WithContext(ctx).
+			Where("name = ?", deleteRequest.Username).
+			First(&existing).Error; err != nil {
+			if err != gorm.ErrRecordNotFound {
+				return c.sendToRetry(ctx, msg, "查询用户失败: "+err.Error())
+			}
+		} else {
+			userID = existing.ID
+		}
+	}
+
 	if err := c.deleteUserFromDB(ctx, deleteRequest.Username); err != nil {
 		return c.sendToRetry(ctx, msg, "删除用户失败: "+err.Error())
 	}
 
-	if err := c.deleteUserCache(ctx, deleteRequest.Username); err != nil {
-		log.Errorw("缓存删除失败", "username", deleteRequest.Username, "error", err)
-	} else {
-		log.Debugf("缓存删除成功: username=%s", deleteRequest.Username)
-	}
+	c.purgeUserState(ctx, deleteRequest.Username, userID)
 	log.Debugf("用户删除成功: username=%s", deleteRequest.Username)
 
 	return nil
@@ -755,6 +765,24 @@ func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) err
 	return nil
 }
 
+func (c *UserConsumer) purgeUserState(ctx context.Context, username string, userID uint64) {
+	if err := c.deleteUserCache(ctx, username); err != nil {
+		log.Errorw("缓存删除失败", "username", username, "error", err)
+	} else {
+		log.Debugf("缓存删除成功: username=%s", username)
+	}
+
+	if userID == 0 {
+		return
+	}
+
+	if err := cleanupUserSessions(ctx, c.redis, userID); err != nil {
+		log.Errorw("刷新令牌清理失败", "username", username, "userID", userID, "error", err)
+		return
+	}
+	log.Debugf("刷新令牌清理成功: username=%s userID=%d", username, userID)
+}
+
 // 发送到重试主题
 func (c *UserConsumer) sendToRetry(ctx context.Context, msg kafka.Message, errorInfo string) error {
 
@@ -973,6 +1001,7 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 	metrics.BusinessInProgress.WithLabelValues("consumer", "batch_delete").Inc()
 	defer metrics.BusinessInProgress.WithLabelValues("consumer", "batch_delete").Dec()
 	var usernames []string
+	cleanupTargets := make(map[string]uint64)
 	for _, m := range msgs {
 		var deleteRequest struct {
 			Username  string `json:"username"`
@@ -990,6 +1019,22 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 	if len(usernames) == 0 {
 		return
 	}
+	type userIdentifier struct {
+		ID   uint64
+		Name string `gorm:"column:name"`
+	}
+	var identifiers []userIdentifier
+	if err := c.db.WithContext(ctx).
+		Model(&v1.User{}).
+		Select("id", "name").
+		Where("name IN ?", usernames).
+		Find(&identifiers).Error; err != nil {
+		log.Warnf("批量删除前查询用户ID失败: %v", err)
+	} else {
+		for _, item := range identifiers {
+			cleanupTargets[item.Name] = item.ID
+		}
+	}
 	var opErr error
 	if err := c.db.WithContext(ctx).Where("name IN ?", usernames).Delete(&v1.User{}).Error; err != nil {
 		opErr = err
@@ -1005,11 +1050,7 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 		log.Debugf("批量删除成功: %d 条记录", len(usernames))
 		// 批量删除缓存
 		for _, username := range usernames {
-			if err := c.deleteUserCache(ctx, username); err != nil {
-				log.Warnf("批量删除后缓存删除失败: username=%s, error=%v", username, err)
-			} else {
-				log.Debugf("批量删除后缓存删除成功: username=%s", username)
-			}
+			c.purgeUserState(ctx, username, cleanupTargets[username])
 		}
 	}
 	duration := time.Since(start).Seconds()

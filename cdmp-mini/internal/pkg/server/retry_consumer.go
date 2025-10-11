@@ -293,20 +293,32 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 			fmt.Sprintf("MAX_RETRIES_EXCEEDED(%d): %s", rc.maxRetries, lastError))
 	}
 
+	var userID uint64
+	if deleteRequest.Username != "" {
+		var existing v1.User
+		if err := rc.db.WithContext(ctx).
+			Where("name = ?", deleteRequest.Username).
+			First(&existing).Error; err != nil {
+			if err != gorm.ErrRecordNotFound {
+				return rc.handleProcessingError(ctx, msg, currentRetryCount, "查询用户失败: "+err.Error())
+			}
+		} else {
+			userID = existing.ID
+		}
+	}
+
 	if err := rc.deleteUserFromDB(ctx, deleteRequest.Username); err != nil {
 		// 检查是否为可忽略的错误
 		if rc.isIgnorableDeleteError(err) {
 			log.Warnf("删除操作遇到可忽略错误，直接提交: username=%s, error=%v",
 				deleteRequest.Username, err)
-			rc.deleteUserCache(ctx, deleteRequest.Username)
+			rc.purgeUserState(ctx, deleteRequest.Username, userID)
 			return nil
 		}
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "错误信息: "+err.Error())
 	}
 
-	if err := rc.deleteUserCache(ctx, deleteRequest.Username); err != nil {
-		log.Errorw("重试删除成功但缓存删除失败", "username", deleteRequest.Username, "error", err)
-	}
+	rc.purgeUserState(ctx, deleteRequest.Username, userID)
 	return nil
 }
 
@@ -553,6 +565,24 @@ func (rc *RetryConsumer) deleteUserCache(ctx context.Context, username string) e
 	cacheKey := fmt.Sprintf("user:%s", username)
 	_, err := rc.redis.DeleteKey(ctx, cacheKey)
 	return err
+}
+
+func (rc *RetryConsumer) purgeUserState(ctx context.Context, username string, userID uint64) {
+	if err := rc.deleteUserCache(ctx, username); err != nil {
+		log.Errorw("重试缓存删除失败", "username", username, "error", err)
+	} else {
+		log.Debugf("重试缓存删除成功: username=%s", username)
+	}
+
+	if userID == 0 {
+		return
+	}
+
+	if err := cleanupUserSessions(ctx, rc.redis, userID); err != nil {
+		log.Errorw("重试刷新令牌清理失败", "username", username, "userID", userID, "error", err)
+		return
+	}
+	log.Debugf("重试刷新令牌清理成功: username=%s userID=%d", username, userID)
 }
 
 // 若key为空字符串，直接panic（空Key无业务意义，会导致头逻辑混乱）

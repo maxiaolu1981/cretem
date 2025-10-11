@@ -1,14 +1,22 @@
 [
   {
-    "name": "wrong_password",
-    "description": "错误密码返回未授权",
+    "name": "success_basic_flow",
+    "description": "正确用户名密码应返回访问令牌并可访问用户信息",
     "success": true,
-    "http_status": 401,
-    "code": 100206,
-    "message": "密码不正确",
-    "duration_ms": 105,
+    "http_status": 200,
+    "code": 100001,
+    "message": "登录成功",
+    "duration_ms": 126,
     "checks": {
-      "invalid_credentials_rejected": true
-    }
+      "access_token_issued": true,
+      "operator_matches": true,
+      "refresh_token_issued": true,
+      "session_persistent": true,
+      "token_authorized": true
+    },
+    "notes": [
+      "验证 access/refresh token 发放",
+      "使用 access token 调用 /v1/users/{name}"
+    ]
   }
 ]
