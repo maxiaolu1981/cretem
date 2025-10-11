@@ -371,6 +371,7 @@ func TestLoginFunctional(t *testing.T) {
 				if !strings.Contains(resp.Message, "登录失败次数太多") {
 					return framework.CaseResult{}, fmt.Errorf("lockout message missing: %s", resp.Message)
 				}
+
 				return framework.CaseResult{
 					Name:        "consecutive_failures_lockout",
 					Description: "连续失败超过阈值提示锁定",

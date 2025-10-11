@@ -569,7 +569,7 @@ func (r *RedisCluster) IncrememntWithExpire(ctx context.Context, keyName string,
 	if err := r.Up(); err != nil {
 		return 0
 	}
-	fixedKey := keyName
+	fixedKey := r.fixKey(keyName)
 	val, err := r.singleton().Incr(ctx, fixedKey).Result()
 
 	if err != nil {

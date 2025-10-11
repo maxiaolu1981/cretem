@@ -138,6 +138,11 @@ type MySQLOptions struct {
 
 	// Galera特定配置
 	WSREPSyncWait bool `json:"wsrep-sync-wait,omitempty"         mapstructure:"wsrep-sync-wait"`
+	// 初始延迟50毫秒
+	InitialDelay  time.Duration `json:"initial-delay,omitempty"          mapstructure:"initial-delay"`
+	MaxDelay      time.Duration `json:"max-delay,omitempty"              mapstructure:"max-delay"`
+	BackoffFactor float64       `json:"backoff-factor,omitempty"         mapstructure:"backoff-factor"`
+	Jitter        bool          `json:"jitter,omitempty"                 mapstructure:"jitter"`
 }
 
 func NewMySQLOptions() *MySQLOptions {
@@ -167,7 +172,7 @@ func NewMySQLOptions() *MySQLOptions {
 		SSLMode: "disable", // 默认禁用SSL
 
 		// 重试配置
-		MaxRetryAttempts: 5,                      // 增加重试次数
+		MaxRetryAttempts: 3,                      // 增加重试次数
 		RetryInterval:    500 * time.Millisecond, // 缩短重试间隔
 
 		// ========== 新增：Galera集群配置 ==========
@@ -186,6 +191,10 @@ func NewMySQLOptions() *MySQLOptions {
 
 		// Galera配置
 		WSREPSyncWait: true, // 等待集群同步
+		InitialDelay:  50 * time.Millisecond,
+		MaxDelay:      500 * time.Millisecond,
+		BackoffFactor: 2.0,
+		Jitter:        true,
 	}
 }
 

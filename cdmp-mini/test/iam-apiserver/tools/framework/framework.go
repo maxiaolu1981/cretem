@@ -73,12 +73,14 @@ type Env struct {
 	Client          *http.Client
 	OutputRoot      string
 	random          *rand.Rand
-	once            sync.Once
+	adminTokenOnce  sync.Once
+	adminTokenErr   error
 	limiters        map[string]*rate.Limiter
 	defaultLimiter  *rate.Limiter
 	producerLimiter *ratelimiter.RateLimiterController
 	rateLimiterInfo rateLimiterSnapshot
 	rateLimiterOnce sync.Once
+	lazyAdminLogin  bool
 }
 
 const (
@@ -118,6 +120,17 @@ func NewEnv(t *testing.T) *Env {
 		random:        rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 
+	if flag := strings.TrimSpace(os.Getenv("IAM_APISERVER_LAZY_ADMIN_LOGIN")); flag != "" {
+		switch strings.ToLower(flag) {
+		case "0", "false", "no", "off":
+			env.lazyAdminLogin = false
+		default:
+			env.lazyAdminLogin = true
+		}
+	} else {
+		env.lazyAdminLogin = true
+	}
+
 	opts := options.NewServerRunOptions()
 	opts.Complete()
 	kafkaOpts := options.NewKafkaOptions()
@@ -152,7 +165,9 @@ func NewEnv(t *testing.T) *Env {
 	})
 
 	env.ensureOutputRoot(t)
-	env.ensureAdminToken(t)
+	if !env.lazyAdminLogin {
+		env.ensureAdminToken(t)
+	}
 	return env
 }
 
@@ -165,13 +180,33 @@ func (e *Env) ensureOutputRoot(t *testing.T) {
 
 func (e *Env) ensureAdminToken(t *testing.T) {
 	t.Helper()
-	e.once.Do(func() {
+	if err := e.ensureAdminTokenInternal(); err != nil {
+		t.Fatalf("login before change failed: %v", err)
+	}
+}
+
+func (e *Env) ensureAdminTokenInternal() error {
+	e.adminTokenOnce.Do(func() {
 		tok, _, err := e.Login(e.AdminUsername, e.AdminPassword)
 		if err != nil {
-			t.Fatalf("login before change failed: %v", fmt.Errorf("admin login: %w", err))
+			e.adminTokenErr = fmt.Errorf("admin login: %w", err)
+			return
+		}
+		if tok == nil || tok.AccessToken == "" {
+			e.adminTokenErr = fmt.Errorf("admin login returned empty tokens")
+			return
 		}
 		e.AdminToken = tok.AccessToken
 	})
+	return e.adminTokenErr
+}
+
+func (e *Env) AdminTokenOrFail(t *testing.T) string {
+	t.Helper()
+	if err := e.ensureAdminTokenInternal(); err != nil {
+		t.Fatalf("login before change failed: %v", err)
+	}
+	return e.AdminToken
 }
 
 func (e *Env) newRequest(method, path string, body []byte) (*http.Request, error) {
@@ -325,7 +360,18 @@ func (e *Env) AuthorizedRequest(method, path, token string, payload any) (*APIRe
 }
 
 func (e *Env) AdminRequest(method, path string, payload any) (*APIResponse, error) {
-	return e.AuthorizedRequest(method, path, e.AdminToken, payload)
+	token, err := e.adminTokenValue()
+	if err != nil {
+		return nil, err
+	}
+	return e.AuthorizedRequest(method, path, token, payload)
+}
+
+func (e *Env) adminTokenValue() (string, error) {
+	if err := e.ensureAdminTokenInternal(); err != nil {
+		return "", err
+	}
+	return e.AdminToken, nil
 }
 
 func (e *Env) RandomUsername(prefix string) string {
@@ -365,6 +411,7 @@ func (e *Env) CreateUser(spec UserSpec) (*APIResponse, error) {
 		"status":   spec.Status,
 		"isAdmin":  spec.IsAdmin,
 	}
+	//	fmt.Printf("Creating user: %+v\n", payload)
 	return e.AdminRequest(http.MethodPost, "/v1/users", payload)
 }
 
@@ -391,7 +438,11 @@ func (e *Env) ForceDeleteUser(username string) (*APIResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+e.AdminToken)
+	token, err := e.adminTokenValue()
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	return e.do(req)
 }
 

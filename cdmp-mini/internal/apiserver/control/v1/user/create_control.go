@@ -6,7 +6,9 @@ package user
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"time"
@@ -49,13 +51,34 @@ func (u *UserController) Create(ctx *gin.Context) {
 		return
 	}
 
+	body, err := io.ReadAll(ctx.Request.Body)
+	if err != nil {
+		log.Errorw("读取请求体失败", "requestID", ctx.Request.Header.Get("X-Request-ID"), "error", err)
+		errBind := errors.WithCode(code.ErrBind, "读取请求体失败:%v", err.Error())
+		core.WriteResponse(ctx, errBind, nil)
+		auditBase("fail", errBind.Error())
+		return
+	}
+
 	var r v1.User
-	if err := ctx.ShouldBindJSON(&r); err != nil {
+	if err := json.Unmarshal(body, &r); err != nil {
 		log.Errorw("请求体绑定结构体失败", "requestID", ctx.Request.Header.Get("X-Request-ID"), "error", err)
 		errBind := errors.WithCode(code.ErrBind, "参数绑定失败:%v", err.Error())
 		core.WriteResponse(ctx, errBind, nil)
 		auditBase("fail", errBind.Error())
 		return
+	}
+
+	var statusPayload struct {
+		Status *int `json:"status"`
+	}
+	if err := json.Unmarshal(body, &statusPayload); err != nil {
+		log.Warnf("解析status字段失败: username=%s, err=%v", r.Name, err)
+	}
+	if statusPayload.Status != nil {
+		r.Status = *statusPayload.Status
+	} else if r.Status == 0 {
+		r.Status = 1
 	}
 	// 链路追踪日志
 	log.Debugf("[control] 用户创建请求入口: username=%s, operator=%s", r.Name, operator)
@@ -102,7 +125,6 @@ func (u *UserController) Create(ctx *gin.Context) {
 		return
 	}
 	r.Password, _ = auth.Encrypt(r.Password)
-	r.Status = 1
 	r.LoginedAt = time.Now()
 
 	c := ctx.Request.Context()

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -43,6 +44,19 @@ type loginInfo struct {
 	Password string `form:"password" json:"password" ` // 仅校验非空
 }
 
+const (
+	ctxLoginFailCountKey  = "auth.login_fail_count"
+	ctxLoginFailTTLKey    = "auth.login_fail_ttl"
+	ctxLoginFailMaxKey    = "auth.login_fail_max"
+	ctxLoginFailStatusKey = "auth.login_fail_status"
+)
+
+const (
+	loginFailStatusIncremented = "incremented"
+	loginFailStatusLocked      = "locked"
+	loginFailStatusReset       = "reset"
+)
+
 func (g *GenericAPIServer) auditLoginAttempt(c *gin.Context, username, outcome string, err error) {
 	if g == nil {
 		return
@@ -63,6 +77,37 @@ func (g *GenericAPIServer) auditLoginAttempt(c *gin.Context, username, outcome s
 	}
 	if route := c.FullPath(); route != "" {
 		event.Metadata["route"] = route
+	}
+	if c != nil {
+		if maxVal, ok := c.Get(ctxLoginFailMaxKey); ok {
+			event.Metadata["login_fail_limit"] = maxVal
+		}
+		if countVal, ok := c.Get(ctxLoginFailCountKey); ok {
+			event.Metadata["login_fail_count"] = countVal
+		}
+		if ttlVal, ok := c.Get(ctxLoginFailTTLKey); ok {
+			switch v := ttlVal.(type) {
+			case time.Duration:
+				if v > 0 {
+					event.Metadata["login_fail_ttl_seconds"] = int(math.Ceil(v.Seconds()))
+				}
+			case int:
+				if v > 0 {
+					event.Metadata["login_fail_ttl_seconds"] = v
+				}
+			case int64:
+				if v > 0 {
+					event.Metadata["login_fail_ttl_seconds"] = int(v)
+				}
+			case float64:
+				if v > 0 {
+					event.Metadata["login_fail_ttl_seconds"] = int(math.Ceil(v))
+				}
+			}
+		}
+		if statusVal, ok := c.Get(ctxLoginFailStatusKey); ok {
+			event.Metadata["login_fail_status"] = statusVal
+		}
 	}
 	g.submitAuditEvent(c.Request.Context(), event)
 }
@@ -89,6 +134,141 @@ func (g *GenericAPIServer) auditLogoutEvent(c *gin.Context, username, outcome, r
 		event.Metadata["route"] = route
 	}
 	g.submitAuditEvent(c.Request.Context(), event)
+}
+
+func (g *GenericAPIServer) loginFailLimit() int {
+	if g == nil || g.options == nil || g.options.ServerRunOptions == nil {
+		return DefaultMaxLoginFails
+	}
+	limit := g.options.ServerRunOptions.MaxLoginFailures
+	if limit <= 0 {
+		return DefaultMaxLoginFails
+	}
+	return limit
+}
+
+func (g *GenericAPIServer) loginFailWindow() time.Duration {
+	if g == nil || g.options == nil || g.options.ServerRunOptions == nil {
+		return DefaultLoginFailReset
+	}
+	window := g.options.ServerRunOptions.LoginFailReset
+	if window <= 0 {
+		return DefaultLoginFailReset
+	}
+	return window
+}
+
+func (g *GenericAPIServer) loginFailTTL(ctx context.Context, username string) time.Duration {
+	if g == nil || g.redis == nil {
+		return 0
+	}
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return 0
+	}
+	ttlSec, err := g.redis.GetKeyTTL(ctx, authkeys.LoginFailKey(username))
+	if err != nil || ttlSec <= 0 {
+		return 0
+	}
+	return time.Duration(ttlSec) * time.Second
+}
+
+func formatRetryAfter(d time.Duration) string {
+	if d <= 0 {
+		return "稍后"
+	}
+	if d >= time.Minute {
+		minutes := int(math.Ceil(d.Minutes()))
+		if minutes <= 0 {
+			minutes = 1
+		}
+		return fmt.Sprintf("%d分钟", minutes)
+	}
+	seconds := int(math.Ceil(d.Seconds()))
+	if seconds <= 0 {
+		seconds = 1
+	}
+	return fmt.Sprintf("%d秒", seconds)
+}
+
+func (g *GenericAPIServer) annotateLoginAttemptMetrics(c *gin.Context, count int, ttl time.Duration, status string) {
+	if c == nil {
+		return
+	}
+	if limit := g.loginFailLimit(); limit > 0 {
+		c.Set(ctxLoginFailMaxKey, limit)
+	}
+	c.Set(ctxLoginFailCountKey, count)
+	if ttl > 0 {
+		c.Set(ctxLoginFailTTLKey, ttl)
+	} else {
+		c.Set(ctxLoginFailTTLKey, time.Duration(0))
+	}
+	if status != "" {
+		c.Set(ctxLoginFailStatusKey, status)
+	}
+}
+
+func (g *GenericAPIServer) recordLoginFailure(c *gin.Context, username string) (int, time.Duration, error) {
+	if g == nil || c == nil || g.redis == nil {
+		return 0, 0, fmt.Errorf("redis 未初始化")
+	}
+	userID := strings.TrimSpace(username)
+	if userID == "" {
+		return 0, 0, fmt.Errorf("用户名为空")
+	}
+	if !g.checkRedisAlive() {
+		return 0, 0, fmt.Errorf("redis 不可用")
+	}
+	window := g.loginFailWindow()
+	expireSeconds := int64(math.Ceil(window.Seconds()))
+	if expireSeconds <= 0 {
+		expireSeconds = 1
+	}
+	key := authkeys.LoginFailKey(userID)
+	count := g.redis.IncrememntWithExpire(c.Request.Context(), key, expireSeconds)
+	ttlSec, err := g.redis.GetKeyTTL(c.Request.Context(), key)
+	if err != nil && !errors.Is(err, redis.Nil) {
+		log.Warnf("获取登录失败计数TTL失败: username=%s, err=%v", username, err)
+	}
+	var ttl time.Duration
+	if ttlSec > 0 {
+		ttl = time.Duration(ttlSec) * time.Second
+	}
+	return int(count), ttl, nil
+}
+
+func (g *GenericAPIServer) shouldCountLoginFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	if !errors.IsWithCode(err) {
+		return false
+	}
+	switch errors.GetCode(err) {
+	case code.ErrInvalidParameter, code.ErrPasswordIncorrect, code.ErrUserNotFound, code.ErrUserDisabled:
+		return true
+	default:
+		return false
+	}
+}
+
+func (g *GenericAPIServer) maybeRecordLoginFailure(c *gin.Context, username string, err error) {
+	if !g.shouldCountLoginFailure(err) {
+		return
+	}
+	count, ttl, recErr := g.recordLoginFailure(c, username)
+	if recErr != nil {
+		log.Warnf("记录登录失败计数失败: username=%s, err=%v", username, recErr)
+	}
+	if ttl <= 0 {
+		ttl = g.loginFailTTL(c.Request.Context(), username)
+	}
+	status := loginFailStatusIncremented
+	if limit := g.loginFailLimit(); limit > 0 && count >= limit {
+		status = loginFailStatusLocked
+	}
+	g.annotateLoginAttemptMetrics(c, count, ttl, status)
 }
 
 func submitAuditFromGinContext(c *gin.Context, event audit.Event) {
@@ -278,13 +458,23 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		return nil, err
 	}
 
-	//检查登录异常
+	limit := g.loginFailLimit()
+	if limit > 0 {
+		c.Set(ctxLoginFailMaxKey, limit)
+	}
+
 	failCount, err := g.getLoginFailCount(c, login.Username)
 	if err != nil {
-		log.Warnf("%v查询登录异常失败", err)
+		log.Warnf("查询登录失败计数失败: username=%s, err=%v", login.Username, err)
 	}
-	if failCount > maxLoginFails {
-		err := errors.WithCode(code.ErrPasswordIncorrect, "登录失败次数太多,15分钟后重试")
+
+	if limit > 0 && failCount >= limit {
+		retryAfter := g.loginFailTTL(c.Request.Context(), login.Username)
+		if retryAfter <= 0 {
+			retryAfter = g.loginFailWindow()
+		}
+		g.annotateLoginAttemptMetrics(c, failCount, retryAfter, loginFailStatusLocked)
+		err := errors.WithCode(code.ErrPasswordIncorrect, "登录失败次数太多,%s后重试", formatRetryAfter(retryAfter))
 		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
@@ -294,6 +484,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		errsMsg := strings.Join(errs, ":")
 		log.Warnw("用户名不合法:", errsMsg)
 		err := errors.WithCode(code.ErrInvalidParameter, "%s", errsMsg)
+		g.maybeRecordLoginFailure(c, login.Username, err)
 		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
@@ -303,6 +494,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	if err := validation.IsValidPassword(login.Password); err != nil {
 		errMsg := "密码不合法：" + err.Error()
 		err := errors.WithCode(code.ErrInvalidParameter, "%s", errMsg)
+		g.maybeRecordLoginFailure(c, login.Username, err)
 		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
@@ -312,6 +504,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	user, err := interfaces.Client().Users().Get(c, login.Username, metav1.GetOptions{}, g.options)
 	if err != nil {
 		log.Errorf("获取用户信息失败: username=%s, error=%v", login.Username, err)
+		g.maybeRecordLoginFailure(c, login.Username, err)
 		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
@@ -322,12 +515,15 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		log.Errorf("password compare failed: username=%s", login.Username)
 		// 场景：密码不正确 → 用通用授权错误码 ErrPasswordIncorrect（100206，401）
 		err := errors.WithCode(code.ErrPasswordIncorrect, "密码校验失败：用户名【%s】的密码不正确", login.Username)
+		g.maybeRecordLoginFailure(c, login.Username, err)
 		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
 	}
-	if err := g.restLoginFailCount(login.Username); err != nil {
+	if err := g.restLoginFailCount(c.Request.Context(), login.Username); err != nil {
 		log.Errorf("重置登录次数失败:username=%s,error=%v", login.Username, err)
+	} else {
+		g.annotateLoginAttemptMetrics(c, 0, 0, loginFailStatusReset)
 	}
 	//设置user
 	c.Set("current_user", user)
@@ -612,8 +808,8 @@ func parseWithBody(c *gin.Context) (loginInfo, error) {
 	// 检查用户名/密码是否为空（基础校验）
 	if login.Username == "" || login.Password == "" {
 		return loginInfo{}, errors.WithCode(
-			code.ErrValidation,
-			"Body参数错误：username和password不能为空",
+			code.ErrInvalidParameter,
+			"参数错误：username和password不能为空",
 		)
 	}
 
@@ -1169,10 +1365,12 @@ func isTokenInBlacklist(g *GenericAPIServer, c *gin.Context, userID, jti string)
 	return exists, nil
 }
 
-func (g *GenericAPIServer) getLoginFailCount(ctx *gin.Context, username string) (int, error) {
-
+func (g *GenericAPIServer) getLoginFailCount(c *gin.Context, username string) (int, error) {
+	if g == nil || g.redis == nil {
+		return 0, nil
+	}
 	key := authkeys.LoginFailKey(username)
-	val, err := g.redis.GetKey(ctx, key)
+	val, err := g.redis.GetKey(c.Request.Context(), key)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			//log.Infof("缓存键不存在: key=%s", key)
@@ -1198,13 +1396,13 @@ func (g *GenericAPIServer) checkRedisAlive() bool {
 	return true
 }
 
-func (g *GenericAPIServer) restLoginFailCount(username string) error {
+func (g *GenericAPIServer) restLoginFailCount(ctx context.Context, username string) error {
 	if !g.checkRedisAlive() {
 		log.Warnf("Redis不可用,无法重置登录失败次数:username:%s", username)
 		return nil
 	}
 	key := authkeys.LoginFailKey(username)
-	if _, err := g.redis.DeleteKey(context.TODO(), key); err != nil {
+	if _, err := g.redis.DeleteKey(ctx, key); err != nil {
 		return errors.New("重置登录次数失败")
 	}
 	return nil

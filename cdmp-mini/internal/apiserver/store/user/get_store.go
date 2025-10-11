@@ -25,11 +25,11 @@ func (u *Users) Get(ctx context.Context, username string,
 
 	// 配置生产级重试策略
 	queryConfig := db.RetryConfig{
-		MaxAttempts:   2, // 最多重试2次（总共3次尝试）
-		InitialDelay:  50 * time.Millisecond,
-		MaxDelay:      500 * time.Millisecond, // 大并发下适当增加最大延迟
-		BackoffFactor: 2.0,
-		Jitter:        true,
+		MaxAttempts:   opt.MysqlOptions.MaxRetryAttempts, // 最多重试2次（总共3次尝试）
+		InitialDelay:  opt.MysqlOptions.InitialDelay,     // 初始延迟
+		MaxDelay:      opt.MysqlOptions.MaxDelay,         // 大并发下适当增加最大延迟
+		BackoffFactor: opt.MysqlOptions.BackoffFactor,
+		Jitter:        opt.MysqlOptions.Jitter,
 		IsRetryable:   u.isRetryableError,
 	}
 

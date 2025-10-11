@@ -86,12 +86,14 @@ type ServerRunOptions struct {
 	EnableMetrics    bool     `json:"enableMetrics" mapstructure:"enableMetrics"`
 	FastDebugStartup bool     `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
 	// 新增：Cookie相关配置
-	CookieDomain   string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
-	CookieSecure   bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
-	CtxTimeout     time.Duration `json:"ctxtimeout"    mapstructure:"ctxtimeout"`
-	Env            string        `json:"env"    mapstructure:"env"`
-	LoginRateLimit int           `json:"loginlimit"   mapstructure:"loginlimit"`
-	LoginWindow    time.Duration `json:"loginwindow"   mapstructure:"loginwindow"`
+	CookieDomain     string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
+	CookieSecure     bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
+	CtxTimeout       time.Duration `json:"ctxtimeout"    mapstructure:"ctxtimeout"`
+	Env              string        `json:"env"    mapstructure:"env"`
+	LoginRateLimit   int           `json:"loginlimit"   mapstructure:"loginlimit"`
+	LoginWindow      time.Duration `json:"loginwindow"   mapstructure:"loginwindow"`
+	MaxLoginFailures int           `json:"maxLoginFailures" mapstructure:"maxLoginFailures"`
+	LoginFailReset   time.Duration `json:"loginFailReset"   mapstructure:"loginFailReset"`
 	// WriteRateLimit: 默认的写操作限流阈值（当 Redis 未配置 override 时使用）
 	WriteRateLimit int `json:"writeRateLimit"   mapstructure:"writeRateLimit"`
 	// AdminToken: 简单的管理API访问令牌（如果为空，只允许本地或 debug 访问）
@@ -115,6 +117,8 @@ func NewServerRunOptions() *ServerRunOptions {
 		LoginRateLimit:    500000, // 5万/分钟
 		WriteRateLimit:    500000, // 写操作默认限流（每 window）
 		LoginWindow:       2 * time.Minute,
+		MaxLoginFailures:  5,
+		LoginFailReset:    1 * time.Minute,
 		AdminToken:        "",
 		EnableRateLimiter: true, // 默认启用生产端限流器
 	}
@@ -194,6 +198,14 @@ func (s *ServerRunOptions) Complete() {
 	if s.LoginWindow == 0 {
 		s.LoginWindow = time.Minute
 	}
+
+	if s.MaxLoginFailures <= 0 {
+		s.MaxLoginFailures = 5
+	}
+
+	if s.LoginFailReset <= 0 {
+		s.LoginFailReset = 15 * time.Minute
+	}
 }
 
 func (s *ServerRunOptions) Validate() []error {
@@ -264,6 +276,22 @@ func (s *ServerRunOptions) Validate() []error {
 		))
 	}
 
+	if s.MaxLoginFailures <= 0 {
+		errs = append(errs, field.Invalid(
+			path.Child("maxLoginFailures"),
+			s.MaxLoginFailures,
+			"最大登录失败次数必须大于0",
+		))
+	}
+
+	if s.LoginFailReset <= 0 {
+		errs = append(errs, field.Invalid(
+			path.Child("loginFailReset"),
+			s.LoginFailReset,
+			"登录失败计数失效时间必须大于0",
+		))
+	}
+
 	agg := errs.ToAggregate()
 	if agg == nil {
 		return nil // 无错误时返回空切片，而非nil
@@ -293,6 +321,10 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 		"指定限流次数")
 	fs.DurationVar(&s.LoginWindow, "server.loginwindow", s.LoginWindow, ""+
 		"指定限流时间")
+	fs.IntVar(&s.MaxLoginFailures, "server.login-max-attempts", s.MaxLoginFailures, ""+
+		"同一用户在计数窗口内允许的最大登录失败次数")
+	fs.DurationVar(&s.LoginFailReset, "server.login-fail-reset", s.LoginFailReset, ""+
+		"登录失败计数的自动重置时间窗口")
 	fs.StringVar(&s.AdminToken, "server.admin-token", s.AdminToken,
 		"管理API的简单访问令牌（默认为空，仅允许本地访问）")
 	fs.BoolVar(&s.FastDebugStartup, "server.fast-debug-startup", s.FastDebugStartup, "调试模式下是否跳过耗时的依赖等待，加速本地调试启动")

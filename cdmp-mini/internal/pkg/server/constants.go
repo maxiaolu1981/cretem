@@ -1,8 +1,14 @@
 package server
 
-// 登录失败限制配置
+import "time"
+
+// 登录失败限制配置默认值
 const (
-	maxLoginFails = 5
+	DefaultMaxLoginFails = 6
+)
+
+var (
+	DefaultLoginFailReset = 15 * time.Minute
 )
 
 // 系统常量
