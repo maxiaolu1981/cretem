@@ -95,7 +95,7 @@ func NewKafkaOptions() *KafkaOptions {
 		MaxRetries:             4,
 		MinBytes:               50 * 1024,        // 10KB
 		MaxBytes:               10 * 1024 * 1024, // 10MB
-		WorkerCount:            64,
+		WorkerCount:            3,
 		RetryWorkerCount:       3,
 		EnableMetricsRefresh:   true,
 		MetricsRefreshInterval: 30 * time.Second,

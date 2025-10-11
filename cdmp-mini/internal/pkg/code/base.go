@@ -78,6 +78,8 @@ const (
 	ErrRespCodeRTRevoked
 	//100212
 	ErrTokenMismatch
+	//100213 429 登录请求过于频繁
+	ErrAccountLocked
 )
 
 // 通用加解码错误（1003xx）：服务10 + 模块03 + 序号

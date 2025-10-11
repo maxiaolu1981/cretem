@@ -1,14 +1,14 @@
 [
   {
-    "name": "special_character_password",
-    "description": "含特殊字符密码成功登录",
+    "name": "consecutive_failures_lockout",
+    "description": "连续失败超过阈值提示锁定",
     "success": true,
-    "http_status": 200,
-    "code": 100001,
-    "message": "登录成功",
-    "duration_ms": 126,
+    "http_status": 429,
+    "code": 100213,
+    "message": "账户已被锁定，请稍后再试",
+    "duration_ms": 815,
     "checks": {
-      "tokens_issued": true
+      "lockout_triggered": true
     }
   }
 ]

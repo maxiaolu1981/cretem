@@ -145,6 +145,7 @@ func (u *Users) isNonRetryableBusinessError(errorCode int) bool {
 		code.ErrUnsupportedMediaType: true, // 100007 不支持的Content-Type
 		code.ErrNotAdministrator:     true,
 		code.ErrUserDisabled:         true,
+		code.ErrAccountLocked:        true, // 100213 账户已锁定
 	}
 
 	return nonRetryableCodes[errorCode]

@@ -109,7 +109,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		Middlewares:       []string{},
 		EnableProfiling:   true,
 		EnableMetrics:     true,
-		FastDebugStartup:  false,
+		FastDebugStartup:  true,
 		CookieDomain:      "",
 		CookieSecure:      false,
 		CtxTimeout:        50 * time.Second,
@@ -118,7 +118,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		WriteRateLimit:    500000, // 写操作默认限流（每 window）
 		LoginWindow:       2 * time.Minute,
 		MaxLoginFailures:  5,
-		LoginFailReset:    1 * time.Minute,
+		LoginFailReset:    15 * time.Minute,
 		AdminToken:        "",
 		EnableRateLimiter: true, // 默认启用生产端限流器
 	}

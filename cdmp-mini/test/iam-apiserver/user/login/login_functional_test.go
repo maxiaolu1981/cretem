@@ -358,17 +358,19 @@ func TestLoginFunctional(t *testing.T) {
 
 				start := time.Now()
 				var resp *framework.APIResponse
-				for i := 0; i < 6; i++ {
+				for i := 0; i < 8; i++ {
 					var err error
 					resp, err = loginRequest(env, spec.Name, "BadPass!123")
 					if err != nil {
 						return framework.CaseResult{}, fmt.Errorf("attempt %d error: %w", i, err)
 					}
 				}
-				if resp.Code != code.ErrPasswordIncorrect {
+
+				if resp.Code != code.ErrAccountLocked {
 					return framework.CaseResult{}, fmt.Errorf("expected password incorrect code after lock, got %d", resp.Code)
 				}
-				if !strings.Contains(resp.Message, "登录失败次数太多") {
+				fmt.Printf("resp.message:%v\n", resp.Message)
+				if !strings.Contains(resp.Message, "账户已被锁定，请稍后再试") {
 					return framework.CaseResult{}, fmt.Errorf("lockout message missing: %s", resp.Message)
 				}
 

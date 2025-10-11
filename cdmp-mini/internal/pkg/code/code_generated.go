@@ -38,6 +38,7 @@ func init() {
 	register(ErrInvalidBasicPayload, 400, "Basic认证 payload格式无效（需用冒号分隔用户名和密码，如 username:password）")
 	register(ErrRespCodeRTRevoked, 403, "令牌已经撤销")
 	register(ErrTokenMismatch, 401, "访问令牌和刷新令牌不匹配")
+	register(ErrAccountLocked, 429, "账户已被锁定，请稍后再试")
 	// 4. 通用加解码错误（1003xx）
 	register(ErrEncodingFailed, 500, "数据编码失败")          // 500：服务端编码逻辑错误
 	register(ErrDecodingFailed, 400, "数据解码失败（格式错误）")    // 400：客户端传入的数据格式无法解码（如 JSON 格式错误）

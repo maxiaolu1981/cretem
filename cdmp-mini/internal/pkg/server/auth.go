@@ -474,7 +474,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 			retryAfter = g.loginFailWindow()
 		}
 		g.annotateLoginAttemptMetrics(c, failCount, retryAfter, loginFailStatusLocked)
-		err := errors.WithCode(code.ErrPasswordIncorrect, "登录失败次数太多,%s后重试", formatRetryAfter(retryAfter))
+		err := errors.WithCode(code.ErrAccountLocked, "登录失败次数太多,%s后重试", formatRetryAfter(retryAfter))
 		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
 		return nil, err
@@ -1188,7 +1188,7 @@ func recordErrorToContext(c *gin.Context, err error) {
 //   - httpCode: HTTPStatusMessageFunc映射后的HTTP状态码
 //   - message: HTTPStatusMessageFunc映射后的基础错误消息
 func handleUnauthorized(c *gin.Context, httpCode int, message string) {
-	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
+	//log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
 	// 1. 从上下文提取业务码（优先使用HTTPStatusMessageFunc映射后的withCode错误）
 	bizCode := extractBizCode(c, message)
 	if bizCode == code.ErrExpired {
@@ -1215,54 +1215,10 @@ func handleUnauthorized(c *gin.Context, httpCode int, message string) {
 
 	// 5. 统一返回响应（依赖core.WriteResponse确保格式一致）
 	core.WriteResponse(c, err, extraInfo)
-	log.Debugf("正确退出调用方法:%s", c.HandlerName())
+	//log.Debugf("正确退出调用方法:%s", c.HandlerName())
 	// 6. 终止流程：防止后续中间件覆盖当前响应
 	c.Abort()
 }
-
-// extractBizCode 提取业务码（优先从c.Errors获取，降级用消息匹配）
-// func extractBizCode(c *gin.Context, message string) int {
-// 	// 优先：从c.Errors提取带Code()方法的错误（HTTPStatusMessageFunc映射后的结果）
-// 	if len(c.Errors) > 0 {
-// 		rawErr := c.Errors.Last().Err
-// 		log.Debugf("[handleUnauthorized] 从c.Errors获取原始错误: %+v", rawErr)
-
-// 		// 适配自定义withCode错误（必须实现Code() int方法）
-// 		if customErr, ok := rawErr.(interface{ Code() int }); ok {
-// 			bizCode := customErr.Code()
-// 			log.Infof("[handleUnauthorized] 从错误中提取业务码: %d（request-id: %s）",
-// 				bizCode, getRequestID(c))
-// 			return bizCode
-// 		}
-// 	}
-
-// 	// 降级：若无法直接提取，基于消息文本匹配业务码（覆盖所有授权认证相关业务码）
-// 	msgLower := strings.ToLower(message)
-// 	switch {
-// 	case strings.Contains(msgLower, "expired"):
-// 		return code.ErrExpired // 100203：令牌已过期
-// 	case strings.Contains(msgLower, "signature") && strings.Contains(msgLower, "invalid"):
-// 		return code.ErrSignatureInvalid // 100202：签名无效
-// 	case strings.Contains(msgLower, "authorization") && strings.Contains(msgLower, "not present"):
-// 		return code.ErrMissingHeader // 100205：缺少Authorization头
-// 	case strings.Contains(msgLower, "authorization") && strings.Contains(msgLower, "invalid format"):
-// 		return code.ErrInvalidAuthHeader // 100204：授权头格式无效
-// 	case strings.Contains(msgLower, "base64") && strings.Contains(msgLower, "decode"):
-// 		return code.ErrBase64DecodeFail // 100209：Basic认证Base64解码失败
-// 	case strings.Contains(msgLower, "basic") && strings.Contains(msgLower, "payload"):
-// 		return code.ErrInvalidBasicPayload // 100210：Basic认证payload格式无效
-// 	case strings.Contains(msgLower, "invalid") && (strings.Contains(msgLower, "token") || strings.Contains(msgLower, "jwt")):
-// 		return code.ErrTokenInvalid // 100208：令牌无效
-// 	case strings.Contains(msgLower, "password") && strings.Contains(msgLower, "incorrect"):
-// 		return code.ErrPasswordIncorrect // 100206：密码不正确
-// 	case strings.Contains(msgLower, "permission") && strings.Contains(msgLower, "denied"):
-// 		return code.ErrPermissionDenied // 100207：权限不足
-// 	default:
-// 		log.Warnf("[handleUnauthorized] 未匹配到业务码，使用默认未授权码（request-id: %s），原始消息: %s",
-// 			getRequestID(c), message)
-// 		return code.ErrUnauthorized // 110003：默认未授权
-// 	}
-// }
 
 // 带request-id的分级日志（按业务码重要性划分级别）
 func LogWithLevelByBizCode(c *gin.Context, bizCode int, message string) {
@@ -1300,6 +1256,12 @@ func buildExtraInfo(c *gin.Context, bizCode int) gin.H {
 		return gin.H{
 			"example": "正确格式：Authorization: Bearer <your-jwt-token>（Bearer后需带1个空格）",
 			"note":    "仅支持Bearer认证方案，不支持Basic/其他方案",
+		}
+	case code.ErrAccountLocked: // 建议新增：账户被锁定
+		return gin.H{
+			"suggestion":  "账户因连续登录失败已被暂时锁定",
+			"next_step":   fmt.Sprintf("请%d分钟后重试，或联系管理员解锁", c.GetDuration(ctxLoginFailTTLKey)),
+			"retry_after": c.GetDuration(ctxLoginFailTTLKey) * 60, // 秒数，可用于前端倒计时
 		}
 	case code.ErrTokenInvalid: // 100208：令牌无效
 		return gin.H{
