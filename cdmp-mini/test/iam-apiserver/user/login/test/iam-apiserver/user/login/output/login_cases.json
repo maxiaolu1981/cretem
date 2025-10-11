@@ -1,0 +1,14 @@
+[
+  {
+    "name": "wrong_password",
+    "description": "错误密码返回未授权",
+    "success": true,
+    "http_status": 401,
+    "code": 100206,
+    "message": "密码不正确",
+    "duration_ms": 105,
+    "checks": {
+      "invalid_credentials_rejected": true
+    }
+  }
+]

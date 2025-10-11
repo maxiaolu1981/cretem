@@ -5,6 +5,7 @@ import (
 	stdErrors "errors"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"fmt"
 	"net"
@@ -51,6 +52,7 @@ type GenericAPIServer struct {
 	consumerCancel context.CancelFunc
 	audit          *audit.Manager
 	shutdownOnce   sync.Once
+	loginLimit     atomic.Int64
 }
 
 func (g *GenericAPIServer) isDebugMode() bool {
@@ -225,6 +227,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		options:  opts,
 		initOnce: sync.Once{},
 	}
+	g.loginLimit.Store(int64(opts.ServerRunOptions.LoginRateLimit))
 
 	auditMgr, err := audit.NewManager(audit.Config{
 		Enabled:         opts.AuditOptions.Enabled,
@@ -232,6 +235,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		ShutdownTimeout: opts.AuditOptions.ShutdownTimeout,
 		LogFile:         opts.AuditOptions.LogFile,
 		EnableMetrics:   opts.AuditOptions.EnableMetrics,
+		RecentBuffer:    opts.AuditOptions.RecentBuffer,
 	})
 	if err != nil {
 		log.Errorf("初始化审计管理器失败: %v", err)

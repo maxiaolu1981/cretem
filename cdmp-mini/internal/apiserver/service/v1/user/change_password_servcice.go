@@ -76,6 +76,7 @@ func (u *UserService) blacklistAccessToken(ctx context.Context, claims *jwtvalid
 	}
 
 	blacklistKey := authkeys.BlacklistKey(u.Options.JwtOptions.Blacklist_key_prefix, claims.UserID, claims.ID)
+	fullBlacklistKey := authkeys.WithGenericPrefix(blacklistKey)
 
 	var ttl time.Duration
 	if claims.ExpiresAt != nil {
@@ -92,7 +93,7 @@ func (u *UserService) blacklistAccessToken(ctx context.Context, claims *jwtvalid
 		return errors.WithCode(code.ErrDatabase, "写入访问令牌黑名单失败: %v", err)
 	}
 
-	log.Debugf("访问令牌已加入黑名单: key=%s, ttl=%s", blacklistKey, ttl.String())
+	log.Debugf("访问令牌已加入黑名单: key=%s, ttl=%s", fullBlacklistKey, ttl.String())
 	return nil
 }
 
@@ -102,7 +103,7 @@ func (u *UserService) forceLogoutAllDevices(ctx context.Context, userID uint64) 
 	log.Debugf("开始清理用户%s的所有设备会话", userIDStr)
 
 	userSessionsKey := authkeys.UserSessionsKey(userIDStr)
-	refreshPrefix := authkeys.RefreshTokenPrefix(userIDStr)
+	refreshPrefix := authkeys.WithGenericPrefix(authkeys.RefreshTokenPrefix(userIDStr))
 
 	luaScript := `
 		-- KEYS[1]: 用户会话集合完整键名

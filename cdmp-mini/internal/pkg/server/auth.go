@@ -406,6 +406,52 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 	g.auditLogoutEvent(c, username, "success", "")
 }
 
+func (g *GenericAPIServer) debugTokenOverride(c *gin.Context) (time.Duration, bool) {
+	if g == nil || g.options == nil || g.options.ServerRunOptions == nil {
+		return 0, false
+	}
+	if !g.isDebugMode() {
+		return 0, false
+	}
+	raw := strings.TrimSpace(c.GetHeader("X-Debug-Token-Timeout"))
+	if raw == "" {
+		return 0, false
+	}
+	ttl, err := time.ParseDuration(raw)
+	if err != nil || ttl <= 0 {
+		log.Warnf("X-Debug-Token-Timeout 无效: %s", raw)
+		return 0, false
+	}
+	if ttl < time.Second {
+		ttl = time.Second
+	}
+	// 防止过长，限制在 24h 内
+	if ttl > 24*time.Hour {
+		ttl = 24 * time.Hour
+	}
+	return ttl, true
+}
+
+func (g *GenericAPIServer) reissueAccessTokenWithTTL(atToken string, ttl time.Duration) (string, time.Time, error) {
+	if g == nil || g.options == nil {
+		return "", time.Time{}, fmt.Errorf("server options 未初始化")
+	}
+	parser := &gojwt.Parser{}
+	claims := gojwt.MapClaims{}
+	if _, _, err := parser.ParseUnverified(atToken, claims); err != nil {
+		return "", time.Time{}, fmt.Errorf("解析原始访问令牌失败: %w", err)
+	}
+	now := time.Now()
+	claims["iat"] = now.Unix()
+	claims["exp"] = now.Add(ttl).Unix()
+	token := gojwt.NewWithClaims(gojwt.SigningMethodHS256, claims)
+	signed, err := token.SignedString([]byte(g.options.JwtOptions.Key))
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("重新签名访问令牌失败: %w", err)
+	}
+	return signed, now.Add(ttl), nil
+}
+
 func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomClaims) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -414,8 +460,8 @@ func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomC
 	userSessionsKey := authkeys.UserSessionsKey(userID)
 	jti := claims.ID
 	expTimestamp := claims.ExpiresAt.Time
-	refreshPrefix := authkeys.RefreshTokenPrefix(userID)
-	blacklistPrefix := authkeys.BlacklistPrefix(g.options.JwtOptions.Blacklist_key_prefix, userID)
+	refreshPrefix := authkeys.WithGenericPrefix(authkeys.RefreshTokenPrefix(userID))
+	blacklistPrefix := authkeys.WithGenericPrefix(authkeys.BlacklistPrefix(g.options.JwtOptions.Blacklist_key_prefix, userID))
 
 	// Lua 脚本实现原子操作
 	luaScript := `
@@ -614,12 +660,29 @@ func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context)
 		start := time.Now()
 		path := c.Request.URL.Path
 
-		//user, err := interfaces.Client().Users().Get(c, u, metav1.GetOptions{}, g.options)
-		// 从 claims 获取用户状态和角色
+		var username string
+		switch v := data.(type) {
+		case nil:
+			log.L(c).Warn("Authorizator: identity 信息缺失，可能是令牌已失效或被吊销")
+			return false
+		case string:
+			username = v
+		case *v1.User:
+			username = v.Name
+		case error:
+			log.L(c).Warnf("Authorizator: identity 返回错误: %v", v)
+			return false
+		default:
+			log.L(c).Warnf("Authorizator: identity 类型非法: %T", v)
+			return false
+		}
+
 		claims := jwt.ExtractClaims(c)
 		status, _ := claims["user_status"].(float64)
-		username, _ := claims["username"].(string)
 		role, _ := claims["role"].(string)
+		if claimsUsername, _ := claims["username"].(string); claimsUsername != "" && claimsUsername != username {
+			log.L(c).Warnf("Authorizator: 身份与 claims 不一致，claims=%s identity=%s", claimsUsername, username)
+		}
 
 		if username == "" {
 			elapsed := time.Since(start)
@@ -627,7 +690,7 @@ func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context)
 			if elapsed < targetDelay {
 				time.Sleep(targetDelay - elapsed)
 			}
-			log.L(c).Warnf("用户%s没有查询到", username)
+			log.L(c).Warn("Authorizator: 无法解析身份信息，拒绝访问")
 			return false
 		}
 
@@ -679,6 +742,17 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire 
 	if user != nil {
 		username = user.Name
 	}
+	if ttl, ok := g.debugTokenOverride(c); ok {
+		newToken, newExpire, err := g.reissueAccessTokenWithTTL(atToken, ttl)
+		if err != nil {
+			log.Errorf("调试令牌过期覆盖失败: %v", err)
+			core.WriteResponse(c, errors.WithCode(code.ErrInternal, "调试令牌生成失败"), nil)
+			return
+		}
+		atToken = newToken
+		expire = newExpire
+	}
+
 	// 获取刷新令牌
 	refreshToken, userID, err := g.generateRefreshTokenAndGetUserID(c, atToken)
 	if err != nil {
@@ -1494,8 +1568,8 @@ func (g *GenericAPIServer) storeCompleteAuthSession(userID, refreshToken string)
 
 	//atExpire := g.options.JwtOptions.Timeout
 	rtExpire := g.options.JwtOptions.MaxRefresh
-	refreshTokenKey := authkeys.RefreshTokenKey(userID, refreshToken)
-	userSessionsKey := authkeys.UserSessionsKey(userID)
+	refreshTokenKey := authkeys.WithGenericPrefix(authkeys.RefreshTokenKey(userID, refreshToken))
+	userSessionsKey := authkeys.WithGenericPrefix(authkeys.UserSessionsKey(userID))
 
 	_, err := client.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.Set(ctx, refreshTokenKey, userID, rtExpire)
@@ -1512,8 +1586,8 @@ func (g *GenericAPIServer) storeCompleteAuthSession(userID, refreshToken string)
 func (g *GenericAPIServer) rollbackAuthSession(userID, refreshToken string) {
 	ctx := context.Background()
 	client := g.redis.GetClient()
-	refreshTokenKey := authkeys.RefreshTokenKey(userID, refreshToken)
-	userSessionsKey := authkeys.UserSessionsKey(userID)
+	refreshTokenKey := authkeys.WithGenericPrefix(authkeys.RefreshTokenKey(userID, refreshToken))
+	userSessionsKey := authkeys.WithGenericPrefix(authkeys.UserSessionsKey(userID))
 
 	log.Warnf("执行登录会话回滚: user_id=%s", userID)
 

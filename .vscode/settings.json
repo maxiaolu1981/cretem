@@ -1,19 +1,140 @@
 {
-    "sqltools.connections": [
-        {
-            "mysqlOptions": {
-                "authProtocol": "default",
-                "enableSsl": "Disabled"
-            },
-            "ssh": "Disabled",
-            "previewLimit": 50,
-            "server": "localhost",
-            "port": 3306,
-            "driver": "MariaDB",
-            "name": "server",
-            "database": "iam",
-            "username": "iam",
-            "askForPassword": true
-        }
-    ]
+  // =============================================
+  // GitLens 配置 - Git 超级增强
+  // =============================================
+  "gitlens.currentLine.enabled": true,
+  "gitlens.hovers.currentLine.over": "line",
+  "gitlens.statusBar.enabled": true,
+  
+  // 代码透镜增强
+  "gitlens.codeLens.enabled": true,
+  "gitlens.codeLens.scopes": [
+    "document",
+    "containers"
+  ],
+  "gitlens.codeLens.symbolScopes": [
+    "method",
+    "function",
+    "class"
+  ],
+  
+  // 悬停信息配置
+  "gitlens.hovers.enabled": true,
+  "gitlens.hovers.avatars": true,
+  "gitlens.hovers.annotations": true,
+  "gitlens.hovers.currentLine.delay": 500,
+  
+  // 提交信息增强
+  "gitlens.blame.avatars": false,
+  "gitlens.blame.format": "${author.name}, ${time.fromNow}",
+  "gitlens.blame.heatmap.enabled": true,
+  
+  // 历史记录可视化
+  "gitlens.historyExplorer.enabled": true,
+  "gitlens.fileHistory.enabled": true,
+  "gitlens.lineHistory.enabled": true,
+  
+  // 分支和时间线
+  "gitlens.graphs.repository.enabled": true,
+  "gitlens.timeline.pageSize": 50,
+  
+  // 比较和差异
+  "gitlens.views.compare.enabled": true,
+  "gitlens.views.repositories.enabled": true,
+
+  // =============================================
+  // SQLTools 数据库连接配置
+  // =============================================
+  "sqltools.connections": [
+    {
+      "mysqlOptions": {
+        "authProtocol": "default",
+        "enableSsl": "Disabled"
+      },
+      "ssh": "Disabled",
+      "previewLimit": 50,
+      "server": "localhost",
+      "port": 3306,
+      "driver": "MariaDB",
+      "name": "IAM Database",
+      "database": "iam",
+      "username": "iam",
+      "askForPassword": true
+    }
+  ],
+
+  // =============================================
+  // 通用开发配置
+  // =============================================
+  
+  // 文件排除
+  "files.exclude": {
+    "**/node_modules": true,
+    "**/output": true,
+    "**/tmp": true,
+    "**/vendor": true,
+    "**/.git": true,
+    "**/.DS_Store": true
+  },
+  
+  // 搜索排除
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/output": true,
+    "**/tmp": true,
+    "**/vendor": true
+  },
+  
+  // 自动保存
+  "files.autoSave": "onFocusChange",
+  
+  // 格式化配置
+  "editor.formatOnSave": true,
+  "editor.formatOnPaste": true,
+  
+  // 括号配对
+  "editor.matchBrackets": "always",
+  "editor.bracketPairColorization.enabled": true,
+  
+  // 代码镜头 (显示引用计数等)
+  "editor.codeLens": true,
+
+  // =============================================
+  // Go 语言特定配置 (如果是 Go 项目)
+  // =============================================
+  "go.useLanguageServer": true,
+  "go.lintOnSave": "file",
+  "go.formatTool": "gofmt",
+  "go.testFlags": ["-v"],
+  "go.coverOnSave": false,
+  "go.autocompleteUnimportedPackages": true,
+
+  // =============================================
+  // 终端配置
+  // =============================================
+  "terminal.integrated.shell.linux": "/bin/bash",
+  "terminal.integrated.fontSize": 14,
+  
+  // =============================================
+  // 扩展特定配置
+  // =============================================
+  
+  // Error Lens - 在代码行内显示错误
+  "errorLens.enabled": true,
+  "errorLens.fontSize": "12px",
+  
+  // Todo Tree - 高亮 TODO 注释
+  "todo-tree.general.tags": [
+    "TODO",
+    "FIXME",
+    "HACK",
+    "BUG",
+    "NOTE"
+  ],
+  "todo-tree.highlights.defaultHighlight": {
+    "foreground": "#ff0000",
+    "background": "#ffffff",
+    "icon": "checklist",
+    "iconColour": "#ff0000"
+  }
 }

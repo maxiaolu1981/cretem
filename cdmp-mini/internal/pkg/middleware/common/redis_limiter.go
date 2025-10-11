@@ -83,9 +83,28 @@ func buildRedisKey(redisCluster *storage.RedisCluster, key string) string {
 
 // LoginRateLimiter 优化的登录限流中间件
 func LoginRateLimiter(redisCluster *storage.RedisCluster, limit int, window time.Duration) gin.HandlerFunc {
-	windowSec := int64(window.Seconds())
+	return loginRateLimiter(redisCluster, func() (int, time.Duration) {
+		return limit, window
+	})
+}
 
+// LoginRateLimiterWithProvider 支持动态调整的登录限流中间件
+func LoginRateLimiterWithProvider(redisCluster *storage.RedisCluster, provider func() (int, time.Duration)) gin.HandlerFunc {
+	return loginRateLimiter(redisCluster, provider)
+}
+
+func loginRateLimiter(redisCluster *storage.RedisCluster, provider func() (int, time.Duration)) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		limit, window := provider()
+		if limit <= 0 {
+			c.Next()
+			return
+		}
+		if window <= 0 {
+			window = time.Minute
+		}
+		windowSec := int64(window.Seconds())
+
 		identifier := "ip:" + c.ClientIP()
 		rateLimitKey := buildRedisKey(redisCluster, "ratelimit:login:"+identifier)
 

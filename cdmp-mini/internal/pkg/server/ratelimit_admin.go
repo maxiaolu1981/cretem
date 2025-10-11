@@ -10,9 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/go-redis/redis/v8"
 	apiserveropts "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
+	coreerrors "github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
 // 查询当前限流配置
@@ -173,6 +175,77 @@ func RegisterRateLimitAdminHandlers(rg *gin.RouterGroup, redisCluster *storage.R
 		}
 		_ = redisCluster.GetClient().Del(ctx, metaKey).Err()
 		core.WriteResponse(c, nil, gin.H{"result": "deleted"})
+	})
+}
+
+type loginLimitRequest struct {
+	Value int `json:"value" binding:"required"`
+}
+
+func RegisterLoginLimitHandlers(rg *gin.RouterGroup, srv *GenericAPIServer, opts *apiserveropts.Options) {
+	if rg == nil || srv == nil {
+		return
+	}
+	rg.GET("/ratelimit/login", func(c *gin.Context) {
+		if opts.ServerRunOptions.AdminToken != "" {
+			provided := c.GetHeader("X-Admin-Token")
+			if provided == "" || provided != opts.ServerRunOptions.AdminToken {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
+		} else if !isLocalOrDebug(c, opts) {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		current := int(srv.loginLimit.Load())
+		if current <= 0 {
+			current = opts.ServerRunOptions.LoginRateLimit
+		}
+		core.WriteResponse(c, nil, gin.H{
+			"value":     current,
+			"window":    opts.ServerRunOptions.LoginWindow.String(),
+			"effective": current > 0,
+		})
+	})
+
+	rg.POST("/ratelimit/login", func(c *gin.Context) {
+		if opts.ServerRunOptions.AdminToken != "" {
+			provided := c.GetHeader("X-Admin-Token")
+			if provided == "" || provided != opts.ServerRunOptions.AdminToken {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
+		} else if !isLocalOrDebug(c, opts) {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		var req loginLimitRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			core.WriteResponse(c, err, nil)
+			return
+		}
+		if req.Value < 0 {
+			core.WriteResponse(c, coreerrors.WithCode(code.ErrInvalidParameter, "限流值不能为负数"), nil)
+			return
+		}
+		srv.loginLimit.Store(int64(req.Value))
+		core.WriteResponse(c, nil, gin.H{"result": "ok", "value": req.Value})
+	})
+
+	rg.DELETE("/ratelimit/login", func(c *gin.Context) {
+		if opts.ServerRunOptions.AdminToken != "" {
+			provided := c.GetHeader("X-Admin-Token")
+			if provided == "" || provided != opts.ServerRunOptions.AdminToken {
+				c.AbortWithStatus(http.StatusUnauthorized)
+				return
+			}
+		} else if !isLocalOrDebug(c, opts) {
+			c.AbortWithStatus(http.StatusForbidden)
+			return
+		}
+		defaultLimit := opts.ServerRunOptions.LoginRateLimit
+		srv.loginLimit.Store(int64(defaultLimit))
+		core.WriteResponse(c, nil, gin.H{"result": "reset", "value": defaultLimit})
 	})
 }
 

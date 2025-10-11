@@ -169,6 +169,7 @@ type Config struct {
 	LogFile         string
 	Sinks           []Sink
 	EnableMetrics   bool
+	RecentBuffer    int
 }
 
 // Manager 负责异步收集并分发审计事件。
@@ -182,6 +183,9 @@ type Manager struct {
 
 	once sync.Once
 	wg   sync.WaitGroup
+
+	recentMu sync.RWMutex
+	recent   []Event
 }
 
 func NewManager(cfg Config) (*Manager, error) {
@@ -193,6 +197,9 @@ func NewManager(cfg Config) (*Manager, error) {
 	}
 	if cfg.ShutdownTimeout <= 0 {
 		cfg.ShutdownTimeout = 5 * time.Second
+	}
+	if cfg.RecentBuffer <= 0 {
+		cfg.RecentBuffer = 256
 	}
 
 	sinks := dedupeSinks(cfg.Sinks)
@@ -217,6 +224,7 @@ func NewManager(cfg Config) (*Manager, error) {
 		events: make(chan Event, cfg.BufferSize),
 		ctx:    ctx,
 		cancel: cancel,
+		recent: make([]Event, 0, cfg.RecentBuffer),
 	}
 
 	m.wg.Add(1)
@@ -263,6 +271,7 @@ func (m *Manager) Submit(ctx context.Context, event Event) {
 		event.OccurredAt = time.Now()
 	}
 	cloned := event.Clone()
+	m.appendRecent(cloned)
 
 	select {
 	case m.events <- cloned:
@@ -329,6 +338,50 @@ func (m *Manager) dispatch(event Event) {
 			})
 		}
 	}
+}
+
+func (m *Manager) appendRecent(event Event) {
+	if m == nil || !m.cfg.Enabled {
+		return
+	}
+	m.recentMu.Lock()
+	defer m.recentMu.Unlock()
+	if len(m.recent) >= m.cfg.RecentBuffer {
+		// drop oldest
+		copy(m.recent, m.recent[1:])
+		m.recent[len(m.recent)-1] = event
+		return
+	}
+	m.recent = append(m.recent, event)
+}
+
+// Recent 返回最近 limit 条审计事件，最新事件在前。
+func (m *Manager) Recent(limit int) []Event {
+	if m == nil || !m.cfg.Enabled || limit <= 0 {
+		return nil
+	}
+	m.recentMu.RLock()
+	defer m.recentMu.RUnlock()
+	if len(m.recent) == 0 {
+		return nil
+	}
+	if limit > len(m.recent) {
+		limit = len(m.recent)
+	}
+	result := make([]Event, 0, limit)
+	for i := 0; i < limit; i++ {
+		idx := len(m.recent) - 1 - i
+		if idx < 0 {
+			break
+		}
+		result = append(result, m.recent[idx])
+	}
+	return result
+}
+
+// Enabled 返回审计是否开启。
+func (m *Manager) Enabled() bool {
+	return m != nil && m.cfg.Enabled
 }
 
 // BuildEventFromRequest 根据 HTTP 请求快速构建事件骨架。

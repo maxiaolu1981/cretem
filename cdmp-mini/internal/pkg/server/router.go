@@ -83,6 +83,7 @@ func (g *GenericAPIServer) installSystemRoutes() error {
 	// 注册简单的管理接口组（仅本地或debug模式可访问）
 	admin := g.Group("/admin")
 	RegisterRateLimitAdminHandlers(admin, g.redis, g.options)
+	RegisterAuditAdminHandlers(admin, g.audit, g.options)
 	return nil
 }
 
@@ -96,9 +97,17 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 		return fmt.Errorf("转换jwtStrategy错误")
 	}
 
-	loginLimiter := common.LoginRateLimiter(g.redis,
-		g.options.ServerRunOptions.LoginRateLimit,
-		g.options.ServerRunOptions.LoginWindow)
+	loginLimiter := common.LoginRateLimiterWithProvider(g.redis, func() (int, time.Duration) {
+		limit := int(g.loginLimit.Load())
+		if limit <= 0 {
+			limit = g.options.ServerRunOptions.LoginRateLimit
+		}
+		window := g.options.ServerRunOptions.LoginWindow
+		if window <= 0 {
+			window = time.Minute
+		}
+		return limit, window
+	})
 	// 登录：使用 gin-jwt 的 LoginHandler（需要认证中间件）
 	//g.Handle(http.MethodPost, "/login",
 	//	createAutHandler(), // 然后是认证相关的中间件

@@ -13,6 +13,7 @@ type AuditOptions struct {
 	ShutdownTimeout time.Duration `json:"shutdownTimeout" mapstructure:"shutdownTimeout"`
 	LogFile         string        `json:"logFile" mapstructure:"logFile"`
 	EnableMetrics   bool          `json:"enableMetrics" mapstructure:"enableMetrics"`
+	RecentBuffer    int           `json:"recentBuffer" mapstructure:"recentBuffer"`
 }
 
 func NewAuditOptions() *AuditOptions {
@@ -22,6 +23,7 @@ func NewAuditOptions() *AuditOptions {
 		ShutdownTimeout: 5 * time.Second,
 		LogFile:         "/var/log/iam/audit.log",
 		EnableMetrics:   true,
+		RecentBuffer:    256,
 	}
 }
 
@@ -35,6 +37,9 @@ func (o *AuditOptions) Complete() {
 	if o.LogFile == "" {
 		o.LogFile = "log/audit.log"
 	}
+	if o.RecentBuffer <= 0 {
+		o.RecentBuffer = 256
+	}
 }
 
 func (o *AuditOptions) Validate() []error {
@@ -47,4 +52,5 @@ func (o *AuditOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.DurationVar(&o.ShutdownTimeout, "audit.shutdown-timeout", o.ShutdownTimeout, "服务退出时等待审计队列耗尽的超时时间")
 	fs.StringVar(&o.LogFile, "audit.log-file", o.LogFile, "审计文件落地路径(JSON Lines)")
 	fs.BoolVar(&o.EnableMetrics, "audit.enable-metrics", o.EnableMetrics, "是否将审计事件写入指标监控")
+	fs.IntVar(&o.RecentBuffer, "audit.recent-buffer", o.RecentBuffer, "Recent audit events cache size for debugging/diagnostics")
 }
