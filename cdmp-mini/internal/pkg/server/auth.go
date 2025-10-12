@@ -344,6 +344,11 @@ func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 			return false
 		}
 
+		if user.Status == 0 {
+			log.Warnf("disabled user attempted basic auth: username=%s", username)
+			return false
+		}
+
 		matched, cmpErr := g.verifyPassword(user, password)
 		if cmpErr != nil || !matched {
 			return false
@@ -578,6 +583,14 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	if user == nil || !strings.EqualFold(user.Name, login.Username) {
 		err := errors.WithCode(code.ErrUserNotFound, "用户不存在")
 		log.Warnf("用户不存在: username=%s", login.Username)
+		g.maybeRecordLoginFailure(c, login.Username, err)
+		g.auditLoginAttempt(c, login.Username, "fail", err)
+		recordErrorToContext(c, err)
+		return nil, err
+	}
+	if user.Status == 0 {
+		err := errors.WithCode(code.ErrUserDisabled, "用户已经失效")
+		log.Warnf("disabled user login attempt blocked: username=%s", login.Username)
 		g.maybeRecordLoginFailure(c, login.Username, err)
 		g.auditLoginAttempt(c, login.Username, "fail", err)
 		recordErrorToContext(c, err)
@@ -1175,9 +1188,14 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 	}
 	accessToken := strings.TrimPrefix(authHeader, "Bearer ")
 
-	if err := g.validateSameSession(accessToken, r.RefreshToken); err != nil {
-		g.refreshError(c, username, err, metadata)
-		return
+	// 并发刷新场景下可能只携带 RT，此时跳过 AT 会话一致性校验
+	if strings.TrimSpace(accessToken) != "" {
+		if err := g.validateSameSession(accessToken, r.RefreshToken); err != nil {
+			g.refreshError(c, username, err, metadata)
+			return
+		}
+	} else {
+		metadata["has_access_token"] = false
 	}
 
 	rtClaims, err := parseTokenWithoutValidation(r.RefreshToken)
@@ -1191,6 +1209,9 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 		respErr := errors.WithCode(code.ErrTokenInvalid, "刷新令牌缺少用户标识")
 		g.refreshError(c, username, respErr, metadata)
 		return
+	}
+	if sessionID, _ := rtClaims["session_id"].(string); sessionID != "" {
+		c.Set("refresh_session_id", sessionID)
 	}
 
 	refreshTokenKey := authkeys.RefreshTokenKey(rtUserID, r.RefreshToken)
@@ -1232,6 +1253,16 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 		return
 	}
 
+	if atSessionID, ok := claims["session_id"].(string); ok && atSessionID != "" {
+		if rtSessionID, _ := c.Get("refresh_session_id"); rtSessionID != nil {
+			if rtSessionStr, ok := rtSessionID.(string); ok && rtSessionStr != "" && atSessionID != rtSessionStr {
+				respErr := errors.WithCode(code.ErrTokenMismatch, "access token和refresh token不匹配")
+				g.refreshError(c, username, respErr, metadata)
+				return
+			}
+		}
+	}
+
 	user, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{}, g.options)
 	if err != nil {
 		log.Errorf("查询用户信息失败: %v", err)
@@ -1268,18 +1299,21 @@ func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 func (g *GenericAPIServer) generateAccessTokenAndGetID(c *gin.Context) (string, time.Time, error) {
 	user := c.MustGet("current_user").(*v1.User)
 
-	// 使用短的过期时间（AT的过期时间）
-	expireTime := time.Now().Add(g.options.JwtOptions.Timeout) // 如15分钟
-	exp := expireTime.Unix()
-	claims := gojwt.MapClaims{
-		"iss":     APIServerIssuer,
-		"aud":     APIServerAudience,
-		"iat":     time.Now().Unix(),
-		"exp":     exp,
-		"jti":     idutil.GetUUID36("access_"),
-		"sub":     user.Name,
-		"user_id": user.ID,
-		"type":    "access", // 明确标记为Access Token
+	expireTime := time.Now().Add(g.options.JwtOptions.Timeout)
+	baseClaims := g.generateAccessTokenClaims(user)
+	claims := gojwt.MapClaims{}
+	for k, v := range baseClaims {
+		claims[k] = v
+	}
+	claims["exp"] = expireTime.Unix()
+	claims["iat"] = time.Now().Unix()
+	claims["jti"] = idutil.GetUUID36("access_")
+	claims["type"] = "access"
+
+	if sessionID, ok := c.Get("refresh_session_id"); ok {
+		if s, ok := sessionID.(string); ok && s != "" {
+			claims["session_id"] = s
+		}
 	}
 
 	token := gojwt.NewWithClaims(gojwt.SigningMethodHS256, claims)

@@ -111,9 +111,9 @@ func NewKafkaOptions() *KafkaOptions {
 		LagCheckInterval:       30 * time.Second, // 默认滞后检查间隔
 		MaxDBBatchSize:         200,              // 默认批量写DB大小
 		InstanceID:             "",               // 新增字段默认值为空，建议启动时赋值
-		StartingRate:           1000,
-		MinRate:                500,
-		MaxRate:                2000,
+		StartingRate:           2000,
+		MinRate:                1000,
+		MaxRate:                5000,
 		AdjustPeriod:           2 * time.Second,
 	}
 }

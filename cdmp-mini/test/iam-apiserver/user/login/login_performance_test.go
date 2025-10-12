@@ -540,7 +540,11 @@ func mixedTrafficAction(req loadRequest) loadOutcome {
 
 	case step == 8:
 		if session.tokens == nil {
-			flags := map[string]bool{"refresh_failure": true, "missing_tokens": true}
+			flags := map[string]bool{
+				"refresh_attempt": true,
+				"refresh_failure": true,
+				"missing_tokens":  true,
+			}
 			return loadOutcome{Success: false, Flags: flags}
 		}
 		resp, err := req.Env.Refresh(session.tokens.AccessToken, session.tokens.RefreshToken)
@@ -560,7 +564,11 @@ func mixedTrafficAction(req loadRequest) loadOutcome {
 
 	default:
 		if session.tokens == nil {
-			flags := map[string]bool{"logout_failure": true, "missing_tokens": true}
+			flags := map[string]bool{
+				"logout_attempt": true,
+				"logout_failure": true,
+				"missing_tokens": true,
+			}
 			return loadOutcome{Success: false, Flags: flags}
 		}
 		resp, err := req.Env.Logout(session.tokens.AccessToken, session.tokens.RefreshToken)

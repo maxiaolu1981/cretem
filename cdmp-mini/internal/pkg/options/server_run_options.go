@@ -133,8 +133,8 @@ func NewServerRunOptions() *ServerRunOptions {
 		LoginUpdateBatchSize:     64,
 		LoginUpdateFlushInterval: 200 * time.Millisecond,
 		LoginUpdateTimeout:       2 * time.Second,
-		LoginCredentialCacheTTL:  30 * time.Second,
-		LoginCredentialCacheSize: 1024,
+		LoginCredentialCacheTTL:  30 * time.Second, //凭证缓存有效期
+		LoginCredentialCacheSize: 1024,             //凭证缓存最大条目数
 		AdminToken:               "",
 		EnableRateLimiter:        true, // 默认启用生产端限流器
 	}

@@ -1,0 +1,29 @@
+[
+  {
+    "scenario": "login_refresh_parallel",
+    "requests": 1000,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 102,
+    "qps": 9724.51121008589,
+    "error_count": 0,
+    "success_count": 1000,
+    "latency": {
+      "min_ms": 1.277424,
+      "max_ms": 50.380959,
+      "avg_ms": 9.498383593,
+      "p50_ms": 7.76607,
+      "p90_ms": 18.067763,
+      "p95_ms": 25.539028,
+      "p99_ms": 43.844287
+    },
+    "counters": {
+      "refresh_attempt": 1000,
+      "refresh_success": 1000
+    },
+    "notes": [
+      "refresh_attempt=1000",
+      "refresh_success=1000"
+    ]
+  }
+]

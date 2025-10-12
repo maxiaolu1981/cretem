@@ -522,8 +522,8 @@ func InclusiveRangeError(lo, hi int) string {
 
 // 密码校验规则
 const (
-	minPassLength = 8  // 密码最小长度
-	maxPassLength = 16 // 密码最大长度
+	minPassLength = 8   // 密码最小长度
+	maxPassLength = 200 // 密码最大长度
 )
 
 // IsValidPassword 验证密码是否合法，返回具体错误信息
