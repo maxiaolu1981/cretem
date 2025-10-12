@@ -18,6 +18,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/business/auth"
+
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
@@ -48,15 +49,14 @@ func (g *GenericAPIServer) installRoutes() error {
 	}
 
 	// 管理路由（需要管理员认证）- 系统管理功能
-	//if err := installAdminRoutes(engine, opts); err != nil {
-	//	return err
-	//.}
+	if err := g.installAdminRoutes(); err != nil {
+		return err
+	}
 
 	// 6. 内部路由（内部服务调用）- 服务间通信
 	//if err := installInternalRoutes(engine, opts); err != nil {
 	//		return err
 	//	}
-
 	return nil
 }
 
@@ -80,10 +80,6 @@ func (g *GenericAPIServer) installSystemRoutes() error {
 		core.WriteResponse(c, nil, version.Get().ToJSON())
 	})
 
-	// 注册简单的管理接口组（仅本地或debug模式可访问）
-	admin := g.Group("/admin")
-	RegisterRateLimitAdminHandlers(admin, g.redis, g.options)
-	RegisterAuditAdminHandlers(admin, g.audit, g.options)
 	return nil
 }
 
@@ -108,11 +104,7 @@ func (g *GenericAPIServer) installAuthRoutes() error {
 		}
 		return limit, window
 	})
-	// 登录：使用 gin-jwt 的 LoginHandler（需要认证中间件）
-	//g.Handle(http.MethodPost, "/login",
-	//	createAutHandler(), // 然后是认证相关的中间件
-	//		jwt.LoginHandler,   // 最后是实际的登录处理函数
-	//)
+
 	g.Handle(http.MethodPost, "/login",
 		loginLimiter,       // 限流放在最前面
 		createAutHandler(), // 然后是认证相关的中间件
@@ -166,8 +158,9 @@ func (g *GenericAPIServer) installApiRoutes() error {
 			return err == nil && v == "1"
 		})
 
-		userv1.DELETE(":name", userController.Delete)
+		//userv1.DELETE(":name", userController.Delete)
 		userv1.DELETE(":name/force", lagProtect, writeLimit, userController.ForceDelete)
+		userv1.DELETE("", lagProtect, writeLimit, userController.DeleteCollection)
 		userv1.POST("", lagProtect, writeLimit, userController.Create)
 		userv1.PUT(":name", lagProtect, writeLimit, userController.Update)
 		userv1.GET(":name", userController.Get)
@@ -193,4 +186,11 @@ func createAutHandler() gin.HandlerFunc {
 		//jwtHandler(c) // 格式正确才进入实际登录逻辑
 		c.Next()
 	}
+}
+func (g *GenericAPIServer) installAdminRoutes() error {
+	admin := g.Group("/admin")
+	RegisterRateLimitAdminHandlers(admin, g.redis, g.options)
+	RegisterAuditAdminHandlers(admin, g.audit, g.options)
+	RegisterLoginLimitHandlers(admin, g, g.options)
+	return nil
 }

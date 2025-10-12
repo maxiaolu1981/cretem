@@ -34,6 +34,8 @@ type ErrResponse struct {
 
 	// Reference 指向解决该错误的参考文档（可选，不存在时会省略）
 	Reference string `json:"reference,omitempty"`
+	// Data 可选的附加数据字段，提供更多错误上下文（如调试信息）
+	Data interface{} `json:"data,omitempty"`
 }
 
 func WriteResponse(c *gin.Context, err error, data interface{}) {
@@ -41,9 +43,10 @@ func WriteResponse(c *gin.Context, err error, data interface{}) {
 		// 错误处理保持不变
 		coder := errors.ParseCoderByErr(err)
 		c.JSON(coder.HTTPStatus(), ErrResponse{
-			Code:      coder.Code(),
-			Message:   coder.String(),
+			Code:      errors.GetCode(err),
+			Message:   err.Error(),
 			Reference: coder.Reference(),
+			Data:      data,
 		})
 		return
 	}

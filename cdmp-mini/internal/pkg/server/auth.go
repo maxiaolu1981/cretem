@@ -58,7 +58,7 @@ const (
 )
 
 func (g *GenericAPIServer) auditLoginAttempt(c *gin.Context, username, outcome string, err error) {
-	if g == nil {
+	if g == nil || c == nil {
 		return
 	}
 	event := audit.BuildEventFromRequest(c.Request)
@@ -78,42 +78,40 @@ func (g *GenericAPIServer) auditLoginAttempt(c *gin.Context, username, outcome s
 	if route := c.FullPath(); route != "" {
 		event.Metadata["route"] = route
 	}
-	if c != nil {
-		if maxVal, ok := c.Get(ctxLoginFailMaxKey); ok {
-			event.Metadata["login_fail_limit"] = maxVal
-		}
-		if countVal, ok := c.Get(ctxLoginFailCountKey); ok {
-			event.Metadata["login_fail_count"] = countVal
-		}
-		if ttlVal, ok := c.Get(ctxLoginFailTTLKey); ok {
-			switch v := ttlVal.(type) {
-			case time.Duration:
-				if v > 0 {
-					event.Metadata["login_fail_ttl_seconds"] = int(math.Ceil(v.Seconds()))
-				}
-			case int:
-				if v > 0 {
-					event.Metadata["login_fail_ttl_seconds"] = v
-				}
-			case int64:
-				if v > 0 {
-					event.Metadata["login_fail_ttl_seconds"] = int(v)
-				}
-			case float64:
-				if v > 0 {
-					event.Metadata["login_fail_ttl_seconds"] = int(math.Ceil(v))
-				}
+	if maxVal, ok := c.Get(ctxLoginFailMaxKey); ok {
+		event.Metadata["login_fail_limit"] = maxVal
+	}
+	if countVal, ok := c.Get(ctxLoginFailCountKey); ok {
+		event.Metadata["login_fail_count"] = countVal
+	}
+	if ttlVal, ok := c.Get(ctxLoginFailTTLKey); ok {
+		switch v := ttlVal.(type) {
+		case time.Duration:
+			if v > 0 {
+				event.Metadata["login_fail_ttl_seconds"] = int(math.Ceil(v.Seconds()))
+			}
+		case int:
+			if v > 0 {
+				event.Metadata["login_fail_ttl_seconds"] = v
+			}
+		case int64:
+			if v > 0 {
+				event.Metadata["login_fail_ttl_seconds"] = int(v)
+			}
+		case float64:
+			if v > 0 {
+				event.Metadata["login_fail_ttl_seconds"] = int(math.Ceil(v))
 			}
 		}
-		if statusVal, ok := c.Get(ctxLoginFailStatusKey); ok {
-			event.Metadata["login_fail_status"] = statusVal
-		}
+	}
+	if statusVal, ok := c.Get(ctxLoginFailStatusKey); ok {
+		event.Metadata["login_fail_status"] = statusVal
 	}
 	g.submitAuditEvent(c.Request.Context(), event)
 }
 
 func (g *GenericAPIServer) auditLogoutEvent(c *gin.Context, username, outcome, reason string) {
-	if g == nil {
+	if g == nil || c == nil {
 		return
 	}
 	event := audit.BuildEventFromRequest(c.Request)
@@ -134,6 +132,39 @@ func (g *GenericAPIServer) auditLogoutEvent(c *gin.Context, username, outcome, r
 		event.Metadata["route"] = route
 	}
 	g.submitAuditEvent(c.Request.Context(), event)
+}
+
+func (g *GenericAPIServer) auditRefreshEvent(c *gin.Context, username, outcome string, err error, metadata map[string]any) {
+	if g == nil || c == nil {
+		return
+	}
+	event := audit.BuildEventFromRequest(c.Request)
+	if username != "" {
+		event.Actor = username
+		event.ResourceID = username
+	}
+	event.Action = "auth.refresh"
+	event.ResourceType = "auth"
+	event.Outcome = outcome
+	if err != nil {
+		event.ErrorMessage = err.Error()
+	}
+	if event.Metadata == nil {
+		event.Metadata = map[string]any{}
+	}
+	for k, v := range metadata {
+		event.Metadata[k] = v
+	}
+	submitAuditFromGinContext(c, event)
+}
+
+func (g *GenericAPIServer) refreshError(c *gin.Context, username string, err error, metadata map[string]any) {
+	if c == nil || err == nil {
+		return
+	}
+	recordErrorToContext(c, err)
+	g.auditRefreshEvent(c, username, "fail", err, metadata)
+	core.WriteResponse(c, err, nil)
 }
 
 func (g *GenericAPIServer) loginFailLimit() int {
@@ -990,118 +1021,143 @@ func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire 
 func (g *GenericAPIServer) ValidateATForRefreshMiddleware(c *gin.Context) {
 
 	if c.Request.Method != http.MethodPost {
-		core.WriteResponse(c, errors.WithCode(code.ErrMethodNotAllowed, "必须使用post方法传输"), nil)
+		err := errors.WithCode(code.ErrMethodNotAllowed, "必须使用post方法传输")
+		g.refreshError(c, "", err, nil)
 		return
 	}
-	//  获取刷新令牌
+
+	metadata := map[string]any{}
+
 	type TokenRequest struct {
 		RefreshToken string `json:"refresh_token"`
 	}
-	r := TokenRequest{}
+	var r TokenRequest
 	if err := c.ShouldBindJSON(&r); err != nil {
 		log.Warnf("解析刷新令牌错误%v", err)
-		core.WriteResponse(c, errors.WithCode(code.ErrBind, "解析刷新令牌错误,必须"), nil)
+		respErr := errors.WithCode(code.ErrBind, "解析刷新令牌错误,必须")
+		g.refreshError(c, "", respErr, metadata)
 		return
 	}
 	if r.RefreshToken == "" {
 		log.Warn("refresh token为空")
-		core.WriteResponse(c, errors.WithCode(code.ErrInvalidParameter, "refresh token为空"), nil)
+		respErr := errors.WithCode(code.ErrInvalidParameter, "refresh token为空")
+		g.refreshError(c, "", respErr, metadata)
 		return
 	}
-	//验证用户是否存在
+	metadata["has_refresh_token"] = true
+
 	claimsValue, exists := c.Get("jwt_claims")
 	if !exists {
-		core.WriteResponse(c, errors.WithCode(code.ErrInternal, "认证信息缺失"), nil)
+		respErr := errors.WithCode(code.ErrInternal, "认证信息缺失")
+		g.refreshError(c, "", respErr, metadata)
 		return
 	}
 	claims, ok := claimsValue.(gojwt.MapClaims)
 	if !ok {
-		core.WriteResponse(c, errors.WithCode(code.ErrInvalidParameter, "Token声明无效"), nil)
+		respErr := errors.WithCode(code.ErrInvalidParameter, "Token声明无效")
+		g.refreshError(c, "", respErr, metadata)
 		return
 	}
 	username, ok := getUsernameFromClaims(claims)
 	if !ok {
-		core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "请在username,sub,user任意字段中填入用户名"), nil)
+		respErr := errors.WithCode(code.ErrUserNotFound, "请在username,sub,user任意字段中填入用户名")
+		g.refreshError(c, "", respErr, metadata)
 		return
 	}
+	metadata["username"] = username
 
-	// 验证用户是否同一会话
-	accessToken := strings.TrimPrefix(c.GetHeader("Authorization"), "Bearer ")
+	authHeader := c.GetHeader("Authorization")
+	if authHeader != "" {
+		metadata["has_access_token"] = true
+	}
+	accessToken := strings.TrimPrefix(authHeader, "Bearer ")
 
 	if err := g.validateSameSession(accessToken, r.RefreshToken); err != nil {
-		core.WriteResponse(c, err, nil)
+		g.refreshError(c, username, err, metadata)
 		return
 	}
 
-	// 解析刷新令牌获取用户信息
 	rtClaims, err := parseTokenWithoutValidation(r.RefreshToken)
 	if err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrTokenInvalid, "刷新令牌无效或已过期"), nil)
+		respErr := errors.WithCode(code.ErrTokenInvalid, "刷新令牌无效或已过期")
+		g.refreshError(c, username, respErr, metadata)
 		return
 	}
 	rtUserID := getUserIDString(rtClaims["user_id"])
 	if rtUserID == "" {
-		core.WriteResponse(c, errors.WithCode(code.ErrTokenInvalid, "刷新令牌缺少用户标识"), nil)
+		respErr := errors.WithCode(code.ErrTokenInvalid, "刷新令牌缺少用户标识")
+		g.refreshError(c, username, respErr, metadata)
 		return
 	}
+
 	refreshTokenKey := authkeys.RefreshTokenKey(rtUserID, r.RefreshToken)
 	storedUserID, err := g.redis.GetKey(c, refreshTokenKey)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			core.WriteResponse(c, errors.WithCode(code.ErrExpired, "刷新令牌已经过期,请重新登录"), nil)
+			respErr := errors.WithCode(code.ErrExpired, "刷新令牌已经过期,请重新登录")
+			g.refreshError(c, username, respErr, metadata)
 			return
 		}
-		core.WriteResponse(c, errors.WithCode(code.ErrTokenInvalid, "刷新令牌无效或已过期"), nil)
+		respErr := errors.WithCode(code.ErrTokenInvalid, "刷新令牌无效或已过期")
+		g.refreshError(c, username, respErr, metadata)
 		return
 	}
 	if storedUserID == "" {
-		core.WriteResponse(c, errors.WithCode(code.ErrExpired, "刷新令牌已经过期,请重新登录"), nil)
+		respErr := errors.WithCode(code.ErrExpired, "刷新令牌已经过期,请重新登录")
+		g.refreshError(c, username, respErr, metadata)
 		return
 	}
+
 	userSessionsKey := authkeys.UserSessionsKey(rtUserID)
 	isMember, err := g.redis.IsMemberOfSet(c, userSessionsKey, r.RefreshToken)
 	if err != nil {
 		log.Errorf("验证Refresh Token会话失败: %v", err)
-		core.WriteResponse(c, errors.WithCode(code.ErrInternal, "验证Refresh Token会话失败"), nil)
+		respErr := errors.WithCode(code.ErrInternal, "验证Refresh Token会话失败")
+		g.refreshError(c, username, respErr, metadata)
 		return
 	}
 	if !isMember {
-		core.WriteResponse(c, errors.WithCode(code.ErrExpired, "刷新令牌已失效，请重新登录"), nil)
+		respErr := errors.WithCode(code.ErrExpired, "刷新令牌已失效，请重新登录")
+		g.refreshError(c, username, respErr, metadata)
 		return
 	}
 
-	//验证用户一致性
 	claimsUserID := getUserIDString(claims["user_id"])
 	if claimsUserID == "" || claimsUserID != rtUserID {
-		core.WriteResponse(c, errors.WithCode(code.ErrPermissionDenied, "用户身份不匹配"), nil)
+		respErr := errors.WithCode(code.ErrPermissionDenied, "用户身份不匹配")
+		g.refreshError(c, username, respErr, metadata)
 		return
 	}
-	//获取用户全部信息,作为上下文保存
+
 	user, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{}, g.options)
 	if err != nil {
 		log.Errorf("查询用户信息失败: %v", err)
-		core.WriteResponse(c, errors.WithCode(code.ErrUserNotFound, "用户不存在"), nil)
+		respErr := errors.WithCode(code.ErrUserNotFound, "用户不存在")
+		g.refreshError(c, username, respErr, metadata)
 		return
 	}
-	// 4. 设置上下文（为了后续函数）
 	c.Set("current_user", user)
 
 	newAccessToken, exp, err := g.generateAccessTokenAndGetID(c)
 	if err != nil {
-		core.WriteResponse(c, errors.WithCode(code.ErrInternal, "访问令牌生成错误%v", err), nil)
+		respErr := errors.WithCode(code.ErrInternal, "访问令牌生成错误%v", err)
+		g.refreshError(c, username, respErr, metadata)
 		return
 	}
 
 	expireIn := int64(time.Until(exp).Seconds())
-	// 避免负数（若已过期，强制设为0）
 	if expireIn < 0 {
 		expireIn = 0
 	}
 
-	core.WriteResponse(c, nil, map[string]string{
+	response := map[string]string{
 		"access_token": newAccessToken,
 		"expire_in":    strconv.Itoa(int(expireIn)),
 		"token_type":   "Bearer",
+	}
+	core.WriteResponse(c, nil, response)
+	g.auditRefreshEvent(c, username, "success", nil, map[string]any{
+		"expire_in_seconds": expireIn,
 	})
 
 }

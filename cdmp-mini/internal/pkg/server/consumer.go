@@ -826,89 +826,89 @@ func (c *UserConsumer) sendToDeadLetter(ctx context.Context, msg kafka.Message, 
 }
 
 // 修改 startLagMonitor 方法
-func (c *UserConsumer) startLagMonitor(ctx context.Context) {
-	go func() {
-		ticker := time.NewTicker(c.opts.LagCheckInterval)
-		defer ticker.Stop()
+// func (c *UserConsumer) startLagMonitor(ctx context.Context) {
+// 	go func() {
+// 		ticker := time.NewTicker(c.opts.LagCheckInterval)
+// 		defer ticker.Stop()
 
-		for {
-			select {
-			case <-ticker.C:
-				// 直接获取统计信息，不需要检查 nil
-				stats := c.reader.Stats()
-				metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(float64(stats.Lag))
-				// 1. 每个实例定期上报自己的 lag 到 Redis
-				instanceKey := fmt.Sprintf("kafka:lag:%s:%s:%d", c.topic, c.groupID, c.instanceID)
-				err := c.redis.SetKey(ctx, instanceKey, fmt.Sprintf("%d", stats.Lag), 2*c.opts.LagCheckInterval)
-				if err != nil {
-					log.Errorf("[LagMonitor] 写入Redis失败: key=%s, lag=%d, err=%v", instanceKey, stats.Lag, err)
-				} else {
-					//		log.Debugf("[LagMonitor] 写入Redis: key=%s, lag=%d", instanceKey, stats.Lag)
-				}
+// 		for {
+// 			select {
+// 			case <-ticker.C:
+// 				// 直接获取统计信息，不需要检查 nil
+// 				stats := c.reader.Stats()
+// 				metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(float64(stats.Lag))
+// 				// 1. 每个实例定期上报自己的 lag 到 Redis
+// 				instanceKey := fmt.Sprintf("kafka:lag:%s:%s:%d", c.topic, c.groupID, c.instanceID)
+// 				err := c.redis.SetKey(ctx, instanceKey, fmt.Sprintf("%d", stats.Lag), 2*c.opts.LagCheckInterval)
+// 				if err != nil {
+// 					log.Errorf("[LagMonitor] 写入Redis失败: key=%s, lag=%d, err=%v", instanceKey, stats.Lag, err)
+// 				} else {
+// 					//		log.Debugf("[LagMonitor] 写入Redis: key=%s, lag=%d", instanceKey, stats.Lag)
+// 				}
 
-				// 主控选举：用 Redis 分布式锁，锁定 2*LagCheckInterval
-				masterKey := fmt.Sprintf("kafka:lag:master:%s:%s", c.topic, c.groupID)
-				lockVal := fmt.Sprintf("%d", c.instanceID)
-				// 尝试抢占主控
-				gotLock := false
-				if !c.isMaster {
-					success, err := c.redis.SetNX(ctx, masterKey, lockVal, 2*c.opts.LagCheckInterval)
-					if err == nil && success {
-						c.isMaster = true
-						gotLock = true
-						//				log.Debugf("[LagMonitor] 成为主控: masterKey=%s, val=%s", masterKey, lockVal)
-					}
-				} else {
-					// 检查自己是否还是主控
-					v, err := c.redis.GetKey(ctx, masterKey)
-					if err == nil && v == lockVal {
-						gotLock = true
-					} else {
-						c.isMaster = false
-						//						log.Debugf("[LagMonitor] 主控失效: masterKey=%s, val=%s, err=%v", masterKey, v, err)
+// 				// 主控选举：用 Redis 分布式锁，锁定 2*LagCheckInterval
+// 				masterKey := fmt.Sprintf("kafka:lag:master:%s:%s", c.topic, c.groupID)
+// 				lockVal := fmt.Sprintf("%d", c.instanceID)
+// 				// 尝试抢占主控
+// 				gotLock := false
+// 				if !c.isMaster {
+// 					success, err := c.redis.SetNX(ctx, masterKey, lockVal, 2*c.opts.LagCheckInterval)
+// 					if err == nil && success {
+// 						c.isMaster = true
+// 						gotLock = true
+// 						//				log.Debugf("[LagMonitor] 成为主控: masterKey=%s, val=%s", masterKey, lockVal)
+// 					}
+// 				} else {
+// 					// 检查自己是否还是主控
+// 					v, err := c.redis.GetKey(ctx, masterKey)
+// 					if err == nil && v == lockVal {
+// 						gotLock = true
+// 					} else {
+// 						c.isMaster = false
+// 						//						log.Debugf("[LagMonitor] 主控失效: masterKey=%s, val=%s, err=%v", masterKey, v, err)
 
-					}
-				}
+// 					}
+// 				}
 
-				// 全局聚合所有相关组 lag
-				if gotLock {
-					groups := []string{"user-service-prod.create", "user-service-prod.update", "user-service-prod.delete"}
-					totalLag := int64(0)
-					for _, group := range groups {
-						keys := c.redis.GetKeys(ctx, fmt.Sprintf("kafka:lag:%s:%s:*", c.topic, group))
-						for _, k := range keys {
-							v, err := c.redis.GetKey(ctx, k)
-							if err == nil {
-								var lag int64
-								fmt.Sscanf(v, "%d", &lag)
-								totalLag += lag
-							}
-						}
-					}
-					protectTTL := 2 * c.opts.LagCheckInterval
-					globalProtectKey := "kafka:lag:protect:ALL"
-					if totalLag >= c.opts.LagScaleThreshold {
-						_ = c.redis.SetKey(ctx, globalProtectKey, "1", protectTTL)
-					} else {
-						_ = c.redis.SetKey(ctx, globalProtectKey, "0", protectTTL)
-					}
-					//	log.Warnf("[全局保护] totalLag=%d, threshold=%d, master=%v", totalLag, c.opts.LagScaleThreshold, c.instanceID)
-				}
+// 				// 全局聚合所有相关组 lag
+// 				if gotLock {
+// 					groups := []string{"user-service-prod.create", "user-service-prod.update", "user-service-prod.delete"}
+// 					totalLag := int64(0)
+// 					for _, group := range groups {
+// 						keys := c.redis.GetKeys(ctx, fmt.Sprintf("kafka:lag:%s:%s:*", c.topic, group))
+// 						for _, k := range keys {
+// 							v, err := c.redis.GetKey(ctx, k)
+// 							if err == nil {
+// 								var lag int64
+// 								fmt.Sscanf(v, "%d", &lag)
+// 								totalLag += lag
+// 							}
+// 						}
+// 					}
+// 					protectTTL := 2 * c.opts.LagCheckInterval
+// 					globalProtectKey := "kafka:lag:protect:ALL"
+// 					if totalLag >= c.opts.LagScaleThreshold {
+// 						_ = c.redis.SetKey(ctx, globalProtectKey, "1", protectTTL)
+// 					} else {
+// 						_ = c.redis.SetKey(ctx, globalProtectKey, "0", protectTTL)
+// 					}
+// 					//	log.Warnf("[全局保护] totalLag=%d, threshold=%d, master=%v", totalLag, c.opts.LagScaleThreshold, c.instanceID)
+// 				}
 
-				// 3. 所有实例消费前检查保护信号
-				v, err := c.redis.GetKey(ctx, "kafka:lag:protect:ALL")
-				if err == nil && v == "1" {
-					metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(1)
-					// 这里可直接 return 或 sleep，阻断消费
-				} else {
-					metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(0)
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-}
+// 				// 3. 所有实例消费前检查保护信号
+// 				v, err := c.redis.GetKey(ctx, "kafka:lag:protect:ALL")
+// 				if err == nil && v == "1" {
+// 					metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(1)
+// 					// 这里可直接 return 或 sleep，阻断消费
+// 				} else {
+// 					metrics.ConsumerLag.WithLabelValues(c.topic, c.groupID).Set(0)
+// 				}
+// 			case <-ctx.Done():
+// 				return
+// 			}
+// 		}
+// 	}()
+// }
 
 // batchCreateToDB 使用 GORM 批量创建用户实体
 func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message) {

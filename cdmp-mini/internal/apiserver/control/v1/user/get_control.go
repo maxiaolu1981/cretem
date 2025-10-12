@@ -21,8 +21,8 @@ import (
 )
 
 func (u *UserController) Get(ctx *gin.Context) {
-	log.Debug("control:开始处理用户查询请求...")
-	metrics.MonitorBusinessOperation("user_service", "change_password", "http", func() error {
+	//log.Debug("control:开始处理用户查询请求...")
+	metrics.MonitorBusinessOperation("user_service", "get", "http", func() error {
 		operator := common.GetUsername(ctx.Request.Context())
 		username := ctx.Param("name")
 		auditLog := func(outcome, message string) {

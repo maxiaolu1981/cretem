@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -67,58 +68,61 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 		}
 		submitAudit(ctx, event)
 	}
-	if errs := validation.IsQualifiedName(deleteUsername); len(errs) > 0 {
-		errsMsg := strings.Join(errs, ":")
-		log.Warnf("[control] 用户名不合法: username=%s, error=%s", deleteUsername, errsMsg)
-		err := errors.WithCode(code.ErrInvalidParameter, "用户名不合法:%s", errsMsg)
-		core.WriteResponse(ctx, err, nil)
-		auditLog("fail", err.Error())
-		return
-	}
-
-	c := ctx.Request.Context()
-	// 使用HTTP请求的超时配置，而不是Redis超时
-	if _, hasDeadline := c.Deadline(); !hasDeadline {
-		var cancel context.CancelFunc
-		// 使用ServerRunOptions中的请求超时时间
-		requestTimeout := u.options.ServerRunOptions.CtxTimeout
-		if requestTimeout == 0 {
-			requestTimeout = 30 * time.Second // 默认30秒
+	metrics.MonitorBusinessOperation("user_service", "get", "http", func() error {
+		if errs := validation.IsQualifiedName(deleteUsername); len(errs) > 0 {
+			errsMsg := strings.Join(errs, ":")
+			log.Warnf("[control] 用户名不合法: username=%s, error=%s", deleteUsername, errsMsg)
+			err := errors.WithCode(code.ErrInvalidParameter, "用户名不合法:%s", errsMsg)
+			core.WriteResponse(ctx, err, nil)
+			auditLog("fail", err.Error())
+			return err
 		}
-		c, cancel = context.WithTimeout(c, requestTimeout)
-		defer cancel()
-	}
 
-	rawDelErr := u.srv.Users().Delete(
-		c,
-		deleteUsername,
-		true, // force=true：强制删除
-		metav1.DeleteOptions{Unscoped: true},
-		u.options,
-	)
-	if rawDelErr != nil {
-		log.Errorf("[control] 用户强制删除 service 层失败: username=%s, error=%v", deleteUsername, rawDelErr)
-		err := errors.WrapC(
-			rawDelErr,
-			code.ErrInternalServer,
-			"用户[%s]强制删除失败，请稍后重试",
+		c := ctx.Request.Context()
+		// 使用HTTP请求的超时配置，而不是Redis超时
+		if _, hasDeadline := c.Deadline(); !hasDeadline {
+			var cancel context.CancelFunc
+			// 使用ServerRunOptions中的请求超时时间
+			requestTimeout := u.options.ServerRunOptions.CtxTimeout
+			if requestTimeout == 0 {
+				requestTimeout = 30 * time.Second // 默认30秒
+			}
+			c, cancel = context.WithTimeout(c, requestTimeout)
+			defer cancel()
+		}
+
+		rawDelErr := u.srv.Users().Delete(
+			c,
 			deleteUsername,
+			true, // force=true：强制删除
+			metav1.DeleteOptions{Unscoped: true},
+			u.options,
 		)
-		core.WriteResponse(ctx, err, nil)
-		auditLog("fail", err.Error())
-		return
-	}
+		if rawDelErr != nil {
+			log.Errorf("[control] 用户强制删除 service 层失败: username=%s, error=%v", deleteUsername, rawDelErr)
+			err := errors.WrapC(
+				rawDelErr,
+				code.ErrInternalServer,
+				"用户[%s]强制删除失败，请稍后重试",
+				deleteUsername,
+			)
+			core.WriteResponse(ctx, err, nil)
+			auditLog("fail", err.Error())
+			return err
+		}
 
-	//成功场景：返回 RESTful 标准 204 No Content（无响应体）
+		//成功场景：返回 RESTful 标准 204 No Content（无响应体）
 
-	// 构建成功数据
-	successData := gin.H{
-		"delete_user":    deleteUsername,
-		"operator":       operator,
-		"operation_time": time.Now().Format(time.RFC3339),
-		"operation_type": "delete",
-	}
+		// 构建成功数据
+		successData := gin.H{
+			"delete_user":    deleteUsername,
+			"operator":       operator,
+			"operation_time": time.Now().Format(time.RFC3339),
+			"operation_type": "delete",
+		}
 
-	core.WriteResponse(ctx, nil, successData)
-	auditLog("success", "")
+		core.WriteResponse(ctx, nil, successData)
+		auditLog("success", "")
+		return nil
+	})
 }
