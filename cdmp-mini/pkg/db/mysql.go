@@ -24,6 +24,7 @@ type Options struct {
 	MaxConnectionLifeTime time.Duration    // 连接的最大可重用时间
 	LogLevel              int              // 日志级别（GORM 日志详细程度）
 	Logger                logger.Interface // GORM 日志器实例（用于自定义日志输出）
+	SlowQueryThreshold    time.Duration    // 自定义慢查询告警阈值
 	TablePrefix           string           // 表前缀
 	Timeout               time.Duration    // 连接超时
 
@@ -380,21 +381,10 @@ func setDefaultOptions(opts *Options) {
 		opts.ConnMaxIdleTime = 10 * time.Minute
 	}
 
-	// 日志默认值
-	if opts.Logger == nil {
-		logLevel := logger.Info
-		switch opts.LogLevel {
-		case 0:
-			logLevel = logger.Silent
-		case 1:
-			logLevel = logger.Error
-		case 2:
-			logLevel = logger.Warn
-		case 3:
-			logLevel = logger.Info
-		}
-		opts.Logger = logger.Default.LogMode(logLevel)
+	if opts.SlowQueryThreshold <= 0 {
+		opts.SlowQueryThreshold = 200 * time.Millisecond
 	}
+	opts.Logger = newGormLogger(opts)
 }
 
 // 原有的超时回调函数保持不变

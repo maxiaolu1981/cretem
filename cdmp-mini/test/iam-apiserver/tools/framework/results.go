@@ -23,13 +23,28 @@ type CaseResult struct {
 	Notes       []string        `json:"notes,omitempty"`
 }
 
+type LatencyStats struct {
+	MinMS float64 `json:"min_ms"`
+	MaxMS float64 `json:"max_ms"`
+	AvgMS float64 `json:"avg_ms"`
+	P50MS float64 `json:"p50_ms"`
+	P90MS float64 `json:"p90_ms"`
+	P95MS float64 `json:"p95_ms"`
+	P99MS float64 `json:"p99_ms"`
+}
+
 type PerformancePoint struct {
-	Scenario    string  `json:"scenario"`
-	Requests    int     `json:"requests"`
-	SuccessRate float64 `json:"success_rate"`
-	DurationMS  int64   `json:"duration_ms"`
-	QPS         float64 `json:"qps"`
-	ErrorCount  int     `json:"error_count"`
+	Scenario     string         `json:"scenario"`
+	Requests     int            `json:"requests"`
+	SuccessRate  float64        `json:"success_rate"`
+	ErrorRate    float64        `json:"error_rate"`
+	DurationMS   int64          `json:"duration_ms"`
+	QPS          float64        `json:"qps"`
+	ErrorCount   int            `json:"error_count"`
+	SuccessCount int            `json:"success_count,omitempty"`
+	Latency      LatencyStats   `json:"latency"`
+	Counters     map[string]int `json:"counters,omitempty"`
+	Notes        []string       `json:"notes,omitempty"`
 }
 
 type Recorder struct {

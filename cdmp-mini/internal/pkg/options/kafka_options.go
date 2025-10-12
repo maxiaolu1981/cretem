@@ -95,7 +95,7 @@ func NewKafkaOptions() *KafkaOptions {
 		MaxRetries:             4,
 		MinBytes:               50 * 1024,        // 10KB
 		MaxBytes:               10 * 1024 * 1024, // 10MB
-		WorkerCount:            3,
+		WorkerCount:            64,
 		RetryWorkerCount:       3,
 		EnableMetricsRefresh:   true,
 		MetricsRefreshInterval: 30 * time.Second,
@@ -111,9 +111,9 @@ func NewKafkaOptions() *KafkaOptions {
 		LagCheckInterval:       30 * time.Second, // 默认滞后检查间隔
 		MaxDBBatchSize:         200,              // 默认批量写DB大小
 		InstanceID:             "",               // 新增字段默认值为空，建议启动时赋值
-		StartingRate:           200,
-		MinRate:                50,
-		MaxRate:                300,
+		StartingRate:           1000,
+		MinRate:                500,
+		MaxRate:                2000,
 		AdjustPeriod:           2 * time.Second,
 	}
 }

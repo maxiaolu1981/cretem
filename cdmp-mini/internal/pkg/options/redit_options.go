@@ -215,5 +215,5 @@ func (r *RedisOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&r.SSLInsecureSkipVerify, "redis.ssl-insecure-skip-verify", r.SSLInsecureSkipVerify, "Skip SSL certificate verification (insecure, not recommended for production)")
 
 	fs.IntVar(&r.MaxRetries, "redis.max-retries", r.MaxRetries, "Maximum number of retries before giving up (default 3)")
-	fs.DurationVar(&r.MaxRetryDelay, "redis.max-retry-delay", r.MaxRetryDelay, "Maximum delay between retry attempts (default 30s)")		
+	fs.DurationVar(&r.MaxRetryDelay, "redis.max-retry-delay", r.MaxRetryDelay, "Maximum delay between retry attempts (default 30s)")
 }

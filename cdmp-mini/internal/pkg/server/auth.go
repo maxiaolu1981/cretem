@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	stdErrors "errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -37,6 +38,7 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 
 	"github.com/spf13/viper"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type loginInfo struct {
@@ -322,8 +324,18 @@ func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 	return auth.NewBasicStrategy(func(username string, password string) bool {
 		start := time.Now()
 
-		user, err := interfaces.Client().Users().Get(context.TODO(), username, metav1.GetOptions{}, g.options)
-		if err != nil {
+		ctx := context.Background()
+		var (
+			user *v1.User
+			err  error
+		)
+
+		if g.userService != nil {
+			user, err = g.userService.Get(ctx, username, metav1.GetOptions{}, g.options)
+		} else {
+			user, err = interfaces.Client().Users().Get(ctx, username, metav1.GetOptions{}, g.options)
+		}
+		if err != nil || user == nil {
 			elapsed := time.Since(start)
 			targetDelay := 150 * time.Millisecond
 			if elapsed < targetDelay {
@@ -332,18 +344,13 @@ func (g *GenericAPIServer) newBasicAuth() middleware.AuthStrategy {
 			return false
 		}
 
-		// Compare the login password with the user password.
-		if err := user.Compare(password); err != nil {
+		matched, cmpErr := g.verifyPassword(user, password)
+		if cmpErr != nil || !matched {
 			return false
 		}
 
-		go func() {
-			user.LoginedAt = time.Now()
-			err = interfaces.Client().Users().Update(context.TODO(), user, metav1.UpdateOptions{}, g.options)
-		}()
-		if err != nil {
-			log.Errorf("用户%s更新登录时间失败", username)
-		}
+		user.LoginedAt = time.Now()
+		g.asyncUpdateLoginTime(user)
 		return true
 	})
 }
@@ -474,6 +481,26 @@ func (g *GenericAPIServer) identityHandler(c *gin.Context) interface{} {
 
 // authoricator 认证逻辑：返回用户信息或具体错误
 func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
+	threshold := 0
+	if g != nil && g.options != nil && g.options.ServerRunOptions != nil {
+		threshold = g.options.ServerRunOptions.LoginFastFailThreshold
+	}
+	if threshold > 0 {
+		current := g.loginInFlight.Add(1)
+		if current > int64(threshold) {
+			g.loginInFlight.Add(-1)
+			message := "系统繁忙，请稍后再试"
+			if g.options != nil && g.options.ServerRunOptions != nil && g.options.ServerRunOptions.LoginFastFailMessage != "" {
+				message = g.options.ServerRunOptions.LoginFastFailMessage
+			}
+			err := errors.WithCode(code.ErrServerBusy, "%s", message)
+			g.auditLoginAttempt(c, "", "busy", err)
+			recordErrorToContext(c, err)
+			return nil, err
+		}
+		defer g.loginInFlight.Add(-1)
+	}
+
 	var login loginInfo
 	var err error
 
@@ -531,8 +558,16 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		return nil, err
 	}
 
-	//查询用户信息：透传 store 层错误（store 已按场景返回对应码）
-	user, err := interfaces.Client().Users().Get(c, login.Username, metav1.GetOptions{}, g.options)
+	requestCtx := c.Request.Context()
+	if requestCtx == nil {
+		requestCtx = context.Background()
+	}
+	var user *v1.User
+	if g.userService != nil {
+		user, err = g.userService.Get(requestCtx, login.Username, metav1.GetOptions{}, g.options)
+	} else {
+		user, err = interfaces.Client().Users().Get(requestCtx, login.Username, metav1.GetOptions{}, g.options)
+	}
 	if err != nil {
 		log.Errorf("获取用户信息失败: username=%s, error=%v", login.Username, err)
 		g.maybeRecordLoginFailure(c, login.Username, err)
@@ -540,11 +575,25 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 		recordErrorToContext(c, err)
 		return nil, err
 	}
+	if user == nil || !strings.EqualFold(user.Name, login.Username) {
+		err := errors.WithCode(code.ErrUserNotFound, "用户不存在")
+		log.Warnf("用户不存在: username=%s", login.Username)
+		g.maybeRecordLoginFailure(c, login.Username, err)
+		g.auditLoginAttempt(c, login.Username, "fail", err)
+		recordErrorToContext(c, err)
+		return nil, err
+	}
 
-	//密码校验：新增“密码不匹配”场景的错误码（语义匹配）
-	if err := user.Compare(login.Password); err != nil {
+	matched, cmpErr := g.verifyPassword(user, login.Password)
+	if cmpErr != nil {
+		log.Errorf("password verification error: username=%s, err=%v", login.Username, cmpErr)
+		err := errors.WithCode(code.ErrInternalServer, "密码校验出现异常，请稍后再试")
+		g.auditLoginAttempt(c, login.Username, "error", err)
+		recordErrorToContext(c, err)
+		return nil, err
+	}
+	if !matched {
 		log.Errorf("password compare failed: username=%s", login.Username)
-		// 场景：密码不正确 → 用通用授权错误码 ErrPasswordIncorrect（100206，401）
 		err := errors.WithCode(code.ErrPasswordIncorrect, "密码校验失败：用户名【%s】的密码不正确", login.Username)
 		g.maybeRecordLoginFailure(c, login.Username, err)
 		g.auditLoginAttempt(c, login.Username, "fail", err)
@@ -558,11 +607,8 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	}
 	//设置user
 	c.Set("current_user", user)
-	//更新登录时间：忽略非关键错误（仅日志记录，不阻断认证）
 	user.LoginedAt = time.Now()
-	if updateErr := interfaces.Client().Users().Update(c, user, metav1.UpdateOptions{}, g.options); updateErr != nil {
-		log.Warnf("update user logined time failed: username=%s, error=%v", login.Username, updateErr)
-	}
+	g.asyncUpdateLoginTime(user)
 
 	g.auditLoginAttempt(c, login.Username, "success", nil)
 	// 新增：在返回前打印 user 信息，确认非 nil
@@ -657,6 +703,63 @@ func (g *GenericAPIServer) debugTokenOverride(c *gin.Context) (time.Duration, bo
 		ttl = 24 * time.Hour
 	}
 	return ttl, true
+}
+
+func (g *GenericAPIServer) asyncUpdateLoginTime(user *v1.User) {
+	if g == nil || user == nil {
+		return
+	}
+	update := *user
+	if g.loginUpdates == nil {
+		go g.directLoginUpdate(update)
+		return
+	}
+	select {
+	case g.loginUpdates <- &update:
+		return
+	default:
+		log.Warnf("login update queue saturated, fallback to direct update: username=%s", update.Name)
+		go g.directLoginUpdate(update)
+	}
+}
+
+func (g *GenericAPIServer) directLoginUpdate(user v1.User) {
+	if g == nil || user.Name == "" {
+		return
+	}
+	timeout := 2 * time.Second
+	if g.options != nil && g.options.ServerRunOptions != nil && g.options.ServerRunOptions.LoginUpdateTimeout > 0 {
+		timeout = g.options.ServerRunOptions.LoginUpdateTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := interfaces.Client().Users().Update(ctx, &user, metav1.UpdateOptions{}, g.options); err != nil {
+		log.Warnf("direct update loginedAt failed: username=%s, err=%v", user.Name, err)
+	}
+}
+
+func (g *GenericAPIServer) verifyPassword(user *v1.User, plain string) (bool, error) {
+	if user == nil {
+		return false, fmt.Errorf("invalid user for password verification")
+	}
+	if g.credentialCache != nil {
+		if cached, ok := g.credentialCache.lookup(user.Name, user.Password, plain); ok {
+			return cached, nil
+		}
+	}
+	if err := user.Compare(plain); err != nil {
+		if stdErrors.Is(err, bcrypt.ErrMismatchedHashAndPassword) {
+			if g.credentialCache != nil {
+				g.credentialCache.store(user.Name, user.Password, plain, false)
+			}
+			return false, nil
+		}
+		return false, err
+	}
+	if g.credentialCache != nil {
+		g.credentialCache.store(user.Name, user.Password, plain, true)
+	}
+	return true, nil
 }
 
 func (g *GenericAPIServer) reissueAccessTokenWithTTL(atToken string, ttl time.Duration) (string, time.Time, error) {

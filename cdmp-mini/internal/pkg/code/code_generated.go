@@ -39,6 +39,7 @@ func init() {
 	register(ErrRespCodeRTRevoked, 403, "令牌已经撤销")
 	register(ErrTokenMismatch, 401, "访问令牌和刷新令牌不匹配")
 	register(ErrAccountLocked, 429, "账户已被锁定，请稍后再试")
+	register(ErrServerBusy, 503, "系统繁忙，请稍后再试")
 	// 4. 通用加解码错误（1003xx）
 	register(ErrEncodingFailed, 500, "数据编码失败")          // 500：服务端编码逻辑错误
 	register(ErrDecodingFailed, 400, "数据解码失败（格式错误）")    // 400：客户端传入的数据格式无法解码（如 JSON 格式错误）

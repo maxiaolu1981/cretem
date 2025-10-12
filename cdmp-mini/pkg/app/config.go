@@ -170,6 +170,11 @@ func addConfigFlag(basename string, fs *pflag.FlagSet) {
 	})
 }
 
+var (
+	_ = configFlagName
+	_ = addConfigFlag
+)
+
 /*
 // 已注释的 loadConfig 函数：另一种配置加载实现（保留作为参考）
 // 功能：读取配置文件和环境变量（若设置）

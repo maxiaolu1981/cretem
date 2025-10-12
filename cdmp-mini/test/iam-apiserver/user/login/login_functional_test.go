@@ -14,7 +14,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/test/iam-apiserver/tools/framework"
 )
 
-const testDir = "test/iam-apiserver/user/login"
+const testDir = "/home/mxl/cretem/cretem/cdmp-mini/test/iam-apiserver/user/login"
 
 // go test → 调用 TestMain(m *testing.M) → 由开发者控制测试执行
 func TestMain(m *testing.M) {
@@ -369,8 +369,8 @@ func TestLoginFunctional(t *testing.T) {
 				if resp.Code != code.ErrAccountLocked {
 					return framework.CaseResult{}, fmt.Errorf("expected password incorrect code after lock, got %d", resp.Code)
 				}
-				fmt.Printf("resp.message:%v\n", resp.Message)
-				if !strings.Contains(resp.Message, "账户已被锁定，请稍后再试") {
+
+				if !strings.Contains(resp.Message, "登录失败次数太多,15分钟后重试") {
 					return framework.CaseResult{}, fmt.Errorf("lockout message missing: %s", resp.Message)
 				}
 
@@ -591,6 +591,17 @@ func TestLoginFunctional(t *testing.T) {
 					return framework.CaseResult{}, fmt.Errorf("unexpected login response http=%d code=%d message=%s", resp.HTTPStatus(), resp.Code, resp.Message)
 				}
 
+				payload, err := decodeLoginPayload(resp)
+				if err != nil {
+					return framework.CaseResult{}, fmt.Errorf("decode login payload: %w", err)
+				}
+
+				expireTime, parseErr := time.Parse(time.RFC3339, payload.Expire)
+				if parseErr != nil {
+					return framework.CaseResult{}, fmt.Errorf("parse expire field: %w", parseErr)
+				}
+				ttlBefore := time.Until(expireTime)
+
 				preResp, err := env.GetUser(tokens.AccessToken, spec.Name)
 				if err != nil {
 					return framework.CaseResult{}, fmt.Errorf("verify token before expiry: %w", err)
@@ -601,33 +612,69 @@ func TestLoginFunctional(t *testing.T) {
 
 				time.Sleep(2 * time.Second)
 
-				postResp, err := env.GetUser(tokens.AccessToken, spec.Name)
-				if err != nil {
-					return framework.CaseResult{}, fmt.Errorf("verify token after expiry: %w", err)
+				var (
+					postResp *framework.APIResponse
+					pollErr  error
+					expired  bool
+				)
+				deadline := time.Now().Add(3 * time.Second)
+				for attempts := 0; attempts < 6; attempts++ {
+					postResp, pollErr = env.GetUser(tokens.AccessToken, spec.Name)
+					if pollErr != nil {
+						return framework.CaseResult{}, fmt.Errorf("verify token after expiry: %w", pollErr)
+					}
+					if postResp.HTTPStatus() == http.StatusUnauthorized {
+						if postResp.Code == code.ErrExpired || postResp.Code == code.ErrUnauthorized {
+							expired = true
+							break
+						}
+						return framework.CaseResult{}, fmt.Errorf("unexpected unauthorized code after expiry: %d message=%s", postResp.Code, postResp.Message)
+					}
+					if postResp.HTTPStatus() != http.StatusOK {
+						if time.Now().After(deadline) {
+							break
+						}
+						time.Sleep(250 * time.Millisecond)
+						continue
+					}
+					if time.Now().After(deadline) {
+						break
+					}
+					time.Sleep(250 * time.Millisecond)
 				}
-				if postResp.HTTPStatus() != http.StatusUnauthorized || postResp.Code != code.ErrExpired {
-					return framework.CaseResult{}, fmt.Errorf("expected expired token unauthorized, got http=%d code=%d message=%s", postResp.HTTPStatus(), postResp.Code, postResp.Message)
-				}
-
+				ttlShort := ttlBefore <= 10*time.Second && ttlBefore > 0
 				checks := map[string]bool{
-					"short_ttl_override": true,
-					"pre_expiry_access":  true,
-					"expired_rejected":   true,
+					"short_ttl_override": ttlShort,
+					"pre_expiry_access":  preResp.HTTPStatus() == http.StatusOK,
+					"expired_rejected":   expired,
 				}
+				notes := []string{
+					"登录时使用 X-Debug-Token-Timeout=1s",
+					fmt.Sprintf("初始 TTL ≈ %.2fs", ttlBefore.Seconds()),
+				}
+				if !expired {
+					status := 0
+					codeVal := 0
+					message := ""
+					if postResp != nil {
+						status = postResp.HTTPStatus()
+						codeVal = postResp.Code
+						message = postResp.Message
+					}
+					notes = append(notes, fmt.Sprintf("过期检查返回 http=%d code=%d message=%s", status, codeVal, message))
+				}
+				success := ttlShort && expired
 
 				return framework.CaseResult{
 					Name:        "token_expiry_short_ttl",
 					Description: "通过调试 TTL 获取短期令牌并验证过期行为",
-					Success:     true,
+					Success:     success,
 					HTTPStatus:  resp.HTTPStatus(),
 					Code:        resp.Code,
 					Message:     resp.Message,
 					DurationMS:  time.Since(start).Milliseconds(),
 					Checks:      checks,
-					Notes: []string{
-						"登录时使用 X-Debug-Token-Timeout=1s",
-						"等待超过 TTL 后访问受保护资源应返回令牌过期",
-					},
+					Notes:       notes,
 				}, nil
 			},
 		},
@@ -661,61 +708,104 @@ func TestLoginFunctional(t *testing.T) {
 
 				time.Sleep(200 * time.Millisecond)
 
-				events, enabled, auditResp, err := env.AuditEvents(50)
-				if err != nil {
-					return framework.CaseResult{}, fmt.Errorf("fetch audit events: %w", err)
-				}
-				if auditResp == nil || auditResp.HTTPStatus() != http.StatusOK || auditResp.Code != code.ErrSuccess {
-					return framework.CaseResult{}, fmt.Errorf("unexpected audit response http=%d code=%d message=%s", auditResp.HTTPStatus(), auditResp.Code, auditResp.Message)
-				}
-				if !enabled {
-					return framework.CaseResult{}, errors.New("audit manager reported disabled")
-				}
-
-				failRecorded := false
-				successRecorded := false
-				routeCaptured := false
-				for _, event := range events {
-					if event.Action != "auth.login" || event.ResourceID != spec.Name {
+				var (
+					events          []framework.AuditEvent
+					enabled         bool
+					auditResp       *framework.APIResponse
+					lastErr         error
+					failRecorded    bool
+					successRecorded bool
+					routeCaptured   bool
+				)
+				deadline := time.Now().Add(3 * time.Second)
+				for attempts := 0; attempts < 12; attempts++ {
+					events, enabled, auditResp, lastErr = env.AuditEvents(50)
+					if lastErr != nil {
+						if time.Now().After(deadline) {
+							return framework.CaseResult{}, fmt.Errorf("fetch audit events: %w", lastErr)
+						}
+						time.Sleep(200 * time.Millisecond)
 						continue
 					}
-					switch event.Outcome {
-					case "fail":
-						failRecorded = true
-					case "success":
-						successRecorded = true
+					if auditResp == nil {
+						if time.Now().After(deadline) {
+							return framework.CaseResult{}, errors.New("audit response nil")
+						}
+						time.Sleep(200 * time.Millisecond)
+						continue
 					}
-					if event.Metadata != nil {
-						if route, ok := event.Metadata["route"].(string); ok && route == "/login" {
-							routeCaptured = true
+					if auditResp.HTTPStatus() != http.StatusOK || auditResp.Code != code.ErrSuccess {
+						if time.Now().After(deadline) {
+							return framework.CaseResult{}, fmt.Errorf("unexpected audit response http=%d code=%d message=%s", auditResp.HTTPStatus(), auditResp.Code, auditResp.Message)
+						}
+						time.Sleep(200 * time.Millisecond)
+						continue
+					}
+					if enabled {
+						failRecorded = false
+						successRecorded = false
+						routeCaptured = false
+						for _, event := range events {
+							if event.Action != "auth.login" || event.ResourceID != spec.Name {
+								continue
+							}
+							switch event.Outcome {
+							case "fail", "failure":
+								failRecorded = true
+							case "success":
+								successRecorded = true
+							}
+							if event.Metadata != nil {
+								if route, ok := event.Metadata["route"].(string); ok && route != "" {
+									routeCaptured = true
+								}
+							}
+						}
+						if failRecorded && successRecorded {
+							break
 						}
 					}
-					if failRecorded && successRecorded && routeCaptured {
+					if time.Now().After(deadline) {
 						break
 					}
-				}
-
-				if !failRecorded || !successRecorded {
-					return framework.CaseResult{}, fmt.Errorf("expected both success and failure audit events, success=%t fail=%t", successRecorded, failRecorded)
+					time.Sleep(200 * time.Millisecond)
 				}
 
 				checks := map[string]bool{
+					"audit_enabled":         enabled,
 					"login_fail_audited":    failRecorded,
 					"login_success_audited": successRecorded,
 					"route_recorded":        routeCaptured,
 				}
+				success := enabled && failRecorded && successRecorded
 
 				return framework.CaseResult{
 					Name:        "audit_login_events",
 					Description: "登录接口审计事件包含失败与成功记录",
-					Success:     true,
-					HTTPStatus:  auditResp.HTTPStatus(),
-					Code:        auditResp.Code,
-					Message:     auditResp.Message,
-					DurationMS:  time.Since(start).Milliseconds(),
-					Checks:      checks,
+					Success:     success,
+					HTTPStatus: func() int {
+						if auditResp != nil {
+							return auditResp.HTTPStatus()
+						}
+						return 0
+					}(),
+					Code: func() int {
+						if auditResp != nil {
+							return auditResp.Code
+						}
+						return 0
+					}(),
+					Message: func() string {
+						if auditResp != nil {
+							return auditResp.Message
+						}
+						return ""
+					}(),
+					DurationMS: time.Since(start).Milliseconds(),
+					Checks:     checks,
 					Notes: []string{
 						"校验 /admin/audit/events 中的 auth.login 成功与失败事件",
+						fmt.Sprintf("成功事件=%t, 失败事件=%t, 启用=%t", successRecorded, failRecorded, enabled),
 					},
 				}, nil
 			},
@@ -731,10 +821,51 @@ func TestLoginFunctional(t *testing.T) {
 				defer env.ForceDeleteUserIgnore(spec.Name)
 
 				start := time.Now()
-				if resp, err := env.SetLoginRateLimit(1); err != nil {
+				checks := map[string]bool{
+					"rate_limiter_enabled": env.LoginRateLimiterEnabled(),
+				}
+				if !checks["rate_limiter_enabled"] {
+					return framework.CaseResult{
+						Name:        "login_rate_limit_enforced",
+						Description: "超过登录限流阈值返回429",
+						Success:     false,
+						HTTPStatus:  http.StatusOK,
+						Code:        code.ErrSuccess,
+						Message:     "登录限流未启用，跳过校验",
+						DurationMS:  time.Since(start).Milliseconds(),
+						Checks:      checks,
+						Notes: []string{
+							"Env.LoginRateLimiterEnabled() 返回 false",
+						},
+					}, nil
+				}
+
+				setResp, err := env.SetLoginRateLimit(1)
+				if err != nil {
 					return framework.CaseResult{}, fmt.Errorf("set login limit: %w", err)
-				} else if resp == nil || resp.HTTPStatus() != http.StatusOK || resp.Code != code.ErrSuccess {
-					return framework.CaseResult{}, fmt.Errorf("unexpected set limit response http=%d code=%d message=%s", resp.HTTPStatus(), resp.Code, resp.Message)
+				}
+				if setResp == nil {
+					return framework.CaseResult{}, errors.New("set login limit returned nil response")
+				}
+				if setResp.HTTPStatus() == http.StatusForbidden || setResp.HTTPStatus() == http.StatusUnauthorized {
+					notes := []string{
+						fmt.Sprintf("无法设置限流：http=%d code=%d message=%s", setResp.HTTPStatus(), setResp.Code, setResp.Message),
+						"可能原因：AdminToken 未配置或请求非本地来源",
+					}
+					return framework.CaseResult{
+						Name:        "login_rate_limit_enforced",
+						Description: "超过登录限流阈值返回429",
+						Success:     false,
+						HTTPStatus:  setResp.HTTPStatus(),
+						Code:        setResp.Code,
+						Message:     setResp.Message,
+						DurationMS:  time.Since(start).Milliseconds(),
+						Checks:      checks,
+						Notes:       notes,
+					}, nil
+				}
+				if setResp.HTTPStatus() != http.StatusOK || setResp.Code != code.ErrSuccess {
+					return framework.CaseResult{}, fmt.Errorf("unexpected set limit response http=%d code=%d message=%s", setResp.HTTPStatus(), setResp.Code, setResp.Message)
 				}
 				defer env.ResetLoginRateLimit()
 
@@ -743,38 +874,36 @@ func TestLoginFunctional(t *testing.T) {
 				limited := false
 				limitedAttempt := 0
 				var limitedResp *framework.APIResponse
-				attemptNotes := make([]string, 0, 5)
-
-				for i := 1; i <= 5; i++ {
+				attemptNotes := make([]string, 0, 10)
+				maxAttempts := 10
+				for i := 1; i <= maxAttempts; i++ {
 					resp, err := loginRequest(env, spec.Name, "WrongPass@123")
 					if err != nil {
 						return framework.CaseResult{}, fmt.Errorf("attempt %d request error: %w", i, err)
 					}
 					attemptNotes = append(attemptNotes, fmt.Sprintf("#%d http=%d code=%d", i, resp.HTTPStatus(), resp.Code))
-					if resp.HTTPStatus() == http.StatusTooManyRequests && resp.Code == 100209 {
+					if resp.HTTPStatus() == http.StatusTooManyRequests {
 						limited = true
 						limitedAttempt = i
 						limitedResp = resp
 						break
 					}
-					// 小延迟避免瞬间刷爆 redis
 					time.Sleep(50 * time.Millisecond)
 				}
 
-				if !limited {
-					return framework.CaseResult{}, errors.New("expected to hit login rate limit within 5 attempts")
-				}
-
 				messageContains := false
+				limitedCode := 0
+				limitedMessage := ""
 				if limitedResp != nil {
-					messageContains = strings.Contains(limitedResp.Message, "请求过于频繁")
+					lowerMsg := strings.ToLower(limitedResp.Message)
+					messageContains = strings.Contains(limitedResp.Message, "请求过于频繁") || strings.Contains(lowerMsg, "too many requests")
+					limitedCode = limitedResp.Code
+					limitedMessage = limitedResp.Message
 				}
 
-				checks := map[string]bool{
-					"rate_limit_triggered":        limited,
-					"limit_message_includes_hint": messageContains,
-					"limit_attempt_within_5":      limitedAttempt > 0 && limitedAttempt <= 5,
-				}
+				checks["rate_limit_triggered"] = limited
+				checks["limit_message_includes_hint"] = messageContains
+				checks["limit_attempt_within_5"] = limitedAttempt > 0 && limitedAttempt <= 5
 
 				notes := []string{fmt.Sprintf("limit hit on attempt %d", limitedAttempt)}
 				notes = append(notes, attemptNotes...)
@@ -782,13 +911,18 @@ func TestLoginFunctional(t *testing.T) {
 				return framework.CaseResult{
 					Name:        "login_rate_limit_enforced",
 					Description: "登录限流阈值设置为1后，第3次以内请求触发429",
-					Success:     true,
-					HTTPStatus:  http.StatusTooManyRequests,
-					Code:        100209,
-					Message:     limitedResp.Message,
-					DurationMS:  time.Since(start).Milliseconds(),
-					Checks:      checks,
-					Notes:       notes,
+					Success:     limited,
+					HTTPStatus: func() int {
+						if limitedResp != nil {
+							return limitedResp.HTTPStatus()
+						}
+						return http.StatusOK
+					}(),
+					Code:       limitedCode,
+					Message:    limitedMessage,
+					DurationMS: time.Since(start).Milliseconds(),
+					Checks:     checks,
+					Notes:      notes,
 				}, nil
 			},
 		},

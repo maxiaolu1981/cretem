@@ -86,14 +86,22 @@ type ServerRunOptions struct {
 	EnableMetrics    bool     `json:"enableMetrics" mapstructure:"enableMetrics"`
 	FastDebugStartup bool     `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
 	// 新增：Cookie相关配置
-	CookieDomain     string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
-	CookieSecure     bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
-	CtxTimeout       time.Duration `json:"ctxtimeout"    mapstructure:"ctxtimeout"`
-	Env              string        `json:"env"    mapstructure:"env"`
-	LoginRateLimit   int           `json:"loginlimit"   mapstructure:"loginlimit"`
-	LoginWindow      time.Duration `json:"loginwindow"   mapstructure:"loginwindow"`
-	MaxLoginFailures int           `json:"maxLoginFailures" mapstructure:"maxLoginFailures"`
-	LoginFailReset   time.Duration `json:"loginFailReset"   mapstructure:"loginFailReset"`
+	CookieDomain             string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
+	CookieSecure             bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
+	CtxTimeout               time.Duration `json:"ctxtimeout"    mapstructure:"ctxtimeout"`
+	Env                      string        `json:"env"    mapstructure:"env"`
+	LoginRateLimit           int           `json:"loginlimit"   mapstructure:"loginlimit"`
+	LoginWindow              time.Duration `json:"loginwindow"   mapstructure:"loginwindow"`
+	MaxLoginFailures         int           `json:"maxLoginFailures" mapstructure:"maxLoginFailures"`
+	LoginFailReset           time.Duration `json:"loginFailReset"   mapstructure:"loginFailReset"`
+	LoginFastFailThreshold   int           `json:"loginFastFailThreshold" mapstructure:"loginFastFailThreshold"`
+	LoginFastFailMessage     string        `json:"loginFastFailMessage" mapstructure:"loginFastFailMessage"`
+	LoginUpdateBuffer        int           `json:"loginUpdateBuffer" mapstructure:"loginUpdateBuffer"`
+	LoginUpdateBatchSize     int           `json:"loginUpdateBatchSize" mapstructure:"loginUpdateBatchSize"`
+	LoginUpdateFlushInterval time.Duration `json:"loginUpdateFlushInterval" mapstructure:"loginUpdateFlushInterval"`
+	LoginUpdateTimeout       time.Duration `json:"loginUpdateTimeout" mapstructure:"loginUpdateTimeout"`
+	LoginCredentialCacheTTL  time.Duration `json:"loginCredentialCacheTTL" mapstructure:"loginCredentialCacheTTL"`
+	LoginCredentialCacheSize int           `json:"loginCredentialCacheSize" mapstructure:"loginCredentialCacheSize"`
 	// WriteRateLimit: 默认的写操作限流阈值（当 Redis 未配置 override 时使用）
 	WriteRateLimit int `json:"writeRateLimit"   mapstructure:"writeRateLimit"`
 	// AdminToken: 简单的管理API访问令牌（如果为空，只允许本地或 debug 访问）
@@ -104,23 +112,31 @@ type ServerRunOptions struct {
 
 func NewServerRunOptions() *ServerRunOptions {
 	return &ServerRunOptions{
-		Mode:              gin.DebugMode,
-		Healthz:           true,
-		Middlewares:       []string{},
-		EnableProfiling:   true,
-		EnableMetrics:     true,
-		FastDebugStartup:  true,
-		CookieDomain:      "",
-		CookieSecure:      false,
-		CtxTimeout:        50 * time.Second,
-		Env:               "development",
-		LoginRateLimit:    500000, // 5万/分钟
-		WriteRateLimit:    500000, // 写操作默认限流（每 window）
-		LoginWindow:       2 * time.Minute,
-		MaxLoginFailures:  5,
-		LoginFailReset:    15 * time.Minute,
-		AdminToken:        "",
-		EnableRateLimiter: true, // 默认启用生产端限流器
+		Mode:                     gin.ReleaseMode,
+		Healthz:                  true,
+		Middlewares:              []string{},
+		EnableProfiling:          true,
+		EnableMetrics:            true,
+		FastDebugStartup:         false,
+		CookieDomain:             "",
+		CookieSecure:             false,
+		CtxTimeout:               50 * time.Second,
+		Env:                      "development",
+		LoginRateLimit:           500000, // 5万/分钟
+		WriteRateLimit:           500000, // 写操作默认限流（每 window）
+		LoginWindow:              2 * time.Minute,
+		MaxLoginFailures:         5,
+		LoginFailReset:           15 * time.Minute,
+		LoginFastFailThreshold:   0,
+		LoginFastFailMessage:     "系统繁忙，请稍后再试",
+		LoginUpdateBuffer:        1024,
+		LoginUpdateBatchSize:     64,
+		LoginUpdateFlushInterval: 200 * time.Millisecond,
+		LoginUpdateTimeout:       2 * time.Second,
+		LoginCredentialCacheTTL:  30 * time.Second,
+		LoginCredentialCacheSize: 1024,
+		AdminToken:               "",
+		EnableRateLimiter:        true, // 默认启用生产端限流器
 	}
 }
 
@@ -205,6 +221,30 @@ func (s *ServerRunOptions) Complete() {
 
 	if s.LoginFailReset <= 0 {
 		s.LoginFailReset = 15 * time.Minute
+	}
+	if s.LoginFastFailThreshold < 0 {
+		s.LoginFastFailThreshold = 0
+	}
+	if s.LoginFastFailMessage == "" {
+		s.LoginFastFailMessage = "系统繁忙，请稍后再试"
+	}
+	if s.LoginUpdateBuffer <= 0 {
+		s.LoginUpdateBuffer = 1024
+	}
+	if s.LoginUpdateBatchSize <= 0 {
+		s.LoginUpdateBatchSize = 64
+	}
+	if s.LoginUpdateFlushInterval <= 0 {
+		s.LoginUpdateFlushInterval = 200 * time.Millisecond
+	}
+	if s.LoginUpdateTimeout <= 0 {
+		s.LoginUpdateTimeout = 2 * time.Second
+	}
+	if s.LoginCredentialCacheTTL <= 0 {
+		s.LoginCredentialCacheTTL = 30 * time.Second
+	}
+	if s.LoginCredentialCacheSize <= 0 {
+		s.LoginCredentialCacheSize = 1024
 	}
 }
 
@@ -325,6 +365,22 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 		"同一用户在计数窗口内允许的最大登录失败次数")
 	fs.DurationVar(&s.LoginFailReset, "server.login-fail-reset", s.LoginFailReset, ""+
 		"登录失败计数的自动重置时间窗口")
+	fs.IntVar(&s.LoginFastFailThreshold, "server.login-fastfail-threshold", s.LoginFastFailThreshold, ""+
+		"当并发登录请求超过该值时快速返回（0 表示禁用）")
+	fs.StringVar(&s.LoginFastFailMessage, "server.login-fastfail-message", s.LoginFastFailMessage, ""+
+		"快速降级时返回给客户端的提示信息")
+	fs.IntVar(&s.LoginUpdateBuffer, "server.login-update-buffer", s.LoginUpdateBuffer, ""+
+		"登录时间异步更新队列缓存大小")
+	fs.IntVar(&s.LoginUpdateBatchSize, "server.login-update-batch", s.LoginUpdateBatchSize, ""+
+		"登录时间异步更新单次批量写入的最大条数")
+	fs.DurationVar(&s.LoginUpdateFlushInterval, "server.login-update-flush-interval", s.LoginUpdateFlushInterval, ""+
+		"登录时间异步更新强制刷新间隔")
+	fs.DurationVar(&s.LoginUpdateTimeout, "server.login-update-timeout", s.LoginUpdateTimeout, ""+
+		"登录时间批量更新的数据库超时时间")
+	fs.DurationVar(&s.LoginCredentialCacheTTL, "server.login-credential-cache-ttl", s.LoginCredentialCacheTTL, ""+
+		"登录凭证比较结果在本地缓存的有效期")
+	fs.IntVar(&s.LoginCredentialCacheSize, "server.login-credential-cache-size", s.LoginCredentialCacheSize, ""+
+		"登录凭证比较结果本地缓存的最大条目数")
 	fs.StringVar(&s.AdminToken, "server.admin-token", s.AdminToken,
 		"管理API的简单访问令牌（默认为空，仅允许本地访问）")
 	fs.BoolVar(&s.FastDebugStartup, "server.fast-debug-startup", s.FastDebugStartup, "调试模式下是否跳过耗时的依赖等待，加速本地调试启动")

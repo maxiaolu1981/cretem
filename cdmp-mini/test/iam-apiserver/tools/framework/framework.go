@@ -328,6 +328,10 @@ func (e *Env) ResetLoginRateLimit() (*APIResponse, error) {
 	return e.AdminRequest(http.MethodDelete, "/admin/ratelimit/login", nil)
 }
 
+func (e *Env) LoginRateLimiterEnabled() bool {
+	return e.rateLimiterInfo.Enabled
+}
+
 func (e *Env) LoginOrFail(t *testing.T, username, password string) *AuthTokens {
 	t.Helper()
 	tokens, _, err := e.Login(username, password)
@@ -499,6 +503,7 @@ func (e *Env) ListUsers(token string) (*APIResponse, error) {
 func (e *Env) EnsureOutputDir(t *testing.T, testDir string) string {
 	t.Helper()
 	full := filepath.Join(testDir, e.OutputRoot)
+
 	if err := os.MkdirAll(full, 0o755); err != nil {
 		t.Fatalf("login before change failed: %v", fmt.Errorf("create output dir: %w", err))
 	}

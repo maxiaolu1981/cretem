@@ -80,6 +80,8 @@ const (
 	ErrTokenMismatch
 	//100213 429 登录请求过于频繁
 	ErrAccountLocked
+	//100214 503 系统繁忙
+	ErrServerBusy
 )
 
 // 通用加解码错误（1003xx）：服务10 + 模块03 + 序号

@@ -22,6 +22,7 @@ import (
 	"github.com/segmentio/kafka-go"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/user"
 
 	mysql "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
@@ -36,6 +37,8 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
+	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
 )
@@ -43,16 +46,23 @@ import (
 type GenericAPIServer struct {
 	insecureServer *http.Server
 	*gin.Engine
-	options        *options.Options
-	redis          *storage.RedisCluster
-	redisCancel    context.CancelFunc
-	initOnce       sync.Once
-	producer       producer.MessageProducer
-	consumerCtx    context.Context
-	consumerCancel context.CancelFunc
-	audit          *audit.Manager
-	shutdownOnce   sync.Once
-	loginLimit     atomic.Int64
+	options           *options.Options
+	redis             *storage.RedisCluster
+	redisCancel       context.CancelFunc
+	initOnce          sync.Once
+	producer          producer.MessageProducer
+	consumerCtx       context.Context
+	consumerCancel    context.CancelFunc
+	audit             *audit.Manager
+	shutdownOnce      sync.Once
+	loginLimit        atomic.Int64
+	userService       *user.UserService
+	loginUpdates      chan *v1.User
+	loginUpdateCtx    context.Context
+	loginUpdateCancel context.CancelFunc
+	loginUpdateWG     sync.WaitGroup
+	credentialCache   *credentialCache
+	loginInFlight     atomic.Int64
 }
 
 func (g *GenericAPIServer) isDebugMode() bool {
@@ -139,6 +149,7 @@ func (g *GenericAPIServer) performShutdown(ctx context.Context) {
 		if shutdownCtx == nil {
 			shutdownCtx = context.Background()
 		}
+		g.stopLoginUpdater()
 		g.closeWithAudit(shutdownCtx, "kafka", g.shutdownKafka)
 		g.closeWithAudit(shutdownCtx, "redis", g.shutdownRedis)
 		g.closeWithAudit(shutdownCtx, "mysql", g.shutdownMySQL)
@@ -340,6 +351,10 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		log.Debug("kafka服务器启动成功")
 		g.auditServiceEvent("kafka", "startup", "success", nil)
 	}
+
+	g.initUserService(storeIns)
+	g.initCredentialCache()
+	g.initLoginUpdater()
 
 	// 启动消费者
 	ctx, cancel := context.WithCancel(context.Background())
@@ -811,6 +826,126 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	g.setConsumerInstances(createConsumers, updateConsumers, deleteConsumers, retryConsumers)
 
 	return nil
+}
+
+func (g *GenericAPIServer) initUserService(factory interfaces.Factory) {
+	if g == nil || factory == nil {
+		return
+	}
+	g.userService = user.NewUserService(factory, g.redis, g.options, g.producer)
+}
+
+func (g *GenericAPIServer) initCredentialCache() {
+	if g == nil || g.options == nil || g.options.ServerRunOptions == nil {
+		return
+	}
+	cache := newCredentialCache(
+		g.options.ServerRunOptions.LoginCredentialCacheTTL,
+		g.options.ServerRunOptions.LoginCredentialCacheSize,
+	)
+	g.credentialCache = cache
+}
+
+func (g *GenericAPIServer) initLoginUpdater() {
+	if g == nil || g.options == nil || g.options.ServerRunOptions == nil {
+		return
+	}
+	if g.loginUpdates != nil {
+		return
+	}
+	buffer := g.options.ServerRunOptions.LoginUpdateBuffer
+	if buffer <= 0 {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	g.loginUpdateCtx = ctx
+	g.loginUpdateCancel = cancel
+	g.loginUpdates = make(chan *v1.User, buffer)
+	batchSize := g.options.ServerRunOptions.LoginUpdateBatchSize
+	if batchSize <= 0 {
+		batchSize = 64
+	}
+	flushInterval := g.options.ServerRunOptions.LoginUpdateFlushInterval
+	if flushInterval <= 0 {
+		flushInterval = 200 * time.Millisecond
+	}
+	g.loginUpdateWG.Add(1)
+	go g.loginUpdateWorker(ctx, batchSize, flushInterval)
+}
+
+func (g *GenericAPIServer) stopLoginUpdater() {
+	if g == nil || g.loginUpdateCancel == nil {
+		return
+	}
+	g.loginUpdateCancel()
+	g.loginUpdateWG.Wait()
+}
+
+func (g *GenericAPIServer) loginUpdateWorker(ctx context.Context, batchSize int, flushInterval time.Duration) {
+	defer g.loginUpdateWG.Done()
+	ticker := time.NewTicker(flushInterval)
+	defer ticker.Stop()
+	batch := make([]*v1.User, 0, batchSize)
+	flush := func() {
+		if len(batch) == 0 {
+			return
+		}
+		g.flushLoginUpdates(batch)
+		batch = batch[:0]
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			flush()
+			return
+		case user := <-g.loginUpdates:
+			if user == nil {
+				continue
+			}
+			batch = append(batch, user)
+			if len(batch) >= batchSize {
+				flush()
+			}
+		case <-ticker.C:
+			flush()
+		}
+	}
+}
+
+func (g *GenericAPIServer) flushLoginUpdates(batch []*v1.User) {
+	if g == nil || len(batch) == 0 {
+		return
+	}
+	updates := make(map[string]*v1.User, len(batch))
+	for _, u := range batch {
+		if u == nil || u.Name == "" {
+			continue
+		}
+		if existing, ok := updates[u.Name]; ok {
+			if u.LoginedAt.After(existing.LoginedAt) {
+				copy := *u
+				updates[u.Name] = &copy
+			}
+			continue
+		}
+		copy := *u
+		updates[u.Name] = &copy
+	}
+	if len(updates) == 0 {
+		return
+	}
+	timeout := g.options.ServerRunOptions.LoginUpdateTimeout
+	if timeout <= 0 {
+		timeout = 2 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	for _, u := range updates {
+		if err := interfaces.Client().Users().Update(ctx, u, metav1.UpdateOptions{}, g.options); err != nil {
+			log.Warnf("batch update loginedAt failed: username=%s, err=%v", u.Name, err)
+		}
+	}
 }
 
 func (g *GenericAPIServer) monitorRedisConnection(ctx context.Context) {
