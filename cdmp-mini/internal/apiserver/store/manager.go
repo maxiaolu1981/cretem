@@ -58,6 +58,14 @@ func (c *ClusterAwareUserStore) Get(ctx context.Context, username string, opts m
 	return c.readStore.Get(ctx, username, opts, opt) // 读操作用读库
 }
 
+func (c *ClusterAwareUserStore) GetByEmail(ctx context.Context, email string, opt *options.Options) (*v1.User, error) {
+	return c.readStore.GetByEmail(ctx, email, opt)
+}
+
+func (c *ClusterAwareUserStore) GetByPhone(ctx context.Context, phone string, opt *options.Options) (*v1.User, error) {
+	return c.readStore.GetByPhone(ctx, phone, opt)
+}
+
 func (c *ClusterAwareUserStore) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
 	log.Debugf("✏️ 写操作路由到主库: username=%s", user.Name)
 	return c.writeStore.Create(ctx, user, opts, opt) // 写操作用写库

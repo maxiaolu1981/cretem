@@ -4,32 +4,28 @@
     "requests": 1000,
     "success_rate": 1,
     "error_rate": 0,
-    "duration_ms": 253,
-    "qps": 3944.6556450331877,
+    "duration_ms": 81,
+    "qps": 12253.552418191395,
     "error_count": 0,
     "success_count": 1000,
     "latency": {
-      "min_ms": 1.265766,
-      "max_ms": 223.306692,
-      "avg_ms": 24.821231709,
-      "p50_ms": 8.49205,
-      "p90_ms": 51.230321,
-      "p95_ms": 159.54252,
-      "p99_ms": 188.372341
+      "min_ms": 0.259386,
+      "max_ms": 50.840333,
+      "avg_ms": 7.705039846,
+      "p50_ms": 6.45399,
+      "p90_ms": 17.93768,
+      "p95_ms": 21.574393,
+      "p99_ms": 39.766738
     },
     "counters": {
-      "account_locked": 907,
       "expected_error_path": 1000,
-      "limit_triggered": 907,
-      "login_attempt": 1000,
-      "password_incorrect": 93
+      "limit_triggered": 1000,
+      "login_attempt": 1000
     },
     "notes": [
-      "account_locked=907",
       "expected_error_path=1000",
-      "limit_triggered=907",
-      "login_attempt=1000",
-      "password_incorrect=93"
+      "limit_triggered=1000",
+      "login_attempt=1000"
     ]
   }
 ]

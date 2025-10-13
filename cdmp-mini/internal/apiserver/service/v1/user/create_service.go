@@ -17,6 +17,10 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 
 	log.Debugf("service:开始处理用户%v创建请求...", user.Name)
 
+	if err := u.ensureContactUniqueness(ctx, user); err != nil {
+		return err
+	}
+
 	//判断用户是否存在
 	ruser, err := u.checkUserExist(ctx, user.Name, false)
 	if err != nil {

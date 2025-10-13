@@ -14,6 +14,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
@@ -243,7 +244,7 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "检查用户存在性失败: "+err.Error())
 	}
 
-	rc.setUserCache(ctx, &user)
+	rc.setUserCache(ctx, &user, nil)
 
 	return nil
 }
@@ -265,11 +266,24 @@ func (rc *RetryConsumer) processRetryUpdate(ctx context.Context, msg kafka.Messa
 		time.Sleep(time.Until(nextRetryTime))
 	}
 
+	var existingSnapshot *v1.User
+	var existing v1.User
+	if err := rc.db.WithContext(ctx).
+		Where("name = ?", user.Name).
+		First(&existing).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return rc.producer.SendToDeadLetterTopic(ctx, msg, "RETRY_UPDATE_TARGET_NOT_FOUND: "+user.Name)
+		}
+		return rc.handleProcessingError(ctx, msg, currentRetryCount, "查询用户失败: "+err.Error())
+	}
+	existingCopy := existing
+	existingSnapshot = &existingCopy
+
 	if err := rc.updateUserInDB(ctx, &user); err != nil {
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "错误信息: "+err.Error())
 	}
 
-	rc.setUserCache(ctx, &user)
+	rc.setUserCache(ctx, &user, existingSnapshot)
 
 	return nil
 }
@@ -293,7 +307,10 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 			fmt.Sprintf("MAX_RETRIES_EXCEEDED(%d): %s", rc.maxRetries, lastError))
 	}
 
-	var userID uint64
+	var (
+		userID           uint64
+		existingSnapshot *v1.User
+	)
 	if deleteRequest.Username != "" {
 		var existing v1.User
 		if err := rc.db.WithContext(ctx).
@@ -304,6 +321,8 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 			}
 		} else {
 			userID = existing.ID
+			existingCopy := existing
+			existingSnapshot = &existingCopy
 		}
 	}
 
@@ -312,13 +331,13 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 		if rc.isIgnorableDeleteError(err) {
 			log.Warnf("删除操作遇到可忽略错误，直接提交: username=%s, error=%v",
 				deleteRequest.Username, err)
-			rc.purgeUserState(ctx, deleteRequest.Username, userID)
+			rc.purgeUserState(ctx, deleteRequest.Username, userID, existingSnapshot)
 			return nil
 		}
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "错误信息: "+err.Error())
 	}
 
-	rc.purgeUserState(ctx, deleteRequest.Username, userID)
+	rc.purgeUserState(ctx, deleteRequest.Username, userID, existingSnapshot)
 	return nil
 }
 
@@ -541,13 +560,13 @@ func (rc *RetryConsumer) deleteUserFromDB(ctx context.Context, username string) 
 		Delete(&v1.User{}).Error
 }
 
-func (rc *RetryConsumer) setUserCache(ctx context.Context, user *v1.User) error {
+func (rc *RetryConsumer) setUserCache(ctx context.Context, user *v1.User, previous *v1.User) error {
 	startTime := time.Now()
 	var operationErr error
 	defer func() {
 		metrics.RecordRedisOperation("set", float64(time.Since(startTime).Seconds()), operationErr)
 	}()
-	cacheKey := fmt.Sprintf("user:%s", user.Name)
+	cacheKey := usercache.UserKey(user.Name)
 	data, err := json.Marshal(user)
 	if err != nil {
 		operationErr = err
@@ -555,6 +574,10 @@ func (rc *RetryConsumer) setUserCache(ctx context.Context, user *v1.User) error 
 		return operationErr
 	}
 	operationErr = rc.redis.SetKey(ctx, cacheKey, string(data), 24*time.Hour)
+	if previous != nil {
+		rc.evictContactCaches(ctx, previous, user)
+	}
+	rc.writeContactCaches(ctx, user)
 	if operationErr != nil {
 		log.L(ctx).Errorw("缓存写入失败", "username", user.Name, "error", operationErr)
 	}
@@ -562,16 +585,23 @@ func (rc *RetryConsumer) setUserCache(ctx context.Context, user *v1.User) error 
 }
 
 func (rc *RetryConsumer) deleteUserCache(ctx context.Context, username string) error {
-	cacheKey := fmt.Sprintf("user:%s", username)
+	cacheKey := usercache.UserKey(username)
+	if cacheKey == "" {
+		return nil
+	}
 	_, err := rc.redis.DeleteKey(ctx, cacheKey)
 	return err
 }
 
-func (rc *RetryConsumer) purgeUserState(ctx context.Context, username string, userID uint64) {
+func (rc *RetryConsumer) purgeUserState(ctx context.Context, username string, userID uint64, snapshot *v1.User) {
 	if err := rc.deleteUserCache(ctx, username); err != nil {
 		log.Errorw("重试缓存删除失败", "username", username, "error", err)
 	} else {
 		log.Debugf("重试缓存删除成功: username=%s", username)
+	}
+
+	if snapshot != nil {
+		rc.evictContactCaches(ctx, snapshot, nil)
 	}
 
 	if userID == 0 {
@@ -583,6 +613,54 @@ func (rc *RetryConsumer) purgeUserState(ctx context.Context, username string, us
 		return
 	}
 	log.Debugf("重试刷新令牌清理成功: username=%s userID=%d", username, userID)
+}
+
+func (rc *RetryConsumer) evictContactCaches(ctx context.Context, previous *v1.User, current *v1.User) {
+	if previous == nil {
+		return
+	}
+	prevEmail := usercache.NormalizeEmail(previous.Email)
+	curEmail := ""
+	if current != nil {
+		curEmail = usercache.NormalizeEmail(current.Email)
+	}
+	if prevEmail != "" && prevEmail != curEmail {
+		rc.removeCacheKey(ctx, usercache.EmailKey(previous.Email))
+	}
+
+	prevPhone := usercache.NormalizePhone(previous.Phone)
+	curPhone := ""
+	if current != nil {
+		curPhone = usercache.NormalizePhone(current.Phone)
+	}
+	if prevPhone != "" && prevPhone != curPhone {
+		rc.removeCacheKey(ctx, usercache.PhoneKey(previous.Phone))
+	}
+}
+
+func (rc *RetryConsumer) writeContactCaches(ctx context.Context, user *v1.User) {
+	if user == nil {
+		return
+	}
+	if key := usercache.EmailKey(user.Email); key != "" {
+		if err := rc.redis.SetKey(ctx, key, user.Name, 24*time.Hour); err != nil {
+			log.Warnf("重试消费者邮箱缓存写入失败: username=%s key=%s err=%v", user.Name, key, err)
+		}
+	}
+	if key := usercache.PhoneKey(user.Phone); key != "" {
+		if err := rc.redis.SetKey(ctx, key, user.Name, 24*time.Hour); err != nil {
+			log.Warnf("重试消费者手机号缓存写入失败: username=%s key=%s err=%v", user.Name, key, err)
+		}
+	}
+}
+
+func (rc *RetryConsumer) removeCacheKey(ctx context.Context, cacheKey string) {
+	if cacheKey == "" {
+		return
+	}
+	if _, err := rc.redis.DeleteKey(ctx, cacheKey); err != nil {
+		log.Warnf("重试消费者缓存删除失败: key=%s err=%v", cacheKey, err)
+	}
 }
 
 // 若key为空字符串，直接panic（空Key无业务意义，会导致头逻辑混乱）

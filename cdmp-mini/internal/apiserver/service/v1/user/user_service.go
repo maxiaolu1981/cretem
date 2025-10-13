@@ -27,7 +27,6 @@ package user
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"math/rand"
 	"strings"
 	"time"
@@ -39,6 +38,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/util"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -207,7 +207,91 @@ func (u *UserService) cacheNullValue(username string) error {
 }
 
 func (u *UserService) generateUserCacheKey(username string) string {
-	return fmt.Sprintf("user:%s", username)
+	return usercache.UserKey(username)
+}
+
+func (u *UserService) generateEmailCacheKey(email string) string {
+	return usercache.EmailKey(email)
+}
+
+func (u *UserService) generatePhoneCacheKey(phone string) string {
+	return usercache.PhoneKey(phone)
+}
+
+func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User) error {
+	if err := u.ensureEmailUnique(ctx, user.Email, user.Name); err != nil {
+		return err
+	}
+	if err := u.ensurePhoneUnique(ctx, user.Phone, user.Name); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (u *UserService) ensureEmailUnique(ctx context.Context, email, owner string) error {
+	cacheKey := u.generateEmailCacheKey(email)
+	if cacheKey == "" {
+		return nil
+	}
+	return u.ensureContactUnique(ctx, cacheKey, owner, "邮箱", email, func(dbCtx context.Context) (*v1.User, error) {
+		return u.Store.Users().GetByEmail(dbCtx, email, u.Options)
+	})
+}
+
+func (u *UserService) ensurePhoneUnique(ctx context.Context, phone, owner string) error {
+	cacheKey := u.generatePhoneCacheKey(phone)
+	if cacheKey == "" {
+		return nil
+	}
+	return u.ensureContactUnique(ctx, cacheKey, owner, "手机号", phone, func(dbCtx context.Context) (*v1.User, error) {
+		return u.Store.Users().GetByPhone(dbCtx, phone, u.Options)
+	})
+}
+
+func (u *UserService) ensureContactUnique(
+	ctx context.Context,
+	cacheKey string,
+	allowedOwner string,
+	fieldLabel string,
+	fieldValue string,
+	lookup func(context.Context) (*v1.User, error),
+) error {
+	if cacheKey == "" {
+		return nil
+	}
+
+	cachedOwner, err := u.Redis.GetKey(ctx, cacheKey)
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			log.Warnf("%s唯一性缓存读取失败: key=%s err=%v", fieldLabel, cacheKey, err)
+		}
+	} else if cachedOwner != "" && !strings.EqualFold(cachedOwner, allowedOwner) {
+		return errors.WithCode(code.ErrResourceConflict, "%s已被占用: %s", fieldLabel, fieldValue)
+	}
+
+	result, retryErr := util.RetryWithBackoff(u.Options.RedisOptions.MaxRetries, isRetryableError, func() (interface{}, error) {
+		dbCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		existing, lookupErr := lookup(dbCtx)
+		if lookupErr != nil {
+			if errors.IsCode(lookupErr, code.ErrUserNotFound) {
+				return nil, nil
+			}
+			return nil, lookupErr
+		}
+		return existing, nil
+	})
+	if retryErr != nil {
+		return retryErr
+	}
+	if result == nil {
+		return nil
+	}
+	existing := result.(*v1.User)
+	if strings.EqualFold(existing.Name, allowedOwner) {
+		return nil
+	}
+	return errors.WithCode(code.ErrResourceConflict, "%s已被占用: %s", fieldLabel, fieldValue)
 }
 
 // 从缓存和数据库查询用户是否存在

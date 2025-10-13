@@ -24,7 +24,7 @@ func (u *User) Validate() field.ErrorList {
 		))
 	}
 
-	//补充密码强度校验
+	// 补充密码强度校验
 	passwordPath := field.NewPath("password")
 	if err := validation.IsValidPassword(u.Password); err != nil {
 		allErrs = append(allErrs, field.Invalid(
@@ -32,16 +32,29 @@ func (u *User) Validate() field.ErrorList {
 			"******", // 密码脱敏
 			err.Error(),
 		))
-		// 补充电话格式校验
-		phonePath := field.NewPath("phone")
-		if u.Phone != "" {
-			if err := validation.IsValidPhone(u.Phone); err != nil {
-				allErrs = append(allErrs, field.Invalid(
-					phonePath,
-					u.Phone,
-					err.Error(),
-				))
-			}
+	}
+
+	// 补充电话格式校验 - 从密码校验中移出来
+	phonePath := field.NewPath("phone")
+	if u.Phone != "" {
+		if err := validation.IsValidPhone(u.Phone); err != nil {
+			allErrs = append(allErrs, field.Invalid(
+				phonePath,
+				u.Phone,
+				err.Error(),
+			))
+		}
+	}
+
+	// 新增邮箱格式校验
+	emailPath := field.NewPath("email")
+	if u.Email != "" {
+		if err := validation.IsValidEmail(u.Email); err != nil {
+			allErrs = append(allErrs, field.Invalid(
+				emailPath,
+				u.Email,
+				err.Error(),
+			))
 		}
 	}
 

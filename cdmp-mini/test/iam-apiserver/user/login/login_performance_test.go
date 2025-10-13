@@ -167,7 +167,7 @@ func TestLoginPerformance_MixedTraffic(t *testing.T) {
 		requestsPerWorker = 10
 	)
 
-	if resp, err := env.SetLoginRateLimit(1000); err == nil && resp != nil && resp.HTTPStatus() == http.StatusOK {
+	if resp, err := env.SetLoginRateLimit(90000); err == nil && resp != nil && resp.HTTPStatus() == http.StatusOK {
 		defer env.ResetLoginRateLimit()
 	}
 

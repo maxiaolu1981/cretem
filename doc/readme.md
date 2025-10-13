@@ -21,3 +21,13 @@
 
 整体串起来：请求进来先过快速失败阈值 → 缓存命中减少 bcrypt → 认证成功后登录时间异步落库。  
 根据监控调整上述参数，就能围绕高并发瓶颈（CPU、数据库、队列）做针对性优化。
+服务端这一层的限流基准都来自 ServerRunOptions 里的配置，核心几个参数是：
+
+LoginRateLimit：登录接口每个时间窗口允许的最大请求数（和 /login 中间件直接挂钩）。
+LoginWindow：登录限流的时间窗口长度，两个参数一起决定 /login 在 Redis/IP 上的限速。
+WriteRateLimit：用户创建、更新、删除等写操作的限流阈值（/v1/users 这类接口用它）。
+EnableRateLimiter：全局开关，决定是否启用生产端限流控制。
+CLI 或配置文件里更新 server.loginlimit、server.loginwindow、server.writeRateLimit、server.enable-rate-limiter 就能改这些阈值，管理员接口 /admin/ratelimit/login 也会把值写入 loginLimit 调整生效。
+
+curl "<http://localhost:8088/admin/ratelimit/login>"
+{"code":100001,"message":"操作成功","data":{"effective":true,"value":500000,"window":"2m0s"}}login$

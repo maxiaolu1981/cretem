@@ -278,8 +278,10 @@ IsValidPassword:验证密码是否合法，检查长度、字符类型等复杂�
 package validation
 
 import (
+	"errors"
 	"fmt"
 	"net"
+	"net/mail"
 	"regexp"
 	"strings"
 	"unicode"
@@ -846,4 +848,39 @@ func isValidPhoneFormat(phone string) bool {
 
 	// 纯数字（国际号码不带+）
 	return regexp.MustCompile(`^\d{10,20}$`).MatchString(phone)
+}
+
+// IsValidEmail 综合邮箱校验
+func IsValidEmail(email string) error {
+	if email == "" {
+		return errors.New("邮箱不能为空")
+	}
+
+	// 去除首尾空格
+	email = strings.TrimSpace(email)
+
+	// 长度检查
+	if len(email) < 3 || len(email) > 254 {
+		return errors.New("邮箱长度必须在3到254个字符之间")
+	}
+
+	// 基础格式检查
+	pattern := `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`
+	matched, _ := regexp.MatchString(pattern, email)
+	if !matched {
+		return errors.New("邮箱格式不正确")
+	}
+
+	// 使用标准库进一步验证
+	_, err := mail.ParseAddress(email)
+	if err != nil {
+		return errors.New("邮箱格式不正确")
+	}
+
+	// 禁止某些特殊字符组合（可选）
+	if strings.Contains(email, "..") || strings.Contains(email, ".@") {
+		return errors.New("邮箱格式不正确")
+	}
+
+	return nil
 }

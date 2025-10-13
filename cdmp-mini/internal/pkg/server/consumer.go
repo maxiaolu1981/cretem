@@ -15,6 +15,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -408,7 +409,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 			// 数据库写入失败，直接写入死信区
 			return c.sendToDeadLetter(ctx, msg, "CREATE_DB_ERROR: "+err.Error())
 		}
-		if err := c.setUserCache(ctx, &user); err != nil {
+		if err := c.setUserCache(ctx, &user, nil); err != nil {
 			log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
 		} else {
 			log.Debugf("用户%s缓存成功", user.Name)
@@ -434,7 +435,10 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 
 	log.Debugf("开始删除用户: username=%s", deleteRequest.Username)
 
-	var userID uint64
+	var (
+		userID           uint64
+		existingSnapshot *v1.User
+	)
 	if deleteRequest.Username != "" {
 		var existing v1.User
 		if err := c.db.WithContext(ctx).
@@ -445,6 +449,8 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 			}
 		} else {
 			userID = existing.ID
+			existingCopy := existing
+			existingSnapshot = &existingCopy
 		}
 	}
 
@@ -452,7 +458,7 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 		return c.sendToRetry(ctx, msg, "删除用户失败: "+err.Error())
 	}
 
-	c.purgeUserState(ctx, deleteRequest.Username, userID)
+	c.purgeUserState(ctx, deleteRequest.Username, userID, existingSnapshot)
 	log.Debugf("用户删除成功: username=%s", deleteRequest.Username)
 
 	return nil
@@ -469,11 +475,26 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 
 	log.Debugf("处理用户更新: username=%s", user.Name)
 
+	var existingSnapshot *v1.User
+	var existing v1.User
+	if err := c.db.WithContext(ctx).
+		Where("name = ?", user.Name).
+		First(&existing).Error; err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return c.sendToDeadLetter(ctx, msg, "UPDATE_TARGET_NOT_FOUND: "+user.Name)
+		}
+		return c.sendToRetry(ctx, msg, "查询用户失败: "+err.Error())
+	}
+	existingCopy := existing
+	existingSnapshot = &existingCopy
+
 	if err := c.updateUserInDB(ctx, &user); err != nil {
 		return c.sendToRetry(ctx, msg, "更新用户失败: "+err.Error())
 	}
 
-	c.setUserCache(ctx, &user)
+	if err := c.setUserCache(ctx, &user, existingSnapshot); err != nil {
+		log.Warnf("用户更新成功但缓存刷新失败: username=%s err=%v", user.Name, err)
+	}
 
 	log.Debugf("用户更新成功: username=%s", user.Name)
 	return nil
@@ -738,38 +759,48 @@ func isRecoverableError(errStr string) bool {
 	return false
 }
 
-func (c *UserConsumer) setUserCache(ctx context.Context, user *v1.User) error {
+func (c *UserConsumer) setUserCache(ctx context.Context, user *v1.User, previous *v1.User) error {
 	startTime := time.Now()
-	var operationErr error // 用于记录最终的操作错误
+	var operationErr error
 	defer func() {
-		// 使用defer确保无论从哪个return退出都会记录指标
 		metrics.RecordRedisOperation("set", time.Since(startTime).Seconds(), operationErr)
 	}()
 
-	cacheKey := fmt.Sprintf("user:%s", user.Name)
+	cacheKey := usercache.UserKey(user.Name)
 	data, err := json.Marshal(user)
 	if err != nil {
 		operationErr = err
 		return err
 	}
 	operationErr = c.redis.SetKey(ctx, cacheKey, string(data), 24*time.Hour)
+	if previous != nil {
+		c.evictContactCaches(ctx, previous, user)
+	}
+	c.writeContactCaches(ctx, user)
 	return operationErr
 }
+
 func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) error {
-	cacheKey := fmt.Sprintf("user:%s", username)
-	_, err := c.redis.DeleteKey(ctx, cacheKey)
-	if err != nil {
+	cacheKey := usercache.UserKey(username)
+	if cacheKey == "" {
+		return nil
+	}
+	if _, err := c.redis.DeleteKey(ctx, cacheKey); err != nil {
 		return err
 	}
 	log.Debugf("删除用户%s cacheKey:%s成功", username, cacheKey)
 	return nil
 }
 
-func (c *UserConsumer) purgeUserState(ctx context.Context, username string, userID uint64) {
+func (c *UserConsumer) purgeUserState(ctx context.Context, username string, userID uint64, snapshot *v1.User) {
 	if err := c.deleteUserCache(ctx, username); err != nil {
 		log.Errorw("缓存删除失败", "username", username, "error", err)
 	} else {
 		log.Debugf("缓存删除成功: username=%s", username)
+	}
+
+	if snapshot != nil {
+		c.evictContactCaches(ctx, snapshot, nil)
 	}
 
 	if userID == 0 {
@@ -781,6 +812,54 @@ func (c *UserConsumer) purgeUserState(ctx context.Context, username string, user
 		return
 	}
 	log.Debugf("刷新令牌清理成功: username=%s userID=%d", username, userID)
+}
+
+func (c *UserConsumer) evictContactCaches(ctx context.Context, previous *v1.User, current *v1.User) {
+	if previous == nil {
+		return
+	}
+	prevEmail := usercache.NormalizeEmail(previous.Email)
+	curEmail := ""
+	if current != nil {
+		curEmail = usercache.NormalizeEmail(current.Email)
+	}
+	if prevEmail != "" && prevEmail != curEmail {
+		c.removeCacheKey(ctx, usercache.EmailKey(previous.Email))
+	}
+
+	prevPhone := usercache.NormalizePhone(previous.Phone)
+	curPhone := ""
+	if current != nil {
+		curPhone = usercache.NormalizePhone(current.Phone)
+	}
+	if prevPhone != "" && prevPhone != curPhone {
+		c.removeCacheKey(ctx, usercache.PhoneKey(previous.Phone))
+	}
+}
+
+func (c *UserConsumer) writeContactCaches(ctx context.Context, user *v1.User) {
+	if user == nil {
+		return
+	}
+	if key := usercache.EmailKey(user.Email); key != "" {
+		if err := c.redis.SetKey(ctx, key, user.Name, 24*time.Hour); err != nil {
+			log.Warnf("邮箱缓存写入失败: username=%s key=%s err=%v", user.Name, key, err)
+		}
+	}
+	if key := usercache.PhoneKey(user.Phone); key != "" {
+		if err := c.redis.SetKey(ctx, key, user.Name, 24*time.Hour); err != nil {
+			log.Warnf("手机号缓存写入失败: username=%s key=%s err=%v", user.Name, key, err)
+		}
+	}
+}
+
+func (c *UserConsumer) removeCacheKey(ctx context.Context, cacheKey string) {
+	if cacheKey == "" {
+		return
+	}
+	if _, err := c.redis.DeleteKey(ctx, cacheKey); err != nil {
+		log.Warnf("缓存删除失败: key=%s err=%v", cacheKey, err)
+	}
 }
 
 // 发送到重试主题
@@ -971,7 +1050,7 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 		log.Debugf("批量创建成功: %d 条记录", len(users))
 		// 批量写入缓存
 		for i := range users {
-			if err := c.setUserCache(ctx, &users[i]); err != nil {
+			if err := c.setUserCache(ctx, &users[i], nil); err != nil {
 				log.Warnf("批量创建后缓存设置失败: username=%s, error=%v", users[i].Name, err)
 			} else {
 				log.Debugf("批量创建后缓存成功: username=%s", users[i].Name)
@@ -1002,6 +1081,7 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 	defer metrics.BusinessInProgress.WithLabelValues("consumer", "batch_delete").Dec()
 	var usernames []string
 	cleanupTargets := make(map[string]uint64)
+	snapshots := make(map[string]*v1.User)
 	for _, m := range msgs {
 		var deleteRequest struct {
 			Username  string `json:"username"`
@@ -1020,19 +1100,25 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 		return
 	}
 	type userIdentifier struct {
-		ID   uint64
-		Name string `gorm:"column:name"`
+		ID    uint64
+		Name  string `gorm:"column:name"`
+		Email string `gorm:"column:email"`
+		Phone string `gorm:"column:phone"`
 	}
 	var identifiers []userIdentifier
 	if err := c.db.WithContext(ctx).
 		Model(&v1.User{}).
-		Select("id", "name").
+		Select("id", "name", "email", "phone").
 		Where("name IN ?", usernames).
 		Find(&identifiers).Error; err != nil {
 		log.Warnf("批量删除前查询用户ID失败: %v", err)
 	} else {
 		for _, item := range identifiers {
 			cleanupTargets[item.Name] = item.ID
+			snapshots[item.Name] = &v1.User{
+				Email: item.Email,
+				Phone: item.Phone,
+			}
 		}
 	}
 	var opErr error
@@ -1050,7 +1136,7 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 		log.Debugf("批量删除成功: %d 条记录", len(usernames))
 		// 批量删除缓存
 		for _, username := range usernames {
-			c.purgeUserState(ctx, username, cleanupTargets[username])
+			c.purgeUserState(ctx, username, cleanupTargets[username], snapshots[username])
 		}
 	}
 	duration := time.Since(start).Seconds()
@@ -1110,6 +1196,26 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 			continue
 		}
 		u.UpdatedAt = time.Now()
+		var existing v1.User
+		if err := c.db.WithContext(ctx).
+			Where("name = ?", u.Name).
+			First(&existing).Error; err != nil {
+			if err == gorm.ErrRecordNotFound {
+				log.Warnf("批量更新目标不存在: %s", u.Name)
+				if c.producer != nil {
+					_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UPDATE_TARGET_NOT_FOUND: "+u.Name)
+				}
+				continue
+			}
+			opErr = err
+			log.Errorf("批量更新前查询失败: %v, 用户: %s", err, u.Name)
+			metrics.BusinessFailures.WithLabelValues("consumer", "batch_update", getErrorType(err)).Inc()
+			if c.producer != nil {
+				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_UPDATE_QUERY_ERROR: "+err.Error())
+			}
+			continue
+		}
+		existingCopy := existing
 		if err := c.db.WithContext(ctx).Model(&v1.User{}).
 			Where("name = ?", u.Name).
 			Updates(map[string]interface{}{
@@ -1128,7 +1234,7 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 		}
 		updatedCount++
 		metrics.BusinessSuccess.WithLabelValues("consumer", "batch_update", "success").Inc()
-		_ = c.setUserCache(ctx, &u)
+		_ = c.setUserCache(ctx, &u, &existingCopy)
 	}
 	duration := time.Since(start).Seconds()
 	metrics.BusinessProcessingTime.WithLabelValues("consumer", "batch_update").Observe(duration)

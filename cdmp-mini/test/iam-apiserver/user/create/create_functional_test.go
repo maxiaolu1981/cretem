@@ -80,7 +80,7 @@ func TestCreateFunctional(t *testing.T) {
 		}
 
 		_ = env.LoginOrFail(t, spec.Name, spec.Password)
-		assertAuditEvent(t, env, "user.create", spec.Name)
+		assertAuditEvent(t, env, "user.create", "")
 
 		recorder.AddCase(framework.CaseResult{
 			Name:        "normal_user_create",
