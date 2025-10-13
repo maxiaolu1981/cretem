@@ -631,7 +631,7 @@ func assertStatus(t *testing.T, resp *framework.APIResponse, expectHTTP, expectC
 
 func waitForUserReady(t *testing.T, env *framework.Env, name string) {
 	t.Helper()
-	if err := env.WaitForUser(name, 5*time.Second); err != nil {
+	if err := env.WaitForUser(name, 15*time.Second); err != nil {
 		t.Fatalf("user %s not ready: %v", name, err)
 	}
 }

@@ -121,7 +121,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		Middlewares:              []string{},
 		EnableProfiling:          true,
 		EnableMetrics:            true,
-		FastDebugStartup:         false,
+		FastDebugStartup:         true,
 		CookieDomain:             "",
 		CookieSecure:             false,
 		CtxTimeout:               50 * time.Second,
