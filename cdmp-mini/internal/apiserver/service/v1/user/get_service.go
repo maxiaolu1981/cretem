@@ -71,6 +71,26 @@ func (u *UserService) tryGetFromCache(ctx context.Context, username string) (*v1
 	}
 
 	if isCached {
+		if cachedUser != nil && cachedUser.Name == RATE_LIMIT_PREVENTION {
+			metrics.CacheHits.WithLabelValues("null_hit").Inc()
+			if refreshAllowed, lockKey := u.shouldRefreshNullCache(ctx, username); refreshAllowed {
+				defer u.releaseNullCacheRefreshLock(lockKey)
+				refreshedUser, refreshErr := u.refreshUserCacheFromDB(ctx, username)
+				if refreshErr != nil {
+					log.Warnf("负缓存刷新失败: username=%s err=%v", username, refreshErr)
+				} else if refreshedUser != nil {
+					return refreshedUser, true, nil
+				}
+			} else {
+				refreshedUser, refreshErr := u.refreshUserCacheFromDB(ctx, username)
+				if refreshErr != nil {
+					log.Debugf("负缓存刷新跳过锁, username=%s err=%v", username, refreshErr)
+				} else if refreshedUser != nil {
+					return refreshedUser, true, nil
+				}
+			}
+			return nil, true, nil
+		}
 		if cachedUser != nil {
 			metrics.CacheHits.WithLabelValues("hit").Inc()
 			return cachedUser, true, nil

@@ -27,6 +27,7 @@ package user
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"strings"
 	"time"
@@ -193,7 +194,11 @@ func (u *UserService) setUserCache(ctx context.Context, username string, user *v
 // cacheNullValue 缓存空值（防穿透）
 func (u *UserService) cacheNullValue(username string) error {
 	// 缓存一个短期空值，防止穿透
-	ctx, cancel := context.WithTimeout(context.Background(), u.Options.RedisOptions.Timeout)
+	timeout := u.Options.RedisOptions.Timeout
+	if timeout <= 0 {
+		timeout = 500 * time.Millisecond
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	cacheKey := u.generateUserCacheKey(username)
@@ -204,6 +209,67 @@ func (u *UserService) cacheNullValue(username string) error {
 
 	_, err := u.Redis.SetNX(ctx, cacheKey, RATE_LIMIT_PREVENTION, expireTime)
 	return err
+}
+
+func (u *UserService) shouldRefreshNullCache(ctx context.Context, username string) (bool, string) {
+	if u.Redis == nil {
+		return false, ""
+	}
+	lockKey := u.generateNullRefreshLockKey(username)
+	lockTimeout := u.Options.RedisOptions.Timeout
+	if lockTimeout <= 0 {
+		lockTimeout = 500 * time.Millisecond
+	}
+	lockCtx, cancel := context.WithTimeout(context.Background(), lockTimeout)
+	defer cancel()
+	success, err := u.Redis.SetNX(lockCtx, lockKey, "1", 2*time.Second)
+	if err != nil {
+		log.Warnf("获取负缓存刷新锁失败: username=%s err=%v", username, err)
+		return false, ""
+	}
+	return success, lockKey
+}
+
+func (u *UserService) releaseNullCacheRefreshLock(lockKey string) {
+	if lockKey == "" {
+		return
+	}
+	releaseTimeout := u.Options.RedisOptions.Timeout
+	if releaseTimeout <= 0 {
+		releaseTimeout = 500 * time.Millisecond
+	}
+	releaseCtx, cancel := context.WithTimeout(context.Background(), releaseTimeout)
+	defer cancel()
+	if _, err := u.Redis.DeleteKey(releaseCtx, lockKey); err != nil && err != redis.Nil {
+		log.Warnf("释放负缓存刷新锁失败: key=%s err=%v", lockKey, err)
+	}
+}
+
+func (u *UserService) refreshUserCacheFromDB(ctx context.Context, username string) (*v1.User, error) {
+	refreshKey := fmt.Sprintf("refresh:%s", username)
+	result, err, shared := u.group.Do(refreshKey, func() (interface{}, error) {
+		dbCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		return u.getUserFromDBAndSetCache(dbCtx, username)
+	})
+	if shared {
+		log.Debugf("负缓存刷新共享结果: username=%s", username)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, nil
+	}
+	user := result.(*v1.User)
+	if user == nil || user.Name == RATE_LIMIT_PREVENTION {
+		return nil, nil
+	}
+	return user, nil
+}
+
+func (u *UserService) generateNullRefreshLockKey(username string) string {
+	return fmt.Sprintf("%s:refresh-lock", u.generateUserCacheKey(username))
 }
 
 func (u *UserService) generateUserCacheKey(username string) string {

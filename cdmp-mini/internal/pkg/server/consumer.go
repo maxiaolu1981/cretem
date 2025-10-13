@@ -4,12 +4,16 @@ package server
 import (
 	"context"
 	"encoding/json"
+	stderrs "errors"
 	"fmt"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/go-redis/redis/v8"
+	"github.com/go-sql-driver/mysql"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
@@ -37,6 +41,8 @@ type UserConsumer struct {
 	// 主控选举相关
 	isMaster bool
 }
+
+const cacheNullSentinel = "rate_limit_prevention"
 
 func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
 	consumer := &UserConsumer{
@@ -404,6 +410,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 			// 字段校验失败，直接写入死信区
 			return c.sendToDeadLetter(ctx, msg, err.Error())
 		}
+		ensureUserInstanceID(&user)
 		log.Debugf("开始建立用户: username=%s", user.Name)
 		if err := c.createUserInDB(ctx, &user); err != nil {
 			// 数据库写入失败，直接写入死信区
@@ -487,6 +494,9 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 	}
 	existingCopy := existing
 	existingSnapshot = &existingCopy
+	if strings.TrimSpace(user.InstanceID) == "" {
+		user.InstanceID = existing.InstanceID
+	}
 
 	if err := c.updateUserInDB(ctx, &user); err != nil {
 		return c.sendToRetry(ctx, msg, "更新用户失败: "+err.Error())
@@ -509,12 +519,49 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error 
 	//	log.Infof("[单条插入] 尝试插入用户: %s", user.Name)
 	// 注意：这里直接使用 c.db，在集群模式下这是主库连接
 	// 在单机模式下这是唯一数据库连接
-	if err := c.db.WithContext(ctx).Create(user).Error; err != nil {
+	builder := c.db.WithContext(ctx)
+	if strings.TrimSpace(user.Phone) == "" {
+		builder = builder.Omit("phone")
+	}
+	if err := builder.Create(user).Error; err != nil {
+		log.Debugf("createUserInDB insert failed: username=%s type=%T err=%v", user.Name, err, err)
+		if isDuplicateKeyDBError(err) {
+			log.Debugf("忽略重复用户插入: username=%s err=%v", user.Name, err)
+			return nil
+		}
 		//	metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
-		return fmt.Errorf("数据创建失败: %v", err)
+		return fmt.Errorf("数据创建失败: %w", err)
 	}
 	//	log.Infof("[单条插入] 成功: %s", user.Name)
 	return nil
+}
+
+func isDuplicateKeyDBError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if stderrs.Is(err, gorm.ErrDuplicatedKey) {
+		return true
+	}
+	var mysqlErr *mysql.MySQLError
+	if stderrs.As(err, &mysqlErr) && mysqlErr.Number == 1062 {
+		return true
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "1062") || strings.Contains(msg, "Duplicate entry") || strings.Contains(strings.ToLower(msg), "unique constraint") {
+		return true
+	}
+	return false
+}
+
+func ensureUserInstanceID(user *v1.User) {
+	if user == nil {
+		return
+	}
+	if strings.TrimSpace(user.InstanceID) != "" {
+		return
+	}
+	user.InstanceID = idutil.GetInstanceID(idutil.GetIntID(), "user-")
 }
 
 func (c *UserConsumer) deleteUserFromDB(ctx context.Context, username string) error {
@@ -766,6 +813,8 @@ func (c *UserConsumer) setUserCache(ctx context.Context, user *v1.User, previous
 		metrics.RecordRedisOperation("set", time.Since(startTime).Seconds(), operationErr)
 	}()
 
+	c.clearNegativeCache(ctx, user.Name)
+
 	cacheKey := usercache.UserKey(user.Name)
 	data, err := json.Marshal(user)
 	if err != nil {
@@ -790,6 +839,31 @@ func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) err
 	}
 	log.Debugf("删除用户%s cacheKey:%s成功", username, cacheKey)
 	return nil
+}
+
+func (c *UserConsumer) clearNegativeCache(ctx context.Context, username string) {
+	if username == "" {
+		return
+	}
+	cacheKey := usercache.UserKey(username)
+	if cacheKey == "" {
+		return
+	}
+	value, err := c.redis.GetKey(ctx, cacheKey)
+	if err != nil {
+		if err != redis.Nil {
+			log.Warnf("负缓存校验失败: key=%s err=%v", cacheKey, err)
+		}
+		return
+	}
+	if value != cacheNullSentinel {
+		return
+	}
+	if _, err := c.redis.DeleteKey(ctx, cacheKey); err != nil {
+		log.Warnf("负缓存清理失败: key=%s err=%v", cacheKey, err)
+		return
+	}
+	log.Debugf("负缓存清理成功: username=%s key=%s", username, cacheKey)
 }
 
 func (c *UserConsumer) purgeUserState(ctx context.Context, username string, userID uint64, snapshot *v1.User) {
@@ -999,7 +1073,10 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 	metrics.BusinessOperationsTotal.WithLabelValues("consumer", "batch_create", "kafka").Inc()
 	metrics.BusinessInProgress.WithLabelValues("consumer", "batch_create").Inc()
 	defer metrics.BusinessInProgress.WithLabelValues("consumer", "batch_create").Dec()
-	var users []v1.User
+	var (
+		users     []v1.User
+		validMsgs []kafka.Message
+	)
 	for _, m := range msgs {
 		var u v1.User
 		if err := json.Unmarshal(m.Value, &u); err != nil {
@@ -1019,7 +1096,9 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 		now := time.Now()
 		u.CreatedAt = now
 		u.UpdatedAt = now
+		ensureUserInstanceID(&u)
 		users = append(users, u)
+		validMsgs = append(validMsgs, m)
 	}
 
 	usernames := make([]string, 0, len(msgs))
@@ -1034,28 +1113,32 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 	if len(users) == 0 {
 		return
 	}
-	var opErr error
-	if err := c.db.WithContext(ctx).Create(&users).Error; err != nil {
-		opErr = err
-		log.Errorf("[批量插入] 失败: %v, 用户: %v", err, usernames)
-		metrics.BusinessFailures.WithLabelValues("consumer", "batch_create", getErrorType(err)).Inc()
-		for _, m := range msgs {
+	var (
+		opErr      error
+		successful int
+	)
+	for i := range users {
+		if err := c.createUserInDB(ctx, &users[i]); err != nil {
+			opErr = err
+			errorType := getErrorType(err)
+			log.Errorf("[批量插入] 单条失败: username=%s err=%v", users[i].Name, err)
+			metrics.BusinessFailures.WithLabelValues("consumer", "batch_create", errorType).Inc()
 			if c.producer != nil {
-				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_CREATE_DB_ERROR: "+err.Error())
+				_ = c.producer.sendToRetryTopic(ctx, validMsgs[i], "BATCH_CREATE_DB_ERROR: "+err.Error())
 			}
+			continue
 		}
-	} else {
+		successful++
+		if err := c.setUserCache(ctx, &users[i], nil); err != nil {
+			log.Warnf("批量创建后缓存设置失败: username=%s, error=%v", users[i].Name, err)
+		} else {
+			log.Debugf("批量创建后缓存成功: username=%s", users[i].Name)
+		}
+	}
+	if successful > 0 {
 		metrics.BusinessSuccess.WithLabelValues("consumer", "batch_create", "success").Inc()
 		log.Infof("[批量插入] 成功: %v", usernames)
-		log.Debugf("批量创建成功: %d 条记录", len(users))
-		// 批量写入缓存
-		for i := range users {
-			if err := c.setUserCache(ctx, &users[i], nil); err != nil {
-				log.Warnf("批量创建后缓存设置失败: username=%s, error=%v", users[i].Name, err)
-			} else {
-				log.Debugf("批量创建后缓存成功: username=%s", users[i].Name)
-			}
-		}
+		log.Debugf("批量创建成功: %d 条记录", successful)
 	}
 	duration := time.Since(start).Seconds()
 	metrics.BusinessProcessingTime.WithLabelValues("consumer", "batch_create").Observe(duration)

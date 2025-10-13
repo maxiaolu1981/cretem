@@ -11,12 +11,10 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
-	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
@@ -116,8 +114,6 @@ func checkNormalUserPermission(c *gin.Context) bool {
 		)
 		c.Abort()
 		return false
-	//	}
-
 	default:
 		// 其他未定义路径：非管理员禁止访问
 		core.WriteResponse(c,
@@ -127,9 +123,6 @@ func checkNormalUserPermission(c *gin.Context) bool {
 		c.Abort()
 		return false
 	}
-
-	// 非管理员权限校验通过
-	return true
 }
 
 // isAdmin 判断当前用户是否为管理员（纯判断逻辑，不处理响应）
@@ -166,15 +159,15 @@ func getUsernameFromCtx(c *gin.Context) string {
 }
 
 // isSuperAdmin 判断当前用户是否为超级管理员（示例实现）
-func isSuperAdmin(c *gin.Context, opt *options.Options) bool {
-	username := getUsernameFromCtx(c)
-	if username == "root" { // 假设 root 为超级管理员
-		return true
-	}
-	// 实际场景可从数据库查询 is_super 字段
-	_, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{}, opt)
-	if err != nil {
-		return false
-	}
-	return true
-}
+// func isSuperAdmin(c *gin.Context, opt *options.Options) bool {
+// 	username := getUsernameFromCtx(c)
+// 	if username == "root" { // 假设 root 为超级管理员
+// 		return true
+// 	}
+// 	// 实际场景可从数据库查询 is_super 字段
+// 	_, err := interfaces.Client().Users().Get(c, username, metav1.GetOptions{}, opt)
+// 	if err != nil {
+// 		return false
+// 	}
+// 	return true
+// }

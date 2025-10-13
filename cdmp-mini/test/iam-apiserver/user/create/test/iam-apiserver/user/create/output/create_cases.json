@@ -6,7 +6,33 @@
     "http_status": 201,
     "code": 100001,
     "message": "用户创建成功",
-    "duration_ms": 332,
+    "duration_ms": 224,
+    "checks": {
+      "code_match": true,
+      "status_match": true
+    }
+  },
+  {
+    "name": "username_max_length",
+    "description": "用户名边界与合法性校验",
+    "success": true,
+    "http_status": 201,
+    "code": 100001,
+    "message": "用户创建成功",
+    "duration_ms": 308,
+    "checks": {
+      "code_match": true,
+      "status_match": true
+    }
+  },
+  {
+    "name": "username_hyphen_allowed",
+    "description": "用户名边界与合法性校验",
+    "success": true,
+    "http_status": 201,
+    "code": 100001,
+    "message": "用户创建成功",
+    "duration_ms": 232,
     "checks": {
       "code_match": true,
       "status_match": true
@@ -19,7 +45,7 @@
     "http_status": 422,
     "code": 100004,
     "message": "[code: 100004] 参数校验失败: map[name:Invalid value: \"UpperCase!\": 用户名不合法: 名称部分必须由字母、数字、'-'、'_'或'.'组成，且首尾必须为字母或数字（例如：'MyName'，或'my.name'，或'123-abc'，用于验证的正则表达式：'([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9]'） objectmeta.name:Invalid value: \"UpperCase!\": is not a invalid name]",
-    "duration_ms": 5,
+    "duration_ms": 4,
     "checks": {
       "code_match": true,
       "status_match": true
@@ -32,7 +58,7 @@
     "http_status": 409,
     "code": 110002,
     "message": "[code: 110002] 用户已经存在",
-    "duration_ms": 227,
+    "duration_ms": 122,
     "checks": {
       "code_match": true,
       "status_match": true
