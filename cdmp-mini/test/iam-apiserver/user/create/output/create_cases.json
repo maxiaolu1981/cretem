@@ -1,0 +1,54 @@
+[
+  {
+    "name": "username_min_length",
+    "description": "用户名边界与合法性校验",
+    "success": true,
+    "http_status": 201,
+    "code": 100001,
+    "message": "用户创建成功",
+    "duration_ms": 264,
+    "checks": {
+      "code_match": true,
+      "status_match": true
+    }
+  },
+  {
+    "name": "username_max_length",
+    "description": "用户名边界与合法性校验",
+    "success": true,
+    "http_status": 201,
+    "code": 100001,
+    "message": "用户创建成功",
+    "duration_ms": 346,
+    "checks": {
+      "code_match": true,
+      "status_match": true
+    }
+  },
+  {
+    "name": "username_hyphen_allowed",
+    "description": "用户名边界与合法性校验",
+    "success": true,
+    "http_status": 201,
+    "code": 100001,
+    "message": "用户创建成功",
+    "duration_ms": 298,
+    "checks": {
+      "code_match": true,
+      "status_match": true
+    }
+  },
+  {
+    "name": "username_duplicate",
+    "description": "用户名边界与合法性校验",
+    "success": false,
+    "http_status": 409,
+    "code": 110002,
+    "message": "[code: 110002] 用户已经存在",
+    "duration_ms": 187,
+    "checks": {
+      "code_match": true,
+      "status_match": true
+    }
+  }
+]

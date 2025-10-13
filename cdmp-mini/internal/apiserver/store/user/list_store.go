@@ -14,7 +14,7 @@ func (u *Users) List(ctx context.Context, username string, opts metav1.ListOptio
 	ol := gormutil.Unpointer(opts.Offset, opts.Limit)
 
 	// 构建基础查询
-	query := u.db.Model(&v1.User{}).Where("status = 1")
+	query := u.db.WithContext(ctx).Model(&v1.User{}).Where("status = 1")
 
 	// 只有在 selector 不为 nil 时才调用方法
 	if username != "" {

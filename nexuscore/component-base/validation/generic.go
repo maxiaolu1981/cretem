@@ -804,3 +804,46 @@ func parseLabelCondition(cond string) (key, value string) {
 		return "", "" // 不应出现，已被正则校验拦截
 	}
 }
+
+// IsValidPhone 验证电话格式
+func IsValidPhone(phone string) error {
+	if phone == "" {
+		return nil // 空值通过（可选字段）
+	}
+
+	// 移除所有空格
+	cleaned := strings.TrimSpace(phone)
+
+	// 长度检查
+	if len(cleaned) < 11 || len(cleaned) > 20 {
+		return fmt.Errorf("电话长度必须在11到20个字符之间")
+	}
+
+	// 格式验证
+	if !isValidPhoneFormat(cleaned) {
+		return fmt.Errorf("电话格式不正确")
+	}
+
+	return nil
+}
+
+// isValidPhoneFormat 检查电话格式
+func isValidPhoneFormat(phone string) bool {
+	// 国际格式: +8613812345678
+	if strings.HasPrefix(phone, "+") {
+		return regexp.MustCompile(`^\+\d{10,19}$`).MatchString(phone)
+	}
+
+	// 中国手机号: 1开头，11位数字
+	if regexp.MustCompile(`^1[3-9]\d{9}$`).MatchString(phone) {
+		return true
+	}
+
+	// 带区号的固定电话
+	if regexp.MustCompile(`^0\d{2,3}-?\d{7,8}$`).MatchString(phone) {
+		return true
+	}
+
+	// 纯数字（国际号码不带+）
+	return regexp.MustCompile(`^\d{10,20}$`).MatchString(phone)
+}

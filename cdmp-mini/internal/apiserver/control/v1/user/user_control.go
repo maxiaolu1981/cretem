@@ -5,7 +5,6 @@ import (
 	service "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -39,8 +38,6 @@ func NewUserController(store interfaces.Factory,
 
 // BusinessValidateListOptions 业务层验证函数
 func (u *UserController) validateListOptions(opts *v1.ListOptions) field.ErrorList {
-	if *opts.TimeoutSeconds == 0 {
-		log.Warnw("目前查询模式是非超时模式")
-	}
+
 	return validation.ValidateListOptionsBase(opts)
 }

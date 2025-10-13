@@ -35,6 +35,7 @@
   // 比较和差异
   "gitlens.views.compare.enabled": true,
   "gitlens.views.repositories.enabled": true,
+
   // =============================================
   // SQLTools 数据库连接配置
   // =============================================
@@ -55,6 +56,26 @@
       "askForPassword": true
     }
   ],
+
+  // =============================================
+  // 环境变量配置 - 用于测试和调试
+  // =============================================
+  "terminal.integrated.env.linux": {
+    "IAM_APISERVER_E2E": "1",
+    "SERVER_BIND_ADDRESS": "0.0.0.0",
+    "DEBUG_MODE": "true"
+  },
+  "terminal.integrated.env.windows": {
+    "IAM_APISERVER_E2E": "1", 
+    "SERVER_BIND_ADDRESS": "0.0.0.0",
+    "DEBUG_MODE": "true"
+  },
+  "terminal.integrated.env.osx": {
+    "IAM_APISERVER_E2E": "1",
+    "SERVER_BIND_ADDRESS": "0.0.0.0",
+    "DEBUG_MODE": "true"
+  },
+
   // =============================================
   // 通用开发配置
   // =============================================
@@ -82,6 +103,7 @@
   "editor.bracketPairColorization.enabled": true,
   // 代码镜头 (显示引用计数等)
   "editor.codeLens": true,
+
   // =============================================
   // Go 语言特定配置 (如果是 Go 项目)
   // =============================================
@@ -93,11 +115,13 @@
   ],
   "go.coverOnSave": false,
   "go.autocompleteUnimportedPackages": true,
+
   // =============================================
   // 终端配置
   // =============================================
   "terminal.integrated.shell.linux": "/bin/bash",
   "terminal.integrated.fontSize": 14,
+
   // =============================================
   // 扩展特定配置
   // =============================================
@@ -107,7 +131,7 @@
   // Todo Tree - 高亮 TODO 注释
   "todo-tree.general.tags": [
     "TODO",
-    "FIXME",
+    "FIXME", 
     "HACK",
     "BUG",
     "NOTE"

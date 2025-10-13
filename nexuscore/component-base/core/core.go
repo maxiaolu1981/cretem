@@ -69,27 +69,47 @@ func determineStatusCode(req *http.Request) int {
 	path := req.URL.Path
 	method := req.Method
 
-	// 登录认证操作 - 返回200
-	if path == "/login" && method == "POST" {
+	switch {
+	// 登录认证操作
+	case path == "/login" && method == "POST":
+		return http.StatusOK
+
+	// 删除操作
+	case method == "DELETE":
+		return http.StatusOK
+
+	// 资源创建操作（POST 到集合端点）
+	case method == "POST" && isResourceCreation(path):
+		return http.StatusCreated
+
+	// 更新操作（PUT 到具体资源）
+	case method == "PUT" && isResourceUpdate(path):
+		return http.StatusOK
+
+	// 获取操作
+	case method == "GET":
+		return http.StatusOK
+
+	// 默认
+	default:
 		return http.StatusOK
 	}
-
-	// 删除操作 - 返回204
-	if method == "DELETE" {
-		return http.StatusOK // ✅ 改为200
-	}
-
-	// 真正的资源创建操作 - 返回201
-	if method == "POST" && isResourceCreation(path) {
-		return http.StatusCreated
-	}
-
-	// 其他所有情况 - 返回200
-	return http.StatusOK
 }
 
 // ✅ 明确定义哪些是资源创建端点
 func isResourceCreation(path string) bool {
+	resourceCreationPaths := []string{
+		"/v1/users",
+	}
+
+	for _, p := range resourceCreationPaths {
+		if path == p {
+			return true
+		}
+	}
+	return false
+}
+func isResourceUpdate(path string) bool {
 	resourceCreationPaths := []string{
 		"/v1/users",
 	}

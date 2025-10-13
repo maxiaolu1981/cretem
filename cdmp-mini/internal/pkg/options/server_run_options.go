@@ -108,6 +108,10 @@ type ServerRunOptions struct {
 	AdminToken string `json:"adminToken" mapstructure:"adminToken"`
 	// 新增：生产端限流器开关
 	EnableRateLimiter bool `json:"enableRateLimiter" mapstructure:"enableRateLimiter"`
+	// 并发处理配置
+	MaxGoroutines    int           `json:"max-goroutines" mapstructure:"max-goroutines"`
+	MaxQueueSize     int           `json:"max-queue-size" mapstructure:"max-queue-size"`
+	TimeoutThreshold time.Duration `json:"timeout-threshold" mapstructure:"timeout-threshold"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -117,7 +121,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		Middlewares:              []string{},
 		EnableProfiling:          true,
 		EnableMetrics:            true,
-		FastDebugStartup:         false,
+		FastDebugStartup:         true,
 		CookieDomain:             "",
 		CookieSecure:             false,
 		CtxTimeout:               50 * time.Second,
@@ -136,7 +140,10 @@ func NewServerRunOptions() *ServerRunOptions {
 		LoginCredentialCacheTTL:  30 * time.Second, //凭证缓存有效期
 		LoginCredentialCacheSize: 1024,             //凭证缓存最大条目数
 		AdminToken:               "",
-		EnableRateLimiter:        true, // 默认启用生产端限流器
+		EnableRateLimiter:        true,              // 默认启用生产端限流器
+		MaxGoroutines:            100,               // 默认最大并发处理数
+		MaxQueueSize:             100,               // 默认任务队列大小
+		TimeoutThreshold:         100 * time.Second, // 默认单个请求超时阈值
 	}
 }
 

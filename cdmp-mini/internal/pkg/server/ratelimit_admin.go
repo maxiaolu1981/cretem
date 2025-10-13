@@ -250,11 +250,11 @@ func RegisterLoginLimitHandlers(rg *gin.RouterGroup, srv *GenericAPIServer, opts
 }
 
 func isLocalOrDebug(c *gin.Context, opts *apiserveropts.Options) bool {
-	if opts.ServerRunOptions.Mode == "debug" {
+	if opts.ServerRunOptions.Mode != "release" {
 		return true
 	}
 	ip := c.ClientIP()
-	return ip == "127.0.0.1" || ip == "::1" || ip == "localhost"
+	return ip == "127.0.0.1" || ip == "::1" || ip == "192.168.10.8"
 }
 
 // requesterSource returns a short string describing who set the value: prefer token if present, else client IP

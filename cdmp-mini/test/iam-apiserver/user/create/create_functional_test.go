@@ -200,7 +200,7 @@ func TestCreateFunctional(t *testing.T) {
 			{"min_length", uniqueName(3), http.StatusCreated, code.ErrSuccess, true},
 			{"max_length", uniqueName(45), http.StatusCreated, code.ErrSuccess, true},
 			{"hyphen_allowed", fmt.Sprintf("hy-%s", uniqueName(6)), http.StatusCreated, code.ErrSuccess, true},
-			{"invalid_character", "UpperCase", http.StatusBadRequest, code.ErrValidation, false},
+			{"invalid_character", "UpperCase!", http.StatusUnprocessableEntity, code.ErrValidation, false},
 			{"duplicate", baseSpec.Name, http.StatusConflict, code.ErrUserAlreadyExist, false},
 		}
 
@@ -242,7 +242,7 @@ func TestCreateFunctional(t *testing.T) {
 			expectCode int
 		}{
 			{"too_short", "Ab1!", code.ErrValidation},
-			{"too_long", "Abcd1234!Efgh5678", code.ErrValidation},
+			{"too_long", "A" + strings.Repeat("b1!", 67), code.ErrValidation},
 			{"missing_upper", "lower1234!", code.ErrValidation},
 			{"missing_lower", "UPPER1234!", code.ErrValidation},
 			{"missing_number", "Abcdefg!", code.ErrValidation},
@@ -258,7 +258,7 @@ func TestCreateFunctional(t *testing.T) {
 					"email":    fmt.Sprintf("%s@example.com", uniqueName(6)),
 				}
 				outcome := performCreate(t, env, "", payload)
-				assertStatus(t, outcome.resp, http.StatusBadRequest, tc.expectCode)
+				assertStatus(t, outcome.resp, http.StatusUnprocessableEntity, tc.expectCode)
 				if strings.Contains(outcome.resp.Message, tc.password) {
 					t.Fatalf("password leaked in message: %s", outcome.resp.Message)
 				}
@@ -293,7 +293,7 @@ func TestCreateFunctional(t *testing.T) {
 			"email":    "not-an-email",
 		}
 		invalid := performCreate(t, env, "", invalidPayload)
-		assertStatus(t, invalid.resp, http.StatusBadRequest, code.ErrValidation)
+		assertStatus(t, invalid.resp, http.StatusUnprocessableEntity, code.ErrValidation)
 
 		recorder.AddCase(framework.CaseResult{
 			Name:        "email_format",

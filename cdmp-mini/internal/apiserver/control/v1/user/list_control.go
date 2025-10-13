@@ -70,7 +70,12 @@ func (u *UserController) List(c *gin.Context) {
 
 		if len(userList.Items) > 0 {
 			for _, u := range userList.Items {
+				originalUser := userList.Items[0]
+				log.Debugf("control:🔍 调试 - 原始用户: ID=%d, Name=%s, IsAdmin=%v",
+					originalUser.ID, originalUser.Name, originalUser.IsAdmin)
 				publicUser = v1.ConvertToPublicUser(u)
+				log.Debugf("control:🔍 调试 - 转换后: ID=%d, Username=%s, IsAdmin=%v",
+					publicUser.ID, publicUser.Username, publicUser.IsAdmin)
 				publicUsers = append(publicUsers, publicUser)
 			}
 

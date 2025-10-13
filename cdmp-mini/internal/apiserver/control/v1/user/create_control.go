@@ -26,7 +26,6 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/auth"
 
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
@@ -85,14 +84,6 @@ func (u *UserController) Create(ctx *gin.Context) {
 			auditBase("fail", err.Error())
 			return err
 		}
-		if errs := validation.IsQualifiedName(username); len(errs) > 0 {
-			errsMsg := strings.Join(errs, ":")
-			log.Warnf("[control] 用户名不合法: username=%s, error=%s", username, errsMsg)
-			err := errors.WithCode(code.ErrValidation, "用户名不合法:%s", errsMsg)
-			core.WriteResponse(ctx, err, nil)
-			auditBase("fail", err.Error())
-			return err
-		}
 
 		validationErrs := r.Validate()
 		if len(validationErrs) > 0 {
@@ -100,8 +91,8 @@ func (u *UserController) Create(ctx *gin.Context) {
 			for _, fieldErr := range validationErrs {
 				errDetails[fieldErr.Field] = fieldErr.ErrorBody()
 			}
-			detailsStr := fmt.Sprintf("密码设定不符合规则: %+v", errDetails)
-			log.Warnf("[control] 密码不符合规则: username=%s, detail=%s", username, detailsStr)
+			detailsStr := fmt.Sprintf("参数校验失败: %+v", errDetails)
+			log.Warnf("[control] 参数校验失败: username=%s, detail=%s", username, detailsStr)
 			err := errors.WrapC(nil, code.ErrValidation, "%s", detailsStr)
 			core.WriteResponse(ctx, err, nil)
 			auditBase("fail", err.Error())

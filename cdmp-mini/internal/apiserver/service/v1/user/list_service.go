@@ -57,13 +57,6 @@ func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *op
 
 	logger.Debugf("发现 %d 用户列表, 开始并行处理", len(users.Items))
 
-	// 步骤2：初始化并行处理组件
-	const (
-		maxGoroutines    = 20 // 根据存储层QPS调整
-		maxQueueSize     = 100
-		timeoutThreshold = 5 * time.Second // 单个请求超时阈值
-	)
-
 	var (
 		wg                sync.WaitGroup
 		mu                sync.Mutex
@@ -81,11 +74,11 @@ func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *op
 	}
 
 	// 工作池：限制并发数
-	userChan := make(chan *v1.User, maxQueueSize)
+	userChan := make(chan *v1.User, u.Options.ServerRunOptions.MaxQueueSize)
 	errChan := make(chan error, 1) // 只需要一个错误信号
 
 	// 启动worker池
-	for i := 0; i < maxGoroutines; i++ {
+	for i := 0; i < u.Options.ServerRunOptions.MaxGoroutines; i++ {
 		wg.Add(1)
 		go u.processUserWorker(cancelCtx, i, userChan, errChan, &wg, &mu, idToIndex, resultItems, &hasError)
 	}
@@ -109,7 +102,7 @@ func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *op
 				case userChan <- user:
 				case <-cancelCtx.Done():
 					return
-				case <-time.After(100 * time.Millisecond):
+				case <-time.After(u.Options.ServerRunOptions.TimeoutThreshold):
 					logger.Warnf("User channel full, skipping user %d", user.ID) // 改为 %d
 				}
 			}
@@ -208,23 +201,10 @@ func (u *UserService) processSingleUserWithTimeout(ctx context.Context, user *v1
 	if err != nil {
 		return nil, errors.WithCode(code.ErrDatabase, "query policies for user %s failed: %v", user.Name, err)
 	}
+	processedUser := *user
+	processedUser.TotalPolicy = policies.TotalCount
+	return &processedUser, nil
 
-	// 组装用户数据
-	return &v1.User{
-		ObjectMeta: metav1.ObjectMeta{
-			ID:         user.ID,
-			InstanceID: user.InstanceID,
-			Name:       user.Name,
-			Extend:     user.Extend,
-			CreatedAt:  user.CreatedAt,
-			UpdatedAt:  user.UpdatedAt,
-		},
-		Nickname:    user.Nickname,
-		Email:       user.Email,
-		Phone:       user.Phone,
-		TotalPolicy: policies.TotalCount, // 取消注释
-		LoginedAt:   user.LoginedAt,
-	}, nil
 }
 
 func (u *UserService) ListWithBadPerformance(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {

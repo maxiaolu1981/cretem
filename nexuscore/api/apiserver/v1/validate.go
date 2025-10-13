@@ -1,6 +1,9 @@
 package v1
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
 )
@@ -10,6 +13,17 @@ func (u *User) Validate() field.ErrorList {
 	val := validation.NewValidator(u)
 	allErrs := val.Validate()
 
+	// 补充用户名校验
+	namePath := field.NewPath("name")
+	if errs := validation.IsQualifiedName(u.Name); len(errs) > 0 {
+		errsMsg := strings.Join(errs, ":")
+		allErrs = append(allErrs, field.Invalid(
+			namePath,
+			u.Name,
+			fmt.Sprintf("用户名不合法: %s", errsMsg),
+		))
+	}
+
 	//补充密码强度校验
 	passwordPath := field.NewPath("password")
 	if err := validation.IsValidPassword(u.Password); err != nil {
@@ -18,6 +32,17 @@ func (u *User) Validate() field.ErrorList {
 			"******", // 密码脱敏
 			err.Error(),
 		))
+		// 补充电话格式校验
+		phonePath := field.NewPath("phone")
+		if u.Phone != "" {
+			if err := validation.IsValidPhone(u.Phone); err != nil {
+				allErrs = append(allErrs, field.Invalid(
+					phonePath,
+					u.Phone,
+					err.Error(),
+				))
+			}
+		}
 	}
 
 	return allErrs

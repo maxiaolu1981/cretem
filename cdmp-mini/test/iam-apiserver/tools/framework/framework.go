@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"math/rand"
@@ -93,9 +92,9 @@ const (
 func NewEnv(t *testing.T) *Env {
 	t.Helper() // 标记此函数为辅助函数
 
-	if os.Getenv("IAM_APISERVER_E2E") == "" {
-		t.Fatalf("login before change failed: %v", errors.New("IAM_APISERVER_E2E not set"))
-	}
+	// if os.Getenv("IAM_APISERVER_E2E") == "" {
+	// 	t.Fatalf("login before change failed: %v", errors.New("IAM_APISERVER_E2E not set"))
+	// }
 
 	baseURL := os.Getenv("IAM_APISERVER_BASEURL")
 	if baseURL == "" {
