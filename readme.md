@@ -1,0 +1,44 @@
+**登录流程关联的几个关键参数**
+
+- **`LoginCredentialCacheTTL` / `LoginCredentialCacheSize`**  
+  登录时 `authenticate` 会先尝试从本地凭证缓存里拿 `{username + hashedPassword + 明文密码}` 的比较结果。  
+  - 命中且未过期 → 直接返回比较结果，省掉一次 bcrypt。  
+  - 未命中 → 调用 `user.Compare`，把结果写回缓存并尊重 TTL/容量（超过上限会按最久未访问淘汰）。  
+  典型用途：通过延长 TTL/增大容量降低高并发场景下的重复 bcrypt 成本。
+
+- **`LoginFastFailThreshold` / `LoginFastFailMessage`**  
+  每次进入 `authenticate` 时都会累加一个内存计数器；超过阈值则立刻返回 `ErrServerBusy`，响应里带上 message。  
+  这是整个链路的快速“熔断”层，避免请求排队到后端资源（Redis/MySQL）而导致雪崩。  
+  实际值可结合压测结果设定，例如硬件承受 300 并发就用 `300`，调高后配合缓存优化看曲线变化。
+
+- **`LoginUpdateBuffer` / `LoginUpdateBatchSize` / `LoginUpdateFlushInterval` / `LoginUpdateTimeout`**  
+  登录成功后 `LoginedAt` 不再同步写库，而是塞进 `loginUpdates` 队列：  
+  1. 达到 `LoginUpdateBatchSize` 或 `FlushInterval` 到期会批量刷新；  
+  2. 刷新时去重同一账号，只保留最新时间；  
+  3. 超过队列容量（`LoginUpdateBuffer`）则直接 fallback 到单次 goroutine 写；  
+  4. 每次批量写都有 `LoginUpdateTimeout` 的数据库超时保护。  
+  这些参数决定了吞吐 vs. 实时性的权衡。增大队列/批量和延长 flush 间隔能减少 MySQL 压力，但登录时间落库会稍慢。
+
+整体串起来：请求进来先过快速失败阈值 → 缓存命中减少 bcrypt → 认证成功后登录时间异步落库。  
+根据监控调整上述参数，就能围绕高并发瓶颈（CPU、数据库、队列）做针对性优化。
+服务端这一层的限流基准都来自 ServerRunOptions 里的配置，核心几个参数是：
+
+LoginRateLimit：登录接口每个时间窗口允许的最大请求数（和 /login 中间件直接挂钩）。
+LoginWindow：登录限流的时间窗口长度，两个参数一起决定 /login 在 Redis/IP 上的限速。
+WriteRateLimit：用户创建、更新、删除等写操作的限流阈值（/v1/users 这类接口用它）。
+EnableRateLimiter：全局开关，决定是否启用生产端限流控制。
+CLI 或配置文件里更新 server.loginlimit、server.loginwindow、server.writeRateLimit、server.enable-rate-limiter 就能改这些阈值，管理员接口 /admin/ratelimit/login 也会把值写入 loginLimit 调整生效。
+
+curl "<http://localhost:8088/admin/ratelimit/login>"
+{"code":100001,"message":"操作成功","data":{"effective":true,"value":500000,"window":"2m0s"}}login$
+现有性能套件的瓶颈在生产端线程数与节奏控制；多数场景仍按 Concurrency×ThinkTime 推节奏，同时 WaitForUser、阶段间 DelayAfter 都会人为拉长周期。
+登录压测能到 6000 QPS，是因为生产端一次拉起上百 Goroutine 且没有额外等待；我们要复制这种生产模型，优先从基准场景入手，逐步放大。
+建议增量策略：
+扩大并发：将 baseline_concurrent、stress_*、db_connection_pool 等阶段的 Concurrency 提升到登录压测的同量级（先升到 64/128，再观察），并根据需要增加 Requests 或 Duration。
+去掉节流因素：已经为各场景开启 SkipWaitForReady，还可以把 ThinkTime 统一降到 0 或极小值；若某些阶段用于平稳观测，可拆分成“预热阶段(有 ThinkTime)”和“爆发阶段(ThinkTime=0)”。
+生产端线程模型：在 executeStage 中，Goroutine 数等于 Concurrency；如需更高吞吐，可允许每个 Goroutine 处理批次请求（例如在内部使用 for j := 0; j < burst; j++ 多次提交），或改成队列+固定多倍线程，避免频繁 goroutine 切换。
+压测配置对齐：结合登录压测使用的 Kafka/RateLimiter 配置，把 framework 中的生产速率限制（waitRateLimit、Kafka rate limiter）关闭或调高；否则生产端会被 RateLimiter 卡在 10c/s。
+系统资源：确认生成侧机器的 CPU、网络无瓶颈；在跑 Go test 时加 GOMAXPROCS（例如 GOMAXPROCS=16 go test ...）确保调度器不成为瓶颈。
+持续监测：每提升一次并发都记录生产端 QPS、错误率；必要时把测试写入 Prometheus/Grafana，确保服务端长时间稳定、不丢数据。
+分阶段推进：先让基准并发场景达到 ≥500 QPS，再推广到 ramp/spike/stress，最后再恢复 ThinkTime 做真实业务校准。
+照这套办法提升生产端线程数、取消限流、缩短等待，就能显著抬高 QPS/TPS，从而真实暴露服务端消费能力。

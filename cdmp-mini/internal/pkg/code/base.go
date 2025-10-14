@@ -18,7 +18,7 @@ const (
 	// ErrBind - 400: 100003请求体绑定结构体失败
 	ErrBind // 100003
 
-	// ErrValidation - 422: 数据验证失败
+	// ErrValidation - 400: 参数格式错误
 	ErrValidation // 100004
 
 	// ErrPageNotFound - 404: 页面不存在

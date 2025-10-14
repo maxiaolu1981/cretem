@@ -1,8 +1,7 @@
 {
-  "enabled": true,
+  "enabled": false,
   "starting_rate": 2000,
   "min_rate": 1000,
   "max_rate": 5000,
-  "adjust_period": "2s",
-  "stats_source": "http://192.168.10.8:8088/metrics"
+  "adjust_period": "2s"
 }

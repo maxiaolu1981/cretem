@@ -20,7 +20,7 @@ func (u *Users) GetByEmail(ctx context.Context, email string, _ *options.Options
 
 	user := &v1.User{}
 	err := u.db.WithContext(ctx).
-		Where("LOWER(email) = ?", normalized).
+		Where("email = ?", normalized).
 		First(user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {

@@ -132,6 +132,15 @@ func NewEnv(t *testing.T) *Env {
 
 	opts := options.NewServerRunOptions()
 	opts.Complete()
+	if flag := strings.TrimSpace(os.Getenv("IAM_APISERVER_ENABLE_RATE_LIMITER")); flag != "" {
+		if parsed, err := strconv.ParseBool(flag); err == nil {
+			opts.EnableRateLimiter = parsed
+		} else {
+			opts.EnableRateLimiter = false
+		}
+	} else {
+		opts.EnableRateLimiter = false
+	}
 	kafkaOpts := options.NewKafkaOptions()
 	kafkaOpts.Complete()
 	applyKafkaOverrides(kafkaOpts)
@@ -513,8 +522,8 @@ func (e *Env) EnsureOutputDir(t *testing.T, testDir string) string {
 func (e *Env) WaitForUser(username string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 
-	// 首次等待稍长时间，避免立即检查
-	time.Sleep(500 * time.Millisecond)
+	// 轻量级等待，避免立即查询产生噪音
+	time.Sleep(100 * time.Millisecond)
 
 	for {
 		resp, err := e.AdminRequest(http.MethodGet, fmt.Sprintf("/v1/users/%s", username), nil)

@@ -332,7 +332,7 @@ func (u *UserService) ensureContactUnique(
 			log.Warnf("%s唯一性缓存读取失败: key=%s err=%v", fieldLabel, cacheKey, err)
 		}
 	} else if cachedOwner != "" && !strings.EqualFold(cachedOwner, allowedOwner) {
-		return errors.WithCode(code.ErrResourceConflict, "%s已被占用: %s", fieldLabel, fieldValue)
+		return errors.WithCode(code.ErrValidation, "%s已被占用: %s", fieldLabel, fieldValue)
 	}
 
 	result, retryErr := util.RetryWithBackoff(u.Options.RedisOptions.MaxRetries, isRetryableError, func() (interface{}, error) {
@@ -357,7 +357,7 @@ func (u *UserService) ensureContactUnique(
 	if strings.EqualFold(existing.Name, allowedOwner) {
 		return nil
 	}
-	return errors.WithCode(code.ErrResourceConflict, "%s已被占用: %s", fieldLabel, fieldValue)
+	return errors.WithCode(code.ErrValidation, "%s已被占用: %s", fieldLabel, fieldValue)
 }
 
 // 从缓存和数据库查询用户是否存在

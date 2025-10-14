@@ -14,7 +14,7 @@ func init() {
 	register(ErrSuccess, 200, "成功")                                                // 200 OK：请求成功
 	register(ErrUnknown, 500, "内部服务器错误")                                           // 500：服务端未知错误
 	register(ErrBind, 400, "请求体绑定结构体失败")                                           // 400 Bad Request：请求格式错误
-	register(ErrValidation, 422, "请求数据语义校验失败")                                     // 422 Unprocessable Entity：格式正确但语义错误（如字段值超出范围）
+	register(ErrValidation, 400, "参数格式错误")                                         // 422 Unprocessable Entity：格式正确但语义错误（如字段值超出范围）
 	register(ErrPageNotFound, 404, "页面不存在")                                        // 404 Not Found：资源不存在
 	register(ErrMethodNotAllowed, 405, "方法不允许")                                    // 405 Not Found：方法不允许
 	register(ErrUnsupportedMediaType, 415, "不支持的Content-Type，仅支持application/json") // 415 Not Found：格式不支持
