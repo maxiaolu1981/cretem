@@ -213,7 +213,7 @@ func (m *DBManager) Close() error {
 
 // 构建DSN
 func buildDSN(host string, port int, opts *Options) string {
-	return fmt.Sprintf(`%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=%t&loc=%s&timeout=%s&readTimeout=%s&writeTimeout=%s`,
+	return fmt.Sprintf(`%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=%t&loc=%s&timeout=%s&readTimeout=%s&writeTimeout=%s&tx_isolation='READ-COMMITTED'`,
 		opts.Username,
 		opts.Password,
 		host,
@@ -244,6 +244,9 @@ func connectWithRetry(dsn string, opts *Options) (*gorm.DB, error) {
 		})
 
 		if err == nil {
+			if execErr := db.Exec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED").Error; execErr != nil {
+				log.Warnf("failed to set session isolation level (attempt %d/%d): %v", attempt+1, opts.MaxRetryAttempts, execErr)
+			}
 			// 配置连接池
 			sqlDB, err := db.DB()
 			if err != nil {
@@ -275,7 +278,7 @@ func New(opts *Options) (*gorm.DB, error) {
 	setDefaultOptions(opts)
 
 	// 构建DSN
-	dsn := fmt.Sprintf(`%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=%t&loc=%s&timeout=%s&readTimeout=%s&writeTimeout=%s`,
+	dsn := fmt.Sprintf(`%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=%t&loc=%s&timeout=%s&readTimeout=%s&writeTimeout=%s&tx_isolation=READ-COMMITTED`,
 		opts.Username,
 		opts.Password,
 		opts.Host,
@@ -301,6 +304,10 @@ func New(opts *Options) (*gorm.DB, error) {
 	if err != nil {
 		log.Errorf("failed to open database: %v", err)
 		return nil, fmt.Errorf("failed to open database: %v", err)
+	}
+
+	if execErr := db.Exec("SET SESSION TRANSACTION ISOLATION LEVEL READ COMMITTED").Error; execErr != nil {
+		log.Warnf("failed to set session isolation level: %v", execErr)
 	}
 
 	// 获取底层sql.DB并配置连接池

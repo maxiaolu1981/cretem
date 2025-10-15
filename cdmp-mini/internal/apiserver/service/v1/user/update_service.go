@@ -5,6 +5,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -13,6 +14,9 @@ import (
 
 func (u *UserService) Update(ctx context.Context, user *v1.User, opts metav1.UpdateOptions, opt *options.Options) error {
 	log.Debug("service:开始处理用户更新请求...")
+
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
 
 	//判断用户是否存在
 	ruser, err := u.checkUserExist(ctx, user.Name, true)

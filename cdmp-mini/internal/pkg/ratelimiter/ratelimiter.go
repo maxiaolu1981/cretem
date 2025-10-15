@@ -44,6 +44,14 @@ func (r *RateLimiterController) Wait(ctx context.Context) error {
 	return limiter.Wait(ctx)
 }
 
+// Allow 尝试立即获取令牌，失败则直接返回 false，避免长时间阻塞
+func (r *RateLimiterController) Allow() bool {
+	r.mu.RLock()
+	limiter := r.limiter
+	r.mu.RUnlock()
+	return limiter.Allow()
+}
+
 // SetRate 手动调整速率
 func (r *RateLimiterController) SetRate(newRate float64) {
 	r.mu.Lock()

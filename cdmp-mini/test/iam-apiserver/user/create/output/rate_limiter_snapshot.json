@@ -1,7 +1,7 @@
 {
   "enabled": false,
-  "starting_rate": 2000,
-  "min_rate": 1000,
-  "max_rate": 5000,
+  "starting_rate": 10000,
+  "min_rate": 10000,
+  "max_rate": 20000,
   "adjust_period": "2s"
 }

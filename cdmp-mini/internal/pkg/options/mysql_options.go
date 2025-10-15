@@ -156,7 +156,7 @@ func NewMySQLOptions() *MySQLOptions {
 
 		// 连接池优化
 		MaxIdleConnections: 100,              // 增加到50个空闲连接
-		MaxOpenConnections: 350,              // 增加到500个最大连接
+		MaxOpenConnections: 450,              // 增加到500个最大连接
 		ConnMaxLifetime:    30 * time.Minute, // 缩短到30分钟，促进连接轮换
 		ConnMaxIdleTime:    10 * time.Minute, // 空闲1分钟释放
 		ReadTimeout:        3 * time.Second,  // 读超时
@@ -165,7 +165,7 @@ func NewMySQLOptions() *MySQLOptions {
 
 		// 性能监控
 		LogLevel:           1,                      // 开启慢查询日志
-		SlowQueryThreshold: 100 * time.Millisecond, // 降低慢查询阈值
+		SlowQueryThreshold: 200 * time.Millisecond, // 降低慢查询阈值
 		MonitorInterval:    30 * time.Second,       // 缩短监控间隔
 
 		// SSL配置

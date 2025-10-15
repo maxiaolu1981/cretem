@@ -27,6 +27,15 @@ var (
 	redisUp         atomic.Value
 )
 
+type redisClientHolder struct {
+	client redis.UniversalClient
+}
+
+func init() {
+	singlePool.Store(redisClientHolder{})
+	singleCachePool.Store(redisClientHolder{})
+}
+
 var disableRedis atomic.Value
 
 // DisableRedis allows dynamically enabling/disabling redis communication (useful for testing)
@@ -57,16 +66,18 @@ func Connected() bool {
 
 func singleton(cache bool) redis.UniversalClient {
 	if cache {
-		v := singleCachePool.Load()
-		if v != nil {
-			return v.(redis.UniversalClient)
-		}
-		return nil
+		return singleCachePool.Load().(redisClientHolder).client
 	}
-	if v := singlePool.Load(); v != nil {
-		return v.(redis.UniversalClient)
+	return singlePool.Load().(redisClientHolder).client
+}
+
+func storeSingleton(cache bool, client redis.UniversalClient) {
+	holder := redisClientHolder{client: client}
+	if cache {
+		singleCachePool.Store(holder)
+		return
 	}
-	return nil
+	singlePool.Store(holder)
 }
 
 // nolint: unparam
@@ -83,12 +94,27 @@ func connectSingleton(cache bool, config *options.RedisOptions) bool {
 		return false
 	}
 
-	if cache {
-		singleCachePool.Store(client)
-	} else {
-		singlePool.Store(client)
-	}
+	storeSingleton(cache, client)
 	return true
+}
+
+// CloseRedisClients releases all singleton redis clients and clears cached handles.
+func CloseRedisClients() error {
+	var combined error
+	if client := singleton(false); client != nil {
+		if err := client.Close(); err != nil {
+			combined = errors.Join(combined, err)
+		}
+		storeSingleton(false, nil)
+	}
+	if cacheClient := singleton(true); cacheClient != nil {
+		if err := cacheClient.Close(); err != nil {
+			combined = errors.Join(combined, err)
+		}
+		storeSingleton(true, nil)
+	}
+	redisUp.Store(false)
+	return combined
 }
 
 // RedisCluster is a storage manager that uses the redis database.

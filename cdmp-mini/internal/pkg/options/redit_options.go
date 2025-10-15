@@ -41,7 +41,7 @@ func NewRedisOptions() *RedisOptions {
 		Database:              0,
 		MasterName:            "",
 		MaxIdle:               50,              // 空闲连接数
-		MaxActive:             200,             // 最大活跃连接数
+		MaxActive:             400,             // 最大活跃连接数
 		Timeout:               5 * time.Second, // 连接超时
 		EnableCluster:         true,            // 集群模式
 		UseSSL:                false,
@@ -49,7 +49,7 @@ func NewRedisOptions() *RedisOptions {
 		IdleTimeout:           120 * time.Second,  // 空闲超时2分钟
 		MaxConnLifetime:       1800 * time.Second, // 连接生命周期30分钟
 		Wait:                  true,               // 池耗尽时等待
-		PoolSize:              200,                // 🔥 与MaxActive一致
+		PoolSize:              400,                // 🔥 与MaxActive一致
 		MaxRetries:            3,
 		MaxRetryDelay:         30 * time.Second,
 	}

@@ -22,6 +22,8 @@ var (
 	ProducerRetries       *prometheus.CounterVec
 	DeadLetterMessages    *prometheus.CounterVec
 	MessageProcessingTime *prometheus.HistogramVec
+	ProducerWALBacklog    prometheus.Gauge
+	ProducerWALMaxAge     prometheus.Gauge
 
 	// 生产者当前未完成发送数（in-flight）
 	ProducerInFlightCurrent prometheus.Gauge
@@ -40,6 +42,9 @@ var (
 	BusinessInProgress      *prometheus.GaugeVec   // 当前处理中的业务数
 	BusinessThroughputStats *prometheus.SummaryVec // 业务吞吐量统计
 	BusinessErrorRate       *prometheus.GaugeVec   // 业务错误率
+
+	UserCreateStepDuration   *prometheus.HistogramVec
+	UserCreateSlowStepsTotal *prometheus.CounterVec
 
 	AuditEventsTotal   *prometheus.CounterVec // 审计事件计数
 	AuditEventFailures *prometheus.CounterVec // 审计失败计数
@@ -199,6 +204,20 @@ func init() {
 		[]string{"topic", "operation", "status"},
 	)
 
+	ProducerWALBacklog = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "kafka_producer_wal_backlog",
+			Help: "Current number of messages waiting in the producer WAL queue",
+		},
+	)
+
+	ProducerWALMaxAge = prometheus.NewGauge(
+		prometheus.GaugeOpts{
+			Name: "kafka_producer_wal_oldest_age_seconds",
+			Help: "Age in seconds of the oldest message within the producer WAL queue",
+		},
+	)
+
 	// -------------------------- 初始化：业务处理指标 --------------------------
 	BusinessProcessingTime = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -264,6 +283,23 @@ func init() {
 			Help: "Business operation error rate percentage",
 		},
 		[]string{"service", "operation"}, // ✅ 正确
+	)
+
+	UserCreateStepDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "user_create_step_duration_seconds",
+			Help:    "Duration of individual steps in user creation flow",
+			Buckets: []float64{0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2},
+		},
+		[]string{"step", "field"},
+	)
+
+	UserCreateSlowStepsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "user_create_slow_steps_total",
+			Help: "Total number of user create sub-steps exceeding the slow threshold",
+		},
+		[]string{"step", "field"},
 	)
 
 	AuditEventsTotal = prometheus.NewCounterVec(
@@ -794,6 +830,8 @@ func init() {
 		ProducerRetries,
 		DeadLetterMessages,
 		MessageProcessingTime,
+		ProducerWALBacklog,
+		ProducerWALMaxAge,
 
 		// 业务处理指标
 		BusinessProcessingTime,
@@ -806,6 +844,8 @@ func init() {
 		BusinessInProgress,
 		BusinessThroughputStats,
 		BusinessErrorRate,
+		UserCreateStepDuration,
+		UserCreateSlowStepsTotal,
 		AuditEventsTotal,
 		AuditEventFailures,
 
@@ -1083,6 +1123,19 @@ func RecordKafkaProducerOperation(topic, operation string, duration float64, err
 	}
 }
 
+// RecordProducerWALStats 记录生产者WAL队列积压指标
+func RecordProducerWALStats(backlog int, maxAge time.Duration) {
+	if backlog < 0 {
+		backlog = 0
+	}
+	ProducerWALBacklog.Set(float64(backlog))
+	seconds := maxAge.Seconds()
+	if seconds < 0 {
+		seconds = 0
+	}
+	ProducerWALMaxAge.Set(seconds)
+}
+
 // RecordDeadLetterMessage 记录死信消息
 func RecordDeadLetterMessage(topic, operation string) {
 	DeadLetterMessages.WithLabelValues(topic, operation).Inc()
@@ -1225,6 +1278,16 @@ func MonitorBusinessOperation(service, operation, source string, fn func() error
 	}
 
 	return err
+}
+
+const userCreateSlowThresholdSeconds = 0.2
+
+// RecordUserCreateStep 记录用户创建链路中某个步骤的耗时，并在超过阈值时累计慢步骤计数。
+func RecordUserCreateStep(step, field string, duration time.Duration) {
+	UserCreateStepDuration.WithLabelValues(step, field).Observe(duration.Seconds())
+	if duration.Seconds() > userCreateSlowThresholdSeconds {
+		UserCreateSlowStepsTotal.WithLabelValues(step, field).Inc()
+	}
 }
 
 // RecordBusinessQPS 记录业务QPS（供外部调用）

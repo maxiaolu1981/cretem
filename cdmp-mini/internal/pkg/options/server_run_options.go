@@ -79,12 +79,13 @@ import (
 )
 
 type ServerRunOptions struct {
-	Mode             string   `json:"mode"        mapstructure:"mode"`
-	Healthz          bool     `json:"healthz"     mapstructure:"healthz"`
-	Middlewares      []string `json:"middlewares" mapstructure:"middlewares"`
-	EnableProfiling  bool     `json:"enableProfiling" mapstructure:"enableProfiling"`
-	EnableMetrics    bool     `json:"enableMetrics" mapstructure:"enableMetrics"`
-	FastDebugStartup bool     `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
+	Mode                string   `json:"mode"        mapstructure:"mode"`
+	Healthz             bool     `json:"healthz"     mapstructure:"healthz"`
+	Middlewares         []string `json:"middlewares" mapstructure:"middlewares"`
+	EnableProfiling     bool     `json:"enableProfiling" mapstructure:"enableProfiling"`
+	EnableMetrics       bool     `json:"enableMetrics" mapstructure:"enableMetrics"`
+	FastDebugStartup    bool     `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
+	EnableContactWarmup bool     `json:"enableContactWarmup" mapstructure:"enableContactWarmup"`
 	// 新增：Cookie相关配置
 	CookieDomain             string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
 	CookieSecure             bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
@@ -144,6 +145,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		MaxGoroutines:            100,               // 默认最大并发处理数
 		MaxQueueSize:             100,               // 默认任务队列大小
 		TimeoutThreshold:         100 * time.Second, // 默认单个请求超时阈值
+		EnableContactWarmup:      true,
 	}
 }
 
@@ -348,6 +350,7 @@ func (s *ServerRunOptions) Validate() []error {
 
 func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&s.EnableRateLimiter, "server.enable-rate-limiter", s.EnableRateLimiter, "是否启用生产端限流器（默认启用）")
+	fs.BoolVar(&s.EnableContactWarmup, "server.enable-contact-warmup", s.EnableContactWarmup, "是否在启动后预热邮箱/手机号唯一性缓存（默认关闭）")
 	fs.StringVarP(&s.Mode, "server.mode", "M", s.Mode, ""+
 		"指定服务器运行模式。支持的服务器模式：debug(调试)、test(测试)、release(发布)。")
 

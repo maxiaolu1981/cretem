@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"runtime"
-
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 	"gorm.io/gorm"
@@ -21,7 +22,47 @@ type Users struct {
 	policyStore interfaces.PolicyStore
 }
 
+var ensureIndexesOnce sync.Once
+
+func ensureUserCoveringIndexes(db *gorm.DB) {
+	ensureIndexesOnce.Do(func() {
+		if db == nil {
+			return
+		}
+		databaseName := db.Migrator().CurrentDatabase()
+		if databaseName == "" {
+			log.Warn("无法获取当前数据库名称，跳过覆盖索引检查")
+			return
+		}
+		indexSpecs := []struct {
+			name    string
+			columns string
+		}{
+			{name: "idx_user_email_name", columns: "email, name"},
+			{name: "idx_user_phone_name", columns: "phone, name"},
+		}
+		for _, spec := range indexSpecs {
+			var exists int64
+			query := `SELECT COUNT(1) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'user' AND INDEX_NAME = ?`
+			if err := db.Raw(query, databaseName, spec.name).Scan(&exists).Error; err != nil {
+				log.Warnf("检查用户索引失败: index=%s err=%v", spec.name, err)
+				continue
+			}
+			if exists > 0 {
+				continue
+			}
+			createSQL := fmt.Sprintf(`CREATE INDEX %s ON user (%s)`, spec.name, spec.columns)
+			if err := db.Exec(createSQL).Error; err != nil {
+				log.Warnf("创建用户覆盖索引失败: index=%s err=%v", spec.name, err)
+				continue
+			}
+			log.Infof("创建用户覆盖索引成功: index=%s columns=%s", spec.name, spec.columns)
+		}
+	})
+}
+
 func NewUsers(db *gorm.DB, policyStore interfaces.PolicyStore) *Users {
+	ensureUserCoveringIndexes(db)
 	return &Users{
 		db:          db,
 		policyStore: policyStore,

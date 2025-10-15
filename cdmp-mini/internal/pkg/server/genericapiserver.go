@@ -206,14 +206,9 @@ func (g *GenericAPIServer) shutdownRedis(ctx context.Context) error {
 	if g.redisCancel != nil {
 		g.redisCancel()
 	}
-	if g.redis == nil {
-		return nil
-	}
-	client := g.redis.GetClient()
-	if client == nil {
-		return nil
-	}
-	return client.Close()
+	err := storage.CloseRedisClients()
+	g.redis = nil
+	return err
 }
 
 func (g *GenericAPIServer) shutdownMySQL(ctx context.Context) error {
@@ -1213,12 +1208,18 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 		masterCount := 0
 		slaveCount := 0
 		successCount := 0
+		failedNodes := make([]string, 0)
 
 		// 检查所有主节点
 		clusterClient.ForEachMaster(pingCtx, func(ctx context.Context, nodeClient *redis.Client) error {
 			masterCount++
 			if err := nodeClient.Ping(ctx).Err(); err != nil {
-				log.Warnf("主节点 %d PING 失败: %v", masterCount, err)
+				addr := nodeClient.Options().Addr
+				if addr == "" {
+					addr = fmt.Sprintf("master-%d", masterCount)
+				}
+				log.Warnf("主节点 %d PING 失败: addr=%s err=%v", masterCount, addr, err)
+				failedNodes = append(failedNodes, fmt.Sprintf("master@%s:%v", addr, err))
 				lastError = err
 			} else {
 				//			log.Infof("✅ 主节点 %d PING 成功", masterCount)
@@ -1231,7 +1232,12 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 		err = clusterClient.ForEachSlave(pingCtx, func(ctx context.Context, nodeClient *redis.Client) error {
 			slaveCount++
 			if err := nodeClient.Ping(ctx).Err(); err != nil {
-				log.Warnf("从节点 %d PING 失败: %v", slaveCount, err)
+				addr := nodeClient.Options().Addr
+				if addr == "" {
+					addr = fmt.Sprintf("slave-%d", slaveCount)
+				}
+				log.Warnf("从节点 %d PING 失败: addr=%s err=%v", slaveCount, addr, err)
+				failedNodes = append(failedNodes, fmt.Sprintf("slave@%s:%v", addr, err))
 				lastError = err
 			} else {
 				//		log.Infof("✅ 从节点 %d PING 成功", slaveCount)
@@ -1241,6 +1247,9 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 		})
 
 		totalNodes := masterCount + slaveCount
+		if len(failedNodes) > 0 {
+			log.Warnf("Redis节点健康检查失败: %s", strings.Join(failedNodes, "; "))
+		}
 
 		// log.Infof("=== Redis集群健康检查总结 ===")
 		// log.Infof("主节点数: %d, 从节点数: %d", masterCount, slaveCount)
@@ -1251,7 +1260,18 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 		}
 
 		// 🔥 修改：检查是否所有配置的节点都被发现
-		expectedNodes := len(g.options.RedisOptions.Addrs)
+		seen := make(map[string]struct{})
+		for _, addr := range g.options.RedisOptions.Addrs {
+			trimmed := strings.TrimSpace(addr)
+			if trimmed == "" {
+				continue
+			}
+			seen[trimmed] = struct{}{}
+		}
+		expectedNodes := len(seen)
+		if expectedNodes == 0 {
+			expectedNodes = totalNodes
+		}
 		if totalNodes != expectedNodes {
 			log.Warnf("⚠️  节点数量不匹配: 配置%d个, 集群中发现%d个", expectedNodes, totalNodes)
 		} else {

@@ -65,21 +65,22 @@ type AuditEvent struct {
 }
 
 type Env struct {
-	BaseURL         string
-	AdminUsername   string
-	AdminPassword   string
-	AdminToken      string
-	Client          *http.Client
-	OutputRoot      string
-	random          *rand.Rand
-	adminTokenOnce  sync.Once
-	adminTokenErr   error
-	limiters        map[string]*rate.Limiter
-	defaultLimiter  *rate.Limiter
-	producerLimiter *ratelimiter.RateLimiterController
-	rateLimiterInfo rateLimiterSnapshot
-	rateLimiterOnce sync.Once
-	lazyAdminLogin  bool
+	BaseURL             string
+	AdminUsername       string
+	AdminPassword       string
+	AdminToken          string
+	Client              *http.Client
+	OutputRoot          string
+	random              *rand.Rand
+	adminTokenMu        sync.Mutex
+	adminTokenTTL       time.Duration
+	adminTokenFetchedAt time.Time
+	limiters            map[string]*rate.Limiter
+	defaultLimiter      *rate.Limiter
+	producerLimiter     *ratelimiter.RateLimiterController
+	rateLimiterInfo     rateLimiterSnapshot
+	rateLimiterOnce     sync.Once
+	lazyAdminLogin      bool
 }
 
 const (
@@ -117,6 +118,7 @@ func NewEnv(t *testing.T) *Env {
 		Client:        &http.Client{Timeout: requestTimeout},
 		OutputRoot:    "output",
 		random:        rand.New(rand.NewSource(time.Now().UnixNano())),
+		adminTokenTTL: 4 * time.Minute,
 	}
 
 	if flag := strings.TrimSpace(os.Getenv("IAM_APISERVER_LAZY_ADMIN_LOGIN")); flag != "" {
@@ -188,30 +190,37 @@ func (e *Env) ensureOutputRoot(t *testing.T) {
 
 func (e *Env) ensureAdminToken(t *testing.T) {
 	t.Helper()
-	if err := e.ensureAdminTokenInternal(); err != nil {
+	if err := e.ensureAdminTokenInternal(false); err != nil {
 		t.Fatalf("login before change failed: %v", err)
 	}
 }
 
-func (e *Env) ensureAdminTokenInternal() error {
-	e.adminTokenOnce.Do(func() {
-		tok, _, err := e.Login(e.AdminUsername, e.AdminPassword)
-		if err != nil {
-			e.adminTokenErr = fmt.Errorf("admin login: %w", err)
-			return
+func (e *Env) ensureAdminTokenInternal(force bool) error {
+	e.adminTokenMu.Lock()
+	defer e.adminTokenMu.Unlock()
+	if e.adminTokenTTL <= 0 {
+		e.adminTokenTTL = 4 * time.Minute
+	}
+	if !force && e.AdminToken != "" && !e.adminTokenFetchedAt.IsZero() {
+		if time.Since(e.adminTokenFetchedAt) < e.adminTokenTTL {
+			return nil
 		}
-		if tok == nil || tok.AccessToken == "" {
-			e.adminTokenErr = fmt.Errorf("admin login returned empty tokens")
-			return
-		}
-		e.AdminToken = tok.AccessToken
-	})
-	return e.adminTokenErr
+	}
+	tok, _, err := e.Login(e.AdminUsername, e.AdminPassword)
+	if err != nil {
+		return fmt.Errorf("admin login: %w", err)
+	}
+	if tok == nil || tok.AccessToken == "" {
+		return fmt.Errorf("admin login returned empty tokens")
+	}
+	e.AdminToken = tok.AccessToken
+	e.adminTokenFetchedAt = time.Now()
+	return nil
 }
 
 func (e *Env) AdminTokenOrFail(t *testing.T) string {
 	t.Helper()
-	if err := e.ensureAdminTokenInternal(); err != nil {
+	if err := e.ensureAdminTokenInternal(false); err != nil {
 		t.Fatalf("login before change failed: %v", err)
 	}
 	return e.AdminToken
@@ -376,14 +385,32 @@ func (e *Env) AdminRequest(method, path string, payload any) (*APIResponse, erro
 	if err != nil {
 		return nil, err
 	}
-	return e.AuthorizedRequest(method, path, token, payload)
+	resp, reqErr := e.AuthorizedRequest(method, path, token, payload)
+	if reqErr != nil {
+		return resp, reqErr
+	}
+	if resp != nil && isAuthExpiredStatus(resp.HTTPStatus()) {
+		if refreshErr := e.ensureAdminTokenInternal(true); refreshErr != nil {
+			return resp, refreshErr
+		}
+		newToken, refreshTokenErr := e.adminTokenValue()
+		if refreshTokenErr != nil {
+			return nil, refreshTokenErr
+		}
+		return e.AuthorizedRequest(method, path, newToken, payload)
+	}
+	return resp, nil
 }
 
 func (e *Env) adminTokenValue() (string, error) {
-	if err := e.ensureAdminTokenInternal(); err != nil {
+	if err := e.ensureAdminTokenInternal(false); err != nil {
 		return "", err
 	}
 	return e.AdminToken, nil
+}
+
+func isAuthExpiredStatus(status int) bool {
+	return status == http.StatusUnauthorized || status == 419
 }
 
 func (e *Env) RandomUsername(prefix string) string {

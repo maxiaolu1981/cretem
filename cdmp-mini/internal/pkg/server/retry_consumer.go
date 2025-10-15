@@ -220,6 +220,8 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 		log.Errorf("重试消息解析失败: %v, 原始消息: %s", err, string(msg.Value))
 		return rc.producer.SendToDeadLetterTopic(ctx, msg, "POISON_MESSAGE_IN_RETRY: "+err.Error())
 	}
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
 
 	currentRetryCount, nextRetryTime, lastError := rc.parseRetryHeaders(msg.Headers)
 
@@ -254,6 +256,8 @@ func (rc *RetryConsumer) processRetryUpdate(ctx context.Context, msg kafka.Messa
 	if err := json.Unmarshal(msg.Value, &user); err != nil {
 		return rc.producer.SendToDeadLetterTopic(ctx, msg, "POISON_MESSAGE_IN_RETRY: "+err.Error())
 	}
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
 
 	currentRetryCount, nextRetryTime, lastError := rc.parseRetryHeaders(msg.Headers)
 
@@ -370,7 +374,7 @@ func (rc *RetryConsumer) isIgnorableDeleteError(err error) bool {
 func (rc *RetryConsumer) handleProcessingError(ctx context.Context, msg kafka.Message, currentRetryCount int, errorInfo string) error {
 	// 1. 可以直接忽略的错误 - 直接提交
 	if shouldIgnoreError(errorInfo) {
-		log.Warnf("忽略错误，直接提交消息: %s", errorInfo)
+		log.Debugf("忽略可幂等错误，直接提交消息: %s", errorInfo)
 		return nil // 直接返回nil，外层会提交偏移量
 	}
 
@@ -536,6 +540,8 @@ func isTemporaryError(errorInfo string) bool {
 }
 
 func (rc *RetryConsumer) createUserInDB(ctx context.Context, user *v1.User) error {
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
 	now := time.Now()
 	user.CreatedAt = now
 	user.UpdatedAt = now
@@ -544,6 +550,8 @@ func (rc *RetryConsumer) createUserInDB(ctx context.Context, user *v1.User) erro
 
 func (rc *RetryConsumer) updateUserInDB(ctx context.Context, user *v1.User) error {
 	user.UpdatedAt = time.Now()
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
 	return rc.db.WithContext(ctx).Model(&v1.User{}).
 		Where("name = ?", user.Name).
 		Updates(map[string]interface{}{

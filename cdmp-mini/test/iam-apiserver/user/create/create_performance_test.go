@@ -897,8 +897,8 @@ func newDefaultGenerator(scenario string) userGenerator {
 		label  string
 		length int
 	}{
-		{label: "len_3", length: 3},
 		{label: "len_12", length: 12},
+		{label: "len_28", length: 28},
 		{label: "len_45", length: 45},
 	}
 	passwordBuckets := []struct {

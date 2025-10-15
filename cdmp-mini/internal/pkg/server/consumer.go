@@ -410,6 +410,8 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 			// 字段校验失败，直接写入死信区
 			return c.sendToDeadLetter(ctx, msg, err.Error())
 		}
+		user.Email = usercache.NormalizeEmail(user.Email)
+		user.Phone = usercache.NormalizePhone(user.Phone)
 		ensureUserInstanceID(&user)
 		log.Debugf("开始建立用户: username=%s", user.Name)
 		if err := c.createUserInDB(ctx, &user); err != nil {
@@ -479,6 +481,8 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 	if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
 		return c.sendToDeadLetter(ctx, msg, err.Error())
 	}
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
 
 	log.Debugf("处理用户更新: username=%s", user.Name)
 
@@ -511,6 +515,8 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 }
 
 func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error {
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
 
 	now := time.Now()
 	user.CreatedAt = now
@@ -580,6 +586,8 @@ func (c *UserConsumer) deleteUserFromDB(ctx context.Context, username string) er
 
 func (c *UserConsumer) updateUserInDB(ctx context.Context, user *v1.User) error {
 	user.UpdatedAt = time.Now()
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
 
 	if err := c.db.WithContext(ctx).Model(&v1.User{}).
 		Where("name = ?", user.Name).
@@ -1093,6 +1101,8 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 			}
 			continue
 		}
+		u.Email = usercache.NormalizeEmail(u.Email)
+		u.Phone = usercache.NormalizePhone(u.Phone)
 		now := time.Now()
 		u.CreatedAt = now
 		u.UpdatedAt = now
@@ -1278,6 +1288,8 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 			}
 			continue
 		}
+		u.Email = usercache.NormalizeEmail(u.Email)
+		u.Phone = usercache.NormalizePhone(u.Phone)
 		u.UpdatedAt = time.Now()
 		var existing v1.User
 		if err := c.db.WithContext(ctx).

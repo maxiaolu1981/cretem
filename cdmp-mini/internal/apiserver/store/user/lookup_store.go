@@ -20,8 +20,9 @@ func (u *Users) GetByEmail(ctx context.Context, email string, _ *options.Options
 
 	user := &v1.User{}
 	err := u.db.WithContext(ctx).
+		Select("name").
 		Where("email = ?", normalized).
-		First(user).Error
+		Take(user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在")
@@ -40,8 +41,9 @@ func (u *Users) GetByPhone(ctx context.Context, phone string, _ *options.Options
 
 	user := &v1.User{}
 	err := u.db.WithContext(ctx).
+		Select("name").
 		Where("phone = ?", normalized).
-		First(user).Error
+		Take(user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在")

@@ -6,7 +6,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "登录成功",
-    "duration_ms": 112,
+    "duration_ms": 72,
     "checks": {
       "access_token_issued": true,
       "operator_matches": true,
@@ -25,8 +25,8 @@
     "success": true,
     "http_status": 401,
     "code": 100206,
-    "message": "[code: 100206] 密码校验失败：用户名【login_wrong_1760357648165586101_92787】的密码不正确",
-    "duration_ms": 103,
+    "message": "[code: 100206] 密码校验失败：用户名【login_wrong_1760539530047063445_96324】的密码不正确",
+    "duration_ms": 78,
     "checks": {
       "invalid_credentials_rejected": true
     }
@@ -50,7 +50,7 @@
     "http_status": 403,
     "code": 110009,
     "message": "[code: 110009] 用户已经失效",
-    "duration_ms": 4,
+    "duration_ms": 12,
     "checks": {
       "disabled_blocked": true
     }
@@ -62,7 +62,7 @@
     "http_status": 400,
     "code": 110004,
     "message": "[code: 110004] 参数错误：username和password不能为空",
-    "duration_ms": 2,
+    "duration_ms": 4,
     "checks": {
       "input_validation": true
     }
@@ -74,7 +74,7 @@
     "http_status": 400,
     "code": 110004,
     "message": "[code: 110004] 参数错误：username和password不能为空",
-    "duration_ms": 2,
+    "duration_ms": 1,
     "checks": {
       "password_empty_rejected": true
     }
@@ -116,25 +116,13 @@
     }
   },
   {
-    "name": "special_character_password",
-    "description": "含特殊字符密码成功登录",
-    "success": true,
-    "http_status": 200,
-    "code": 100001,
-    "message": "登录成功",
-    "duration_ms": 121,
-    "checks": {
-      "tokens_issued": true
-    }
-  },
-  {
     "name": "consecutive_failures_lockout",
     "description": "连续失败超过阈值提示锁定",
     "success": true,
     "http_status": 429,
     "code": 100213,
     "message": "[code: 100213] 登录失败次数太多,15分钟后重试",
-    "duration_ms": 141,
+    "duration_ms": 148,
     "checks": {
       "lockout_triggered": true
     }
@@ -146,7 +134,7 @@
     "http_status": 400,
     "code": 110004,
     "message": "[code: 110004] 密码不合法：缺少大写字母，至少需要一个数字，缺少特殊字符，密码长度必须在8到200个字符之间",
-    "duration_ms": 4,
+    "duration_ms": 8,
     "checks": {
       "password_policy_enforced": true
     }
@@ -158,7 +146,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "登录成功",
-    "duration_ms": 159,
+    "duration_ms": 172,
     "checks": {
       "distinct_tokens": true,
       "multi_session_access": true
@@ -171,7 +159,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "操作成功",
-    "duration_ms": 166,
+    "duration_ms": 147,
     "checks": {
       "refresh_success": true
     }
@@ -183,7 +171,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "操作成功",
-    "duration_ms": 154,
+    "duration_ms": 131,
     "checks": {
       "token_revoked": true
     }
@@ -191,20 +179,19 @@
   {
     "name": "token_expiry_short_ttl",
     "description": "通过调试 TTL 获取短期令牌并验证过期行为",
-    "success": false,
+    "success": true,
     "http_status": 200,
     "code": 100001,
     "message": "登录成功",
-    "duration_ms": 3646,
+    "duration_ms": 2118,
     "checks": {
-      "expired_rejected": false,
+      "expired_rejected": true,
       "pre_expiry_access": true,
-      "short_ttl_override": false
+      "short_ttl_override": true
     },
     "notes": [
       "登录时使用 X-Debug-Token-Timeout=1s",
-      "初始 TTL ≈ 3599.57s",
-      "过期检查返回 http=200 code=100001 message=操作成功"
+      "初始 TTL ≈ 0.17s"
     ]
   },
   {
@@ -214,7 +201,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "操作成功",
-    "duration_ms": 449,
+    "duration_ms": 511,
     "checks": {
       "audit_enabled": true,
       "login_fail_audited": true,
@@ -228,21 +215,17 @@
   },
   {
     "name": "login_rate_limit_enforced",
-    "description": "登录限流阈值设置为1后，第3次以内请求触发429",
-    "success": true,
-    "http_status": 429,
-    "code": 100209,
-    "message": "请求过于频繁，请稍后再试（本地限流）",
-    "duration_ms": 102,
+    "description": "超过登录限流阈值返回429",
+    "success": false,
+    "http_status": 200,
+    "code": 100001,
+    "message": "登录限流未启用，跳过校验",
+    "duration_ms": 0,
     "checks": {
-      "limit_attempt_within_5": true,
-      "limit_message_includes_hint": true,
-      "rate_limit_triggered": true,
-      "rate_limiter_enabled": true
+      "rate_limiter_enabled": false
     },
     "notes": [
-      "limit hit on attempt 1",
-      "#1 http=429 code=100209"
+      "Env.LoginRateLimiterEnabled() 返回 false"
     ]
   }
 ]

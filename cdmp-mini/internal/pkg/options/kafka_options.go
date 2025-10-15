@@ -23,9 +23,6 @@ type KafkaOptions struct {
 	// 消息确认机制 (0:无需确认, 1:leader确认, -1:所有副本确认)
 	RequiredAcks int `json:"requiredAcks" mapstructure:"requiredAcks" validate:"min=-1,max=1"`
 
-	// 是否启用异步模式
-	Async bool `json:"async" mapstructure:"async"`
-
 	// 批处理大小
 	BatchSize int `json:"batchSize" mapstructure:"batchSize" validate:"min=1"`
 
@@ -88,10 +85,9 @@ func NewKafkaOptions() *KafkaOptions {
 		Brokers:                []string{"192.168.10.8:9092", "192.168.10.8:9093", "192.168.10.8:9094"},
 		Topic:                  "default-topic",
 		ConsumerGroup:          "default-consumer-group",
-		RequiredAcks:           -1, // leader确认
-		Async:                  true,
-		BatchSize:              100,
-		BatchTimeout:           100 * time.Millisecond,
+		RequiredAcks:           1, // leader确认
+		BatchSize:              60,
+		BatchTimeout:           50 * time.Millisecond,
 		MaxRetries:             4,
 		MinBytes:               50 * 1024,        // 10KB
 		MaxBytes:               10 * 1024 * 1024, // 10MB
@@ -106,14 +102,14 @@ func NewKafkaOptions() *KafkaOptions {
 		AutoCreateTopic:        true,
 		DesiredPartitions:      96, //CPU 核数的 2~4 倍设置（如 32、48、64）
 		AutoExpandPartitions:   true,
-		ProducerMaxInFlight:    5000,
+		ProducerMaxInFlight:    40000,
 		LagScaleThreshold:      10000,            // 默认滞后阈值
 		LagCheckInterval:       30 * time.Second, // 默认滞后检查间隔
-		MaxDBBatchSize:         200,              // 默认批量写DB大小
+		MaxDBBatchSize:         230,              // 默认批量写DB大小
 		InstanceID:             "",               // 新增字段默认值为空，建议启动时赋值
-		StartingRate:           2000,
-		MinRate:                1000,
-		MaxRate:                5000,
+		StartingRate:           10000,
+		MinRate:                10000,
+		MaxRate:                20000,
 		AdjustPeriod:           2 * time.Second,
 	}
 }
@@ -269,9 +265,6 @@ func (k *KafkaOptions) AddFlags(fs *pflag.FlagSet) {
 
 	fs.IntVar(&k.RequiredAcks, "kafka.required-acks", k.RequiredAcks,
 		"消息确认机制: -1=所有副本确认, 0=无需确认, 1=leader确认")
-
-	fs.BoolVar(&k.Async, "kafka.async", k.Async,
-		"是否启用异步生产者模式")
 
 	fs.IntVar(&k.BatchSize, "kafka.batch-size", k.BatchSize,
 		"生产者批处理大小")

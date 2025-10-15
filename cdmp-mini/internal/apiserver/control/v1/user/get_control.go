@@ -67,6 +67,12 @@ func (u *UserController) Get(ctx *gin.Context) {
 			auditLog("fail", err.Error())
 			return err
 		}
+		if user == nil {
+			err := errors.WithCode(code.ErrUserNotFound, "用户不存在")
+			core.WriteResponse(ctx, err, nil)
+			auditLog("fail", err.Error())
+			return err
+		}
 		// 用户不存在（业务正常状态）
 		if user.Name == sru.RATE_LIMIT_PREVENTION {
 			err := errors.WithCode(code.ErrPasswordIncorrect, "用户名密码无效")

@@ -42,3 +42,114 @@ curl "<http://localhost:8088/admin/ratelimit/login>"
 持续监测：每提升一次并发都记录生产端 QPS、错误率；必要时把测试写入 Prometheus/Grafana，确保服务端长时间稳定、不丢数据。
 分阶段推进：先让基准并发场景达到 ≥500 QPS，再推广到 ramp/spike/stress，最后再恢复 ThinkTime 做真实业务校准。
 照这套办法提升生产端线程数、取消限流、缩短等待，就能显著抬高 QPS/TPS，从而真实暴露服务端消费能力。
+11:30:44–11:30:46 之间触发了 546 次 context deadline exceeded，全部来自 lookup_store.go 的 SELECT … WHERE LOWER(email)=?；LOWER() 会导致 MySQL 放弃索引，所有唯一性校验都走全表扫描，直接拖慢 create/delete。
+同一时间段还有大量 SELECT … WHERE phone=?（单次 30–120 ms），说明手机号索引缺失或被压垮，进一步放大写链路耗时。
+write_limiter.go 在 11:30:36 记录了 22 条 “Redis限流失败，降级本地处理: context deadline exceeded”，Redis 超时让写限流退回本地严格模式，额外锁竞争 + 突发放行加剧尾延迟。
+server/genericapiserver.go:1262 多次提示 “部分节点连接异常 (2/3 成功)”，后端依赖（Redis/Kafka 等）连通性不稳，与上面的限流超时一致，属于隐含风险。
+server/retry_consumer.go:373 仍有 286 条 “Duplicate entry … idx_name”，重试队列会直接 ack 重复，既保留了老问题，又持续冲击唯一键校验。
+现在的处理逻辑已经把 “Duplicate entry … idx_name” 视为幂等冲突并直接放弃重试：
+
+正常消费链路里（consumer.go），createUserInDB/batchCreateToDB/updateUserInDB 都会先调用 usercache.Normalize*，若数据库返回 1062/duplicate entry 会被 isDuplicateKeyDBError 捕获并直接返回 nil，也就是当作成功 ACK，不再投递到重试队列。
+重试链路里（retry_consumer.go），processRetryCreate 和 processRetryUpdate 遇到数据库报错时会进入 handleProcessingError。这里的 shouldIgnoreError 会匹配到 “duplicate entry”/“1062”，函数随即返回 nil，外层就会提交偏移量并结束重试；同时日志等级改成了 Debugf，避免把可忽略错误刷成警告。
+删除场景 processRetryDelete 调用了 isIgnorableDeleteError，同样把包含 “duplicate entry”/“1062” 的错误归类为可忽略，直接清理缓存后完成 ACK。
+仓库里没有单独的 “delete-force” 操作类型，Kafka 消息的删除就是 OperationDelete，上述逻辑已经覆盖。总结就是：create/update/delete 相关的重复键冲突都会被即时忽略，重试机制不会再重复拉起这些消息。
+主要发现
+
+压测依旧越过 SLA：baseline_concurrent 平均 265 ms / p95 431 ms / p99 509 ms，stress_spike 和 stress_ramp 分别达到 0.77–0.91 s 的平均值（测试输出）。
+管理员 Token 大量过期（Token is expired 连续出现在 13:54–13:55 的 /v1/users/<user>//force 请求里），导致 WaitForUser 与清理流程全数失败，测试中断时留下几十个 “user xxx not ready”（测试日志 + iam-apiserver.log）。
+MySQL 与 Redis 仍有超时：29 次 context deadline exceeded（例如 13:08:35 对 SELECT * FROM user WHERE name='createp_t2en'），13:23:26 附近多次 “Redis限流失败，降级本地处理” 以及 14:01 起的 “⚠️ 节点数量不匹配: 配置3个, 集群中发现2个”（genericapiserver.go:1281）。
+旧问题基本清空：日志里已无 Duplicate entry/1062，未再出现 LOWER(email) 查询，说明邮箱/手机号规范化与唯一性校验修复生效。
+遗留问题状态
+
+✅ 重复键冲突与邮箱索引缺失已解决；重试队列不再重试重复数据。
+⚠️ SLA 仍严重超标，高延迟阶段集中在并发场景；需拆分服务器端耗时（唯一性校验 / Kafka 发送 / 上下游限流）。
+⚠️ Token 过期导致的 401 目前是压测停摆、清理失败的直接原因；sync.Once 缓存的 token 在 5 分钟 TTL 后不会刷新。
+⚠️ Redis 集群配置与实际节点不符、偶发本地降级，会让写限流退回互斥锁模式，放大尾延迟。
+优化建议
+
+先修复压测框架：framework.Env.AdminRequest 遇到 401/419 时触发重新登录，或在 AdminTokenOrFail 去掉 sync.Once，保证长跑压测期间 token 不失效，同时在 cleanup 分支跳过 WaitForUser 的 Admin 调用失败后直接重试登录。
+在服务端给 create 链路埋点（如 ensureEmailUnique/ensurePhoneUnique/Kafka 发送各自耗时），并调高 MySQLOptions.SlowQueryThreshold 报警输出，快速定位 200 ms+ 的慢点；同一时间确保 Redis 集群三节点全部可用、write_limiter 不再频繁降级。
+评估缩减同步唯一性检查的数据库探测次数：优先尝试基于 Redis SETNX 的短期占位，再按需回源 DB，或至少把 GetByEmail/GetByPhone 改为只取主键列，降低 SELECT *传输成本；验证后重新跑 TestCreatePerformance，对比平均/尾延迟是否回到 230 ms/320 ms 档。
+create$ sudo awk -F'"' '/用户创建链路耗时超过200ms/{for(i=1;i<=NF;i++){if($i=="step"){print $(i+2)}}}' /var/log/iam/iam-apiserver.log | sort | uniq -c | sort -nr | head
+[sudo] password for mxl:
+   2544 kafka_send_create_user
+   1323 check_user_exist
+    852 ensure_contact_lookup
+    777 ensure_contacts_unique
+    411 ensure_contact_unique
+    165 ensure_email_unique
+     87 ensure_phone_unique
+create$
+sudo -n python3 - <<'PY'
+import re
+from collections import defaultdict
+steps = defaultdict(list)
+pattern = re.compile(r'用户创建链路耗时超过200ms.*"step":\s*"([^"]+)".*"duration":\s*"([0-9.]+)ms"')
+with open('/var/log/iam/iam-apiserver.log','rb') as f:
+    for line in f:
+        line=line.decode('utf-8','ignore')
+        m = pattern.search(line)
+        if m:
+            steps[m.group(1)].append(float(m.group(2)))
+for step, vals in sorted(steps.items(), key=lambda kv: len(kv[1]), reverse=True):
+    vals.sort()
+    count = len(vals)
+    if count == 0:
+        continue
+    avg = sum(vals) / count
+    p95 = vals[int(max(count* 0.95 - 1, 0))]
+    p99 = vals[int(max(count * 0.99 - 1, 0))]
+    print(f"{step}: count={count}, avg={avg:.1f}ms, p95={p95:.1f}ms, p99={p99:.1f}ms")
+PY
+改动说明 • 在     user_service.go 引入联系人缓存预热机制：新增同步控制字段、常量、ensureContactCacheReady 与 warmContactCache，先异步批量写入邮箱/手机号唯一性缓存，预热完成后可直接通过 SetNX 返回，避免高并发时频繁查库。对占位 TTL 及写缓存 TTL 统一调整，保证占位记录在消费者写回前不会过期。 • 更新 ensureContactUnique 流程：增加耗时指标埋点、重新规范邮箱/手机号归一化、在预热完成后命中占位即放行，减少后续数据库查找；同时出现真实占用时写入长期缓存，维持唯一性判断命中率。 • 在     create_service.go 创建流程中调用 ensureContactCacheReady，首次请求即可触发异步预热，整个流程无阻塞。         
+在 user_service.go 里把邮箱/手机号唯一性校验改成 errgroup 并行执行，避免两个顺序查库串行叠加；同时新增 server.enable-contact-warmup 开关，默认关闭时直接跳过耗时的全量预热，只保留先前的惰性占位机制。
+在 server_run_options.go 增加上述开关的配置项和命令行参数，方便需要时手动启用缓存预热。
+尚未重新跑性能测试；请执行 go test -v -run TestCreatePerformance -timeout 1000m 验证新的并行检查是否拉低 ensure_contacts_unique 的 p95/p99，同时关注启用/关闭预热后对数据库的影响。如需观察预热，启动服务时加 --server.enable-contact-warmup 即可。
+
+GP
+立即观察
+
+journalctl -u <service> 或容器日志里确认启动阶段无报错，特别是 “WAL worker 启动/停止”“写入 WAL 失败” 等关键日志。
+ls -al <ProducerWALDir>/pending 关注积压文件数量是否持续增长；正常情况下文件会被 worker 及时搬到 acked。
+curl http://<metrics-endpoint>/metrics | grep kafka_producer_wal 校验新指标是否按预期刷新（kafka_producer_wal_backlog、kafka_producer_wal_oldest_age_seconds）。
+功能验证
+
+执行一次用户创建 → 观察日志中“Enqueue WAL”“发送成功”字样；若 Kafka 正常，pending 目录应快速清空。
+暂时关闭 Kafka（或模拟网络故障），重复发送：
+pending 下文件数应累积增长；
+5 秒周期的监控日志会提示积压/滞留阈值；
+Kafka 恢复后，队列应自动回落到基线。
+操作 Helm/Prometheus 仪表盘，确保告警阈值命中时能触发（或至少有日志提示）。
+回归风险
+
+检查旧异步队列是否彻底闲置，无多余 goroutine。
+如果服务曾使用 ProducerAsyncEnabled 配置，确认文档已更新。
+有任何异常现象（比如 backlog 无法下降、日志出现持续重试或 panic），把日志片段/指标数值贴给我，我们再继续排查。
+
+GPT-5-Codex (Preview) • 1x
+理解你的疑惑：理论上 WAL + 后台 worker 应该“先落磁盘、后异步刷 Kafka”，不会比旧的同步写还慢，除非后台处理链路成了新的瓶颈。你这次压测的结果说明生产端吞吐明显跟不上请求速度，主要有以下几个关键差异会让它比“完全同步写 Kafka”更慢：
+
+同步模式是“请求线程直接写 Kafka”，只受限于同步写的 RTT；现在改成 “先写 WAL → 交给固定数量的 worker 刷 Kafka”，如果 worker 并发不足或发送遇阻，积压就会叠加在 WAL 上，API 请求虽然快速返回，但用户真正写入 Kafka 的耗时等价于“WAL 落盘 + 等待排队 + Kafka 发送”。压测统计看到的 800ms 正是“排队 + Kafka 写”总时长。
+
+worker 数量默认为 4，即使每个 worker 顺利写 Kafka，峰值吞吐也是“单 worker 能力 × 4”。旧同步模式下是“多少请求就开多少 goroutine 直接写 Kafka”，天然无限扩张。只要请求并发超过 worker 总能力，积压就立即出现，延迟直线飙升。
+
+落盘本身成本固定：每条请求都要 write + fsync + rename。同步模式只有 Kafka 写一次；现在相当于增加了文件系统写入开销，如果 Kafka 写入本来就很快，在磁盘层面确实会多几毫秒。
+
+Kafka 写入速率：这条才是关键。如果原先同步模式依赖非常高的 ProducerMaxInFlight、大量 goroutine，Kafka 集群能够承受，而现在后台 worker 单线程顺序写，原有吞吐直接被限制。你的日志显示 backlog 会从 1900 缓慢回落到 700，多数写入耗时 500ms-1s，说明 Kafka 正在成为瓶颈；在同步模式下你可能没有这种观察，因为请求线程阻塞在那里，延迟被吞掉了（反而不会积压 WAL）。
+
+因此要恢复到原先的性能，有几步务必做：
+
+把 kafka.producer-wal-workers 提高到和旧同步模式相当的并发度（例如 32/64，根据压测并发微调）。每个 worker 实质对应一个同步写线程，数量要匹配目标 QPS。
+
+调优磁盘 & WAL 目录：确保 ProducerWALDir 在 SSD 上，sync 开销在几毫秒以内；如果需要，可以采用 O_DIRECT、fdatasync 优化或批量刷盘机制，避免单条消息 fsync。
+
+检查 Kafka 参数：既然同步模式可以跑得更快，说明 Kafka 集群本身没到极限。可能是 worker 顺序写 + 单 writer 实例限制了吞吐。可以尝试：
+
+给 worker 使用独立的 kafka.Writer（目前所有 worker 共享一个 writer，会串行化）。
+调高 ProducerMaxInFlight，允许 Writer 内部并发请求。
+调整 BatchBytes/BatchTimeout，让单次写批量更大。
+指标确认：用 Prometheus 或 kafka-producer-metrics 监控 request-latency、records-per-request，确认 worker 改造后 Kafka 端延迟是否恢复；同时关注 kafka_producer_wal 指标，确保 backlog 稳定在 0-几十条。
+
+如果按照这些调整后仍比同步模式慢，说明我们还没补齐“后台 worker 并发 + writer 并发”这部分能力。先尝试增加 worker 数和并行 writer，我建议一次调到 32/64 worker，再跑一次 baseline，延迟应该能明显回落。调整过程中保持同一套压测配置（并发、速率、Kafka 集群）来做对比，方便确认收益。
+
+GPT-5-Codex (Preview) • 1x

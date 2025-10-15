@@ -30,6 +30,8 @@ import (
 	"fmt"
 	"math/rand"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bytedance/gopkg/util/logger"
@@ -48,11 +50,17 @@ import (
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
 
 const (
-	RATE_LIMIT_PREVENTION = "rate_limit_prevention"
+	RATE_LIMIT_PREVENTION   = "rate_limit_prevention"
+	createStepSlowThreshold = 200 * time.Millisecond
+	contactPlaceholderTTL   = 30 * time.Second
+	contactWarmupTimeout    = 2 * time.Minute
+	contactWarmupBatchSize  = 1000
+	contactCacheTTL         = 24 * time.Hour
 )
 
 type UserService struct {
@@ -61,6 +69,10 @@ type UserService struct {
 	Options  *options.Options
 	Producer producer.MessageProducer
 	group    singleflight.Group
+
+	contactWarmupMu   sync.Mutex
+	contactWarming    bool
+	contactCacheReady atomic.Bool
 }
 
 // NewUserService 创建用户服务实例
@@ -71,6 +83,23 @@ func NewUserService(store interfaces.Factory, redis *storage.RedisCluster, opts 
 		Options:  opts,
 		Producer: producer,
 	}
+}
+
+func (u *UserService) recordUserCreateStep(ctx context.Context, step, field, username string, duration time.Duration, stepErr error) {
+	metrics.RecordUserCreateStep(step, field, duration)
+	if duration <= createStepSlowThreshold {
+		return
+	}
+	fields := []interface{}{"step", step, "field", field, "duration", duration.String(), "username", username}
+	if ctx != nil {
+		if requestID := ctx.Value("requestID"); requestID != nil {
+			fields = append(fields, "requestID", fmt.Sprint(requestID))
+		}
+	}
+	if stepErr != nil {
+		fields = append(fields, "error", stepErr.Error())
+	}
+	log.Warnw("用户创建链路耗时超过200ms", fields...)
 }
 
 type UserSrv interface {
@@ -203,8 +232,8 @@ func (u *UserService) cacheNullValue(username string) error {
 
 	cacheKey := u.generateUserCacheKey(username)
 
-	baseExpire := 5 * time.Minute
-	randomExpire := time.Duration(rand.Intn(60)) * time.Second
+	baseExpire := 45 * time.Second
+	randomExpire := time.Duration(rand.Intn(15)) * time.Second
 	expireTime := baseExpire + randomExpire
 
 	_, err := u.Redis.SetNX(ctx, cacheKey, RATE_LIMIT_PREVENTION, expireTime)
@@ -248,7 +277,7 @@ func (u *UserService) releaseNullCacheRefreshLock(lockKey string) {
 func (u *UserService) refreshUserCacheFromDB(ctx context.Context, username string) (*v1.User, error) {
 	refreshKey := fmt.Sprintf("refresh:%s", username)
 	result, err, shared := u.group.Do(refreshKey, func() (interface{}, error) {
-		dbCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		dbCtx, cancel := u.newDBContext(ctx, 700*time.Millisecond)
 		defer cancel()
 		return u.getUserFromDBAndSetCache(dbCtx, username)
 	})
@@ -284,33 +313,121 @@ func (u *UserService) generatePhoneCacheKey(phone string) string {
 	return usercache.PhoneKey(phone)
 }
 
-func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User) error {
-	if err := u.ensureEmailUnique(ctx, user.Email, user.Name); err != nil {
-		return err
+func (u *UserService) normalizeUserContacts(user *v1.User) {
+	if user == nil {
+		return
 	}
-	if err := u.ensurePhoneUnique(ctx, user.Phone, user.Name); err != nil {
-		return err
-	}
-	return nil
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
 }
 
-func (u *UserService) ensureEmailUnique(ctx context.Context, email, owner string) error {
-	cacheKey := u.generateEmailCacheKey(email)
-	if cacheKey == "" {
-		return nil
+func (u *UserService) ensureContactCacheReady() {
+	if u.contactCacheReady.Load() {
+		return
 	}
-	return u.ensureContactUnique(ctx, cacheKey, owner, "邮箱", email, func(dbCtx context.Context) (*v1.User, error) {
-		return u.Store.Users().GetByEmail(dbCtx, email, u.Options)
+	if u.Options == nil || u.Options.ServerRunOptions == nil || !u.Options.ServerRunOptions.EnableContactWarmup {
+		u.contactCacheReady.Store(true)
+		return
+	}
+	if u.Store == nil || u.Redis == nil {
+		return
+	}
+	u.contactWarmupMu.Lock()
+	if u.contactCacheReady.Load() || u.contactWarming {
+		u.contactWarmupMu.Unlock()
+		return
+	}
+	u.contactWarming = true
+	u.contactWarmupMu.Unlock()
+
+	go func() {
+		if err := u.warmContactCache(); err != nil {
+			log.Warnw("联系人缓存预热失败", "error", err)
+			u.contactWarmupMu.Lock()
+			u.contactWarming = false
+			u.contactWarmupMu.Unlock()
+			return
+		}
+		u.contactCacheReady.Store(true)
+		u.contactWarmupMu.Lock()
+		u.contactWarming = false
+		u.contactWarmupMu.Unlock()
+		log.Debugw("联系人唯一性缓存预热完成")
+	}()
+}
+
+func (u *UserService) newDBContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
+	base := parent
+	if base == nil {
+		base = context.Background()
+	}
+	if parent != nil {
+		if reqID := parent.Value("requestID"); reqID != nil {
+			base = context.WithValue(base, "requestID", reqID)
+		}
+	}
+	if timeout <= 0 {
+		timeout = time.Second
+	}
+	if deadline, ok := base.Deadline(); ok {
+		remaining := time.Until(deadline)
+		if remaining > 0 && remaining < timeout {
+			timeout = remaining
+		}
+	}
+	return context.WithTimeout(base, timeout)
+}
+
+func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User) error {
+	u.ensureContactCacheReady()
+	u.normalizeUserContacts(user)
+	g, groupCtx := errgroup.WithContext(ctx)
+	email := user.Email
+	phone := user.Phone
+	owner := user.Name
+	if email != "" {
+		emailCopy := email
+		g.Go(func() error {
+			return u.ensureEmailUnique(groupCtx, emailCopy, owner)
+		})
+	}
+	if phone != "" {
+		phoneCopy := phone
+		g.Go(func() error {
+			return u.ensurePhoneUnique(groupCtx, phoneCopy, owner)
+		})
+	}
+	return g.Wait()
+}
+
+func (u *UserService) ensureEmailUnique(ctx context.Context, email, owner string) (err error) {
+	start := time.Now()
+	defer func() {
+		u.recordUserCreateStep(ctx, "ensure_email_unique", "email", owner, time.Since(start), err)
+	}()
+	normalized := usercache.NormalizeEmail(email)
+	if normalized == "" {
+		err = errors.WithCode(code.ErrInvalidParameter, "邮箱不能为空")
+		return err
+	}
+	cacheKey := u.generateEmailCacheKey(normalized)
+	return u.ensureContactUnique(ctx, cacheKey, owner, "邮箱", normalized, "email", func(dbCtx context.Context) (*v1.User, error) {
+		return u.Store.Users().GetByEmail(dbCtx, normalized, u.Options)
 	})
 }
 
-func (u *UserService) ensurePhoneUnique(ctx context.Context, phone, owner string) error {
-	cacheKey := u.generatePhoneCacheKey(phone)
-	if cacheKey == "" {
+func (u *UserService) ensurePhoneUnique(ctx context.Context, phone, owner string) (err error) {
+	start := time.Now()
+	defer func() {
+		u.recordUserCreateStep(ctx, "ensure_phone_unique", "phone", owner, time.Since(start), err)
+	}()
+	normalized := usercache.NormalizePhone(phone)
+	if normalized == "" {
 		return nil
 	}
-	return u.ensureContactUnique(ctx, cacheKey, owner, "手机号", phone, func(dbCtx context.Context) (*v1.User, error) {
-		return u.Store.Users().GetByPhone(dbCtx, phone, u.Options)
+	cacheKey := u.generatePhoneCacheKey(normalized)
+	return u.ensureContactUnique(ctx, cacheKey, owner, "手机号", normalized, "phone", func(dbCtx context.Context) (*v1.User, error) {
+		return u.Store.Users().GetByPhone(dbCtx, normalized, u.Options)
 	})
 }
 
@@ -320,25 +437,73 @@ func (u *UserService) ensureContactUnique(
 	allowedOwner string,
 	fieldLabel string,
 	fieldValue string,
+	fieldKey string,
 	lookup func(context.Context) (*v1.User, error),
-) error {
+) (err error) {
 	if cacheKey == "" {
 		return nil
 	}
 
-	cachedOwner, err := u.Redis.GetKey(ctx, cacheKey)
-	if err != nil {
-		if !errors.Is(err, redis.Nil) {
-			log.Warnf("%s唯一性缓存读取失败: key=%s err=%v", fieldLabel, cacheKey, err)
+	start := time.Now()
+	placeholderAcquired := false
+	defer func() {
+		u.recordUserCreateStep(ctx, "ensure_contact_unique", fieldKey, allowedOwner, time.Since(start), err)
+		if placeholderAcquired && err != nil && !errors.IsCode(err, code.ErrValidation) {
+			if _, delErr := u.Redis.DeleteKey(ctx, cacheKey); delErr != nil {
+				log.Warnw("释放唯一性占位失败", "key", cacheKey, "field", fieldKey, "error", delErr)
+			}
 		}
-	} else if cachedOwner != "" && !strings.EqualFold(cachedOwner, allowedOwner) {
+	}()
+
+	cachedOwner, cacheErr := u.Redis.GetKey(ctx, cacheKey)
+	if cacheErr != nil {
+		if !errors.Is(cacheErr, redis.Nil) {
+			log.Warnf("%s唯一性缓存读取失败: key=%s err=%v", fieldLabel, cacheKey, cacheErr)
+		}
+	} else if cachedOwner != "" {
+		if strings.EqualFold(cachedOwner, allowedOwner) {
+			return nil
+		}
 		return errors.WithCode(code.ErrValidation, "%s已被占用: %s", fieldLabel, fieldValue)
 	}
 
+	// 缓存未命中或键不存在时，尝试基于 SETNX 占位，降低并发探库次数
+	if errors.Is(cacheErr, redis.Nil) || cachedOwner == "" {
+		placeholderValue := allowedOwner
+		if placeholderValue == "" {
+			placeholderValue = RATE_LIMIT_PREVENTION
+		}
+		ok, setErr := u.Redis.SetNX(ctx, cacheKey, placeholderValue, contactPlaceholderTTL)
+		if setErr != nil {
+			log.Warnf("%s唯一性占位失败: key=%s err=%v", fieldLabel, cacheKey, setErr)
+		} else if ok {
+			placeholderAcquired = true
+			cachedOwner = placeholderValue
+			if u.contactCacheReady.Load() && allowedOwner != "" && !strings.EqualFold(allowedOwner, RATE_LIMIT_PREVENTION) {
+				return nil
+			}
+		} else {
+			if refreshed, err := u.Redis.GetKey(ctx, cacheKey); err == nil {
+				cachedOwner = refreshed
+			}
+		}
+		if cachedOwner != "" {
+			if strings.EqualFold(cachedOwner, allowedOwner) && !placeholderAcquired {
+				return nil
+			}
+			if !strings.EqualFold(cachedOwner, allowedOwner) {
+				return errors.WithCode(code.ErrValidation, "%s已被占用: %s", fieldLabel, fieldValue)
+			}
+		}
+	}
+
 	result, retryErr := util.RetryWithBackoff(u.Options.RedisOptions.MaxRetries, isRetryableError, func() (interface{}, error) {
-		dbCtx, cancel := context.WithTimeout(ctx, time.Second)
+		dbCtx, cancel := u.newDBContext(ctx, 600*time.Millisecond)
 		defer cancel()
+
+		dbStart := time.Now()
 		existing, lookupErr := lookup(dbCtx)
+		u.recordUserCreateStep(ctx, "ensure_contact_lookup", fieldKey, allowedOwner, time.Since(dbStart), lookupErr)
 		if lookupErr != nil {
 			if errors.IsCode(lookupErr, code.ErrUserNotFound) {
 				return nil, nil
@@ -348,7 +513,8 @@ func (u *UserService) ensureContactUnique(
 		return existing, nil
 	})
 	if retryErr != nil {
-		return retryErr
+		err = retryErr
+		return err
 	}
 	if result == nil {
 		return nil
@@ -357,7 +523,91 @@ func (u *UserService) ensureContactUnique(
 	if strings.EqualFold(existing.Name, allowedOwner) {
 		return nil
 	}
+
+	if setErr := u.Redis.SetKey(ctx, cacheKey, existing.Name, contactCacheTTL); setErr != nil {
+		log.Warnf("%s唯一性缓存写入失败: key=%s err=%v", fieldLabel, cacheKey, setErr)
+	}
 	return errors.WithCode(code.ErrValidation, "%s已被占用: %s", fieldLabel, fieldValue)
+}
+
+func (u *UserService) warmContactCache() error {
+	ctx, cancel := context.WithTimeout(context.Background(), contactWarmupTimeout)
+	defer cancel()
+
+	if u.Store == nil || u.Redis == nil {
+		return fmt.Errorf("warmContactCache dependencies not ready")
+	}
+
+	var (
+		offset int64
+		total  int64
+	)
+
+	batchSize := int64(contactWarmupBatchSize)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		off := offset
+		limit := batchSize
+		opts := metav1.ListOptions{
+			Offset: &off,
+			Limit:  &limit,
+		}
+
+		list, err := u.Store.Users().List(ctx, "", opts, u.Options)
+		if err != nil {
+			return err
+		}
+		if list == nil || len(list.Items) == 0 {
+			break
+		}
+
+		for _, entry := range list.Items {
+			if entry == nil {
+				continue
+			}
+			email := usercache.NormalizeEmail(entry.Email)
+			if email != "" {
+				emailKey := u.generateEmailCacheKey(email)
+				if emailKey != "" {
+					if err := u.Redis.SetKey(ctx, emailKey, entry.Name, contactCacheTTL); err != nil {
+						if ctx.Err() != nil {
+							return ctx.Err()
+						}
+						log.Debugw("预热邮箱唯一性缓存失败", "key", emailKey, "error", err)
+					}
+				}
+			}
+
+			phone := usercache.NormalizePhone(entry.Phone)
+			if phone != "" {
+				phoneKey := u.generatePhoneCacheKey(phone)
+				if phoneKey != "" {
+					if err := u.Redis.SetKey(ctx, phoneKey, entry.Name, contactCacheTTL); err != nil {
+						if ctx.Err() != nil {
+							return ctx.Err()
+						}
+						log.Debugw("预热手机号唯一性缓存失败", "key", phoneKey, "error", err)
+					}
+				}
+			}
+		}
+
+		count := int64(len(list.Items))
+		total += count
+		if count < batchSize {
+			break
+		}
+		offset += count
+	}
+
+	log.Debugw("联系人唯一性缓存预热结束", "processedUsers", total)
+	return nil
 }
 
 // 从缓存和数据库查询用户是否存在
@@ -383,7 +633,7 @@ func (u *UserService) checkUserExist(ctx context.Context, username string, force
 
 	// 缓存未命中，重试DB查询（带独立ctx）
 	result, err := util.RetryWithBackoff(u.Options.RedisOptions.MaxRetries, isRetryableError, func() (interface{}, error) {
-		dbCtx, cancel := context.WithTimeout(context.Background(), time.Second) // 独立1s超时
+		dbCtx, cancel := u.newDBContext(ctx, 700*time.Millisecond)
 		defer cancel()
 		r, err, shared := u.group.Do(username, func() (interface{}, error) {
 			return u.getUserFromDBAndSetCache(dbCtx, username)
