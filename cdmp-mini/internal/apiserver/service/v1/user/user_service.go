@@ -277,7 +277,7 @@ func (u *UserService) releaseNullCacheRefreshLock(lockKey string) {
 func (u *UserService) refreshUserCacheFromDB(ctx context.Context, username string) (*v1.User, error) {
 	refreshKey := fmt.Sprintf("refresh:%s", username)
 	result, err, shared := u.group.Do(refreshKey, func() (interface{}, error) {
-		dbCtx, cancel := u.newDBContext(ctx, 700*time.Millisecond)
+		dbCtx, cancel := u.newDBContext(ctx, u.contactRefreshTimeout())
 		defer cancel()
 		return u.getUserFromDBAndSetCache(dbCtx, username)
 	})
@@ -354,6 +354,20 @@ func (u *UserService) ensureContactCacheReady() {
 		u.contactWarmupMu.Unlock()
 		log.Debugw("联系人唯一性缓存预热完成")
 	}()
+}
+
+func (u *UserService) contactLookupTimeout() time.Duration {
+	if u.Options != nil && u.Options.ServerRunOptions != nil && u.Options.ServerRunOptions.ContactLookupTimeout > 0 {
+		return u.Options.ServerRunOptions.ContactLookupTimeout
+	}
+	return 2 * time.Second
+}
+
+func (u *UserService) contactRefreshTimeout() time.Duration {
+	if u.Options != nil && u.Options.ServerRunOptions != nil && u.Options.ServerRunOptions.ContactRefreshTimeout > 0 {
+		return u.Options.ServerRunOptions.ContactRefreshTimeout
+	}
+	return 700 * time.Millisecond
 }
 
 func (u *UserService) newDBContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -498,7 +512,7 @@ func (u *UserService) ensureContactUnique(
 	}
 
 	result, retryErr := util.RetryWithBackoff(u.Options.RedisOptions.MaxRetries, isRetryableError, func() (interface{}, error) {
-		dbCtx, cancel := u.newDBContext(ctx, 600*time.Millisecond)
+		dbCtx, cancel := u.newDBContext(ctx, u.contactLookupTimeout())
 		defer cancel()
 
 		dbStart := time.Now()
@@ -633,7 +647,7 @@ func (u *UserService) checkUserExist(ctx context.Context, username string, force
 
 	// 缓存未命中，重试DB查询（带独立ctx）
 	result, err := util.RetryWithBackoff(u.Options.RedisOptions.MaxRetries, isRetryableError, func() (interface{}, error) {
-		dbCtx, cancel := u.newDBContext(ctx, 700*time.Millisecond)
+		dbCtx, cancel := u.newDBContext(ctx, u.contactRefreshTimeout())
 		defer cancel()
 		r, err, shared := u.group.Do(username, func() (interface{}, error) {
 			return u.getUserFromDBAndSetCache(dbCtx, username)

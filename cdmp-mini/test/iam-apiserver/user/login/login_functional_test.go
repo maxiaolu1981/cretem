@@ -314,7 +314,7 @@ func TestLoginFunctional(t *testing.T) {
 			description: "包含特殊字符的密码仍可成功登录",
 			run: func(t *testing.T, env *framework.Env) (framework.CaseResult, error) {
 				t.Helper()
-				const password = "P@ss!#2025?"
+				const password = "javaUnix#2008"
 				spec := env.NewUserSpec("login_special_pwd_", password)
 				env.CreateUserAndWait(t, spec, 5*time.Second)
 				defer env.ForceDeleteUserIgnore(spec.Name)

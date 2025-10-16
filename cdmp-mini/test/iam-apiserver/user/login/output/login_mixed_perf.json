@@ -4,18 +4,18 @@
     "requests": 1000,
     "success_rate": 0.974,
     "error_rate": 0.026,
-    "duration_ms": 1174,
-    "qps": 851.4712627720806,
+    "duration_ms": 632,
+    "qps": 1580.0003604928822,
     "error_count": 26,
     "success_count": 974,
     "latency": {
-      "min_ms": 0.000714,
-      "max_ms": 740.987957,
-      "avg_ms": 109.924560707,
-      "p50_ms": 52.303118,
-      "p90_ms": 308.894299,
-      "p95_ms": 460.991528,
-      "p99_ms": 649.614551
+      "min_ms": 0.00054,
+      "max_ms": 434.290057,
+      "avg_ms": 54.931167641,
+      "p50_ms": 26.704984,
+      "p90_ms": 150.112271,
+      "p95_ms": 244.567877,
+      "p99_ms": 321.872442
     },
     "counters": {
       "account_locked": 1,
@@ -24,13 +24,13 @@
       "login_attempt": 800,
       "login_success": 500,
       "logout_attempt": 100,
-      "logout_failure": 15,
-      "logout_success": 85,
+      "logout_failure": 17,
+      "logout_success": 83,
       "missing_tokens": 26,
       "password_incorrect": 299,
       "refresh_attempt": 100,
-      "refresh_failure": 11,
-      "refresh_success": 89
+      "refresh_failure": 9,
+      "refresh_success": 91
     },
     "notes": [
       "account_locked=1",
@@ -39,13 +39,13 @@
       "login_attempt=800",
       "login_success=500",
       "logout_attempt=100",
-      "logout_failure=15",
-      "logout_success=85",
+      "logout_failure=17",
+      "logout_success=83",
       "missing_tokens=26",
       "password_incorrect=299",
       "refresh_attempt=100",
-      "refresh_failure=11",
-      "refresh_success=89"
+      "refresh_failure=9",
+      "refresh_success=91"
     ]
   }
 ]

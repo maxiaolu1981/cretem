@@ -79,13 +79,15 @@ import (
 )
 
 type ServerRunOptions struct {
-	Mode                string   `json:"mode"        mapstructure:"mode"`
-	Healthz             bool     `json:"healthz"     mapstructure:"healthz"`
-	Middlewares         []string `json:"middlewares" mapstructure:"middlewares"`
-	EnableProfiling     bool     `json:"enableProfiling" mapstructure:"enableProfiling"`
-	EnableMetrics       bool     `json:"enableMetrics" mapstructure:"enableMetrics"`
-	FastDebugStartup    bool     `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
-	EnableContactWarmup bool     `json:"enableContactWarmup" mapstructure:"enableContactWarmup"`
+	Mode                  string        `json:"mode"        mapstructure:"mode"`
+	Healthz               bool          `json:"healthz"     mapstructure:"healthz"`
+	Middlewares           []string      `json:"middlewares" mapstructure:"middlewares"`
+	EnableProfiling       bool          `json:"enableProfiling" mapstructure:"enableProfiling"`
+	EnableMetrics         bool          `json:"enableMetrics" mapstructure:"enableMetrics"`
+	FastDebugStartup      bool          `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
+	EnableContactWarmup   bool          `json:"enableContactWarmup" mapstructure:"enableContactWarmup"`
+	ContactLookupTimeout  time.Duration `json:"contactLookupTimeout" mapstructure:"contactLookupTimeout"`
+	ContactRefreshTimeout time.Duration `json:"contactRefreshTimeout" mapstructure:"contactRefreshTimeout"`
 	// 新增：Cookie相关配置
 	CookieDomain             string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
 	CookieSecure             bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
@@ -146,6 +148,8 @@ func NewServerRunOptions() *ServerRunOptions {
 		MaxQueueSize:             100,               // 默认任务队列大小
 		TimeoutThreshold:         100 * time.Second, // 默认单个请求超时阈值
 		EnableContactWarmup:      true,
+		ContactLookupTimeout:     2 * time.Second, // 创建链路唯一性校验
+		ContactRefreshTimeout:    3 * time.Second, // 缓存回源刷新
 	}
 }
 
@@ -255,6 +259,14 @@ func (s *ServerRunOptions) Complete() {
 	if s.LoginCredentialCacheSize <= 0 {
 		s.LoginCredentialCacheSize = 1024
 	}
+
+	if s.ContactLookupTimeout <= 0 {
+		s.ContactLookupTimeout = 600 * time.Millisecond
+	}
+
+	if s.ContactRefreshTimeout <= 0 {
+		s.ContactRefreshTimeout = 700 * time.Millisecond
+	}
 }
 
 func (s *ServerRunOptions) Validate() []error {
@@ -341,6 +353,22 @@ func (s *ServerRunOptions) Validate() []error {
 		))
 	}
 
+	if s.ContactLookupTimeout <= 0 {
+		errs = append(errs, field.Invalid(
+			path.Child("contactLookupTimeout"),
+			s.ContactLookupTimeout,
+			"联系人唯一性查库超时时间必须大于0",
+		))
+	}
+
+	if s.ContactRefreshTimeout <= 0 {
+		errs = append(errs, field.Invalid(
+			path.Child("contactRefreshTimeout"),
+			s.ContactRefreshTimeout,
+			"联系人唯一性负缓存刷新超时时间必须大于0",
+		))
+	}
+
 	agg := errs.ToAggregate()
 	if agg == nil {
 		return nil // 无错误时返回空切片，而非nil
@@ -391,6 +419,8 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 		"登录凭证比较结果在本地缓存的有效期")
 	fs.IntVar(&s.LoginCredentialCacheSize, "server.login-credential-cache-size", s.LoginCredentialCacheSize, ""+
 		"登录凭证比较结果本地缓存的最大条目数")
+	fs.DurationVar(&s.ContactLookupTimeout, "server.contact-lookup-timeout", s.ContactLookupTimeout, "联系人唯一性查库超时阈值")
+	fs.DurationVar(&s.ContactRefreshTimeout, "server.contact-refresh-timeout", s.ContactRefreshTimeout, "联系人唯一性负缓存刷新查库超时阈值")
 	fs.StringVar(&s.AdminToken, "server.admin-token", s.AdminToken,
 		"管理API的简单访问令牌（默认为空，仅允许本地访问）")
 	fs.BoolVar(&s.FastDebugStartup, "server.fast-debug-startup", s.FastDebugStartup, "调试模式下是否跳过耗时的依赖等待，加速本地调试启动")
