@@ -86,10 +86,10 @@ func NewKafkaOptions() *KafkaOptions {
 		Topic:                  "default-topic",
 		ConsumerGroup:          "default-consumer-group",
 		RequiredAcks:           1, // leader确认
-		BatchSize:              60,
-		BatchTimeout:           50 * time.Millisecond,
+		BatchSize:              80,
+		BatchTimeout:           60 * time.Millisecond,
 		MaxRetries:             4,
-		MinBytes:               50 * 1024,        // 10KB
+		MinBytes:               60 * 1024,        // 10KB
 		MaxBytes:               10 * 1024 * 1024, // 10MB
 		WorkerCount:            64,
 		RetryWorkerCount:       3,

@@ -78,16 +78,22 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const (
+	DefaultContactLookupTimeout  = 2 * time.Second
+	DefaultContactRefreshTimeout = 3 * time.Second
+)
+
 type ServerRunOptions struct {
-	Mode                  string        `json:"mode"        mapstructure:"mode"`
-	Healthz               bool          `json:"healthz"     mapstructure:"healthz"`
-	Middlewares           []string      `json:"middlewares" mapstructure:"middlewares"`
-	EnableProfiling       bool          `json:"enableProfiling" mapstructure:"enableProfiling"`
-	EnableMetrics         bool          `json:"enableMetrics" mapstructure:"enableMetrics"`
-	FastDebugStartup      bool          `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
-	EnableContactWarmup   bool          `json:"enableContactWarmup" mapstructure:"enableContactWarmup"`
-	ContactLookupTimeout  time.Duration `json:"contactLookupTimeout" mapstructure:"contactLookupTimeout"`
-	ContactRefreshTimeout time.Duration `json:"contactRefreshTimeout" mapstructure:"contactRefreshTimeout"`
+	Mode                   string        `json:"mode"        mapstructure:"mode"`
+	Healthz                bool          `json:"healthz"     mapstructure:"healthz"`
+	Middlewares            []string      `json:"middlewares" mapstructure:"middlewares"`
+	EnableProfiling        bool          `json:"enableProfiling" mapstructure:"enableProfiling"`
+	EnableMetrics          bool          `json:"enableMetrics" mapstructure:"enableMetrics"`
+	FastDebugStartup       bool          `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
+	EnableContactWarmup    bool          `json:"enableContactWarmup" mapstructure:"enableContactWarmup"`
+	EnableUserTraceLogging bool          `json:"enableUserTraceLogging" mapstructure:"enableUserTraceLogging"`
+	ContactLookupTimeout   time.Duration `json:"contactLookupTimeout" mapstructure:"contactLookupTimeout"`
+	ContactRefreshTimeout  time.Duration `json:"contactRefreshTimeout" mapstructure:"contactRefreshTimeout"`
 	// 新增：Cookie相关配置
 	CookieDomain             string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
 	CookieSecure             bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
@@ -148,8 +154,9 @@ func NewServerRunOptions() *ServerRunOptions {
 		MaxQueueSize:             100,               // 默认任务队列大小
 		TimeoutThreshold:         100 * time.Second, // 默认单个请求超时阈值
 		EnableContactWarmup:      true,
-		ContactLookupTimeout:     2 * time.Second, // 创建链路唯一性校验
-		ContactRefreshTimeout:    3 * time.Second, // 缓存回源刷新
+		EnableUserTraceLogging:   true, //跟踪日志
+		ContactLookupTimeout:     DefaultContactLookupTimeout,
+		ContactRefreshTimeout:    DefaultContactRefreshTimeout,
 	}
 }
 
@@ -261,11 +268,11 @@ func (s *ServerRunOptions) Complete() {
 	}
 
 	if s.ContactLookupTimeout <= 0 {
-		s.ContactLookupTimeout = 600 * time.Millisecond
+		s.ContactLookupTimeout = DefaultContactLookupTimeout
 	}
 
 	if s.ContactRefreshTimeout <= 0 {
-		s.ContactRefreshTimeout = 700 * time.Millisecond
+		s.ContactRefreshTimeout = DefaultContactRefreshTimeout
 	}
 }
 
@@ -379,6 +386,7 @@ func (s *ServerRunOptions) Validate() []error {
 func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&s.EnableRateLimiter, "server.enable-rate-limiter", s.EnableRateLimiter, "是否启用生产端限流器（默认启用）")
 	fs.BoolVar(&s.EnableContactWarmup, "server.enable-contact-warmup", s.EnableContactWarmup, "是否在启动后预热邮箱/手机号唯一性缓存（默认关闭）")
+	fs.BoolVar(&s.EnableUserTraceLogging, "server.enable-user-trace-logging", s.EnableUserTraceLogging, "是否启用用户API链路追踪日志输出")
 	fs.StringVarP(&s.Mode, "server.mode", "M", s.Mode, ""+
 		"指定服务器运行模式。支持的服务器模式：debug(调试)、test(测试)、release(发布)。")
 

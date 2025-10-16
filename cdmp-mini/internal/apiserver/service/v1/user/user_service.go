@@ -40,6 +40,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
+	serveropts "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/util"
@@ -85,6 +86,22 @@ func NewUserService(store interfaces.Factory, redis *storage.RedisCluster, opts 
 	}
 }
 
+func (u *UserService) userStoreReadOnly() interfaces.UserStore {
+	if u == nil || u.Store == nil {
+		return nil
+	}
+	store := u.Store.Users()
+	if store == nil {
+		return nil
+	}
+	if clusterAware, ok := store.(userStoreWithReadOnly); ok {
+		if ro := clusterAware.ReadOnly(); ro != nil {
+			return ro
+		}
+	}
+	return store
+}
+
 func (u *UserService) recordUserCreateStep(ctx context.Context, step, field, username string, duration time.Duration, stepErr error) {
 	metrics.RecordUserCreateStep(step, field, duration)
 	if duration <= createStepSlowThreshold {
@@ -111,6 +128,11 @@ type UserSrv interface {
 	List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error)
 	ListWithBadPerformance(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error)
 	ChangePassword(ctx context.Context, user *v1.User, claims *jwtvalidator.CustomClaims, opt *options.Options) error
+}
+
+type userStoreWithReadOnly interface {
+	interfaces.UserStore
+	ReadOnly() interfaces.UserStore
 }
 
 // getFromCache 从Redis获取缓存数据
@@ -360,14 +382,14 @@ func (u *UserService) contactLookupTimeout() time.Duration {
 	if u.Options != nil && u.Options.ServerRunOptions != nil && u.Options.ServerRunOptions.ContactLookupTimeout > 0 {
 		return u.Options.ServerRunOptions.ContactLookupTimeout
 	}
-	return 2 * time.Second
+	return serveropts.DefaultContactLookupTimeout
 }
 
 func (u *UserService) contactRefreshTimeout() time.Duration {
 	if u.Options != nil && u.Options.ServerRunOptions != nil && u.Options.ServerRunOptions.ContactRefreshTimeout > 0 {
 		return u.Options.ServerRunOptions.ContactRefreshTimeout
 	}
-	return 700 * time.Millisecond
+	return serveropts.DefaultContactRefreshTimeout
 }
 
 func (u *UserService) newDBContext(parent context.Context, timeout time.Duration) (context.Context, context.CancelFunc) {
@@ -424,9 +446,14 @@ func (u *UserService) ensureEmailUnique(ctx context.Context, email, owner string
 		err = errors.WithCode(code.ErrInvalidParameter, "邮箱不能为空")
 		return err
 	}
+	store := u.userStoreReadOnly()
+	if store == nil {
+		err = errors.WithCode(code.ErrDatabase, "用户存储未就绪")
+		return err
+	}
 	cacheKey := u.generateEmailCacheKey(normalized)
 	return u.ensureContactUnique(ctx, cacheKey, owner, "邮箱", normalized, "email", func(dbCtx context.Context) (*v1.User, error) {
-		return u.Store.Users().GetByEmail(dbCtx, normalized, u.Options)
+		return store.GetByEmail(dbCtx, normalized, u.Options)
 	})
 }
 
@@ -439,9 +466,14 @@ func (u *UserService) ensurePhoneUnique(ctx context.Context, phone, owner string
 	if normalized == "" {
 		return nil
 	}
+	store := u.userStoreReadOnly()
+	if store == nil {
+		err = errors.WithCode(code.ErrDatabase, "用户存储未就绪")
+		return err
+	}
 	cacheKey := u.generatePhoneCacheKey(normalized)
 	return u.ensureContactUnique(ctx, cacheKey, owner, "手机号", normalized, "phone", func(dbCtx context.Context) (*v1.User, error) {
-		return u.Store.Users().GetByPhone(dbCtx, normalized, u.Options)
+		return store.GetByPhone(dbCtx, normalized, u.Options)
 	})
 }
 

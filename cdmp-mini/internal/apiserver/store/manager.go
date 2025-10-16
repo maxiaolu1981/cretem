@@ -105,6 +105,10 @@ func (c *ClusterAwareUserStore) ListAll(ctx context.Context, username string) (*
 	return c.readStore.ListAll(ctx, username) // 读操作用读库
 }
 
+func (c *ClusterAwareUserStore) ReadOnly() interfaces.UserStore {
+	return c.readStore
+}
+
 func newPolices(ds *Datastore) interfaces.PolicyStore {
 	if ds.UseCluster {
 		return &policy.Policy{Db: ds.DBManager.GetReadDB()}

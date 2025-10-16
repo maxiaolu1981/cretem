@@ -62,6 +62,18 @@ func (g *GenericAPIServer) installRoutes() error {
 
 func (g *GenericAPIServer) installSystemRoutes() error {
 
+	if g != nil && g.options != nil && g.options.ServerRunOptions != nil {
+		cfg := common.UserTraceConfig{
+			Enabled:      g.options.ServerRunOptions.EnableUserTraceLogging,
+			Env:          g.options.ServerRunOptions.Env,
+			PathPrefixes: []string{"/v1/users"},
+		}
+		if g.options.Log != nil && g.options.Log.Name != "" {
+			cfg.ServiceName = g.options.Log.Name
+		}
+		g.Use(common.UserTraceLoggingMiddleware(cfg))
+	}
+
 	if g.options.ServerRunOptions.Healthz {
 		g.GET("/healthz", func(c *gin.Context) {
 			core.WriteResponse(c, nil, map[string]string{
