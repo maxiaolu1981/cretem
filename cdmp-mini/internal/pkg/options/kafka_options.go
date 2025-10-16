@@ -77,6 +77,11 @@ type KafkaOptions struct {
 	MaxRate int `json:"maxRate" mapstructure:"maxRate"`
 	//轮询时间
 	AdjustPeriod time.Duration `json:"adjustPeriod" mapstructure:"adjustPeriod"`
+
+	// Sarama producer flush frequency
+	FlushFrequency time.Duration `json:"flushFrequency" mapstructure:"flushFrequency"`
+	// Sarama producer flush max messages
+	FlushMaxMessages int `json:"flushMaxMessages" mapstructure:"flushMaxMessages"`
 }
 
 // NewKafkaOptions 创建带有默认值的Kafka配置
@@ -111,6 +116,8 @@ func NewKafkaOptions() *KafkaOptions {
 		MinRate:                10000,
 		MaxRate:                20000,
 		AdjustPeriod:           2 * time.Second,
+		FlushFrequency:         500 * time.Millisecond,
+		FlushMaxMessages:       1024,
 	}
 }
 
@@ -313,6 +320,9 @@ func (k *KafkaOptions) AddFlags(fs *pflag.FlagSet) {
 			k.InstanceID = host
 		}
 	}
+
+	fs.DurationVar(&k.FlushFrequency, "kafka.flush-frequency", k.FlushFrequency, "Sarama producer flush frequency.")
+	fs.IntVar(&k.FlushMaxMessages, "kafka.flush-max-messages", k.FlushMaxMessages, "Sarama producer flush max messages.")
 }
 
 // parseBrokersFromEnv 从环境变量字符串解析broker列表

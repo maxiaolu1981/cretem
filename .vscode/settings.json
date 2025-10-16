@@ -1,41 +1,5 @@
 {
   // =============================================
-  // GitLens 配置 - Git 超级增强
-  // =============================================
-  "gitlens.currentLine.enabled": true,
-  "gitlens.hovers.currentLine.over": "line",
-  "gitlens.statusBar.enabled": true,
-  // 代码透镜增强
-  "gitlens.codeLens.enabled": true,
-  "gitlens.codeLens.scopes": [
-    "document",
-    "containers"
-  ],
-  "gitlens.codeLens.symbolScopes": [
-    "method",
-    "function",
-    "class"
-  ],
-  // 悬停信息配置
-  "gitlens.hovers.enabled": true,
-  "gitlens.hovers.avatars": true,
-  "gitlens.hovers.annotations": true,
-  "gitlens.hovers.currentLine.delay": 500,
-  // 提交信息增强
-  "gitlens.blame.avatars": false,
-  "gitlens.blame.format": "${author.name}, ${time.fromNow}",
-  "gitlens.blame.heatmap.enabled": true,
-  // 历史记录可视化
-  "gitlens.historyExplorer.enabled": true,
-  "gitlens.fileHistory.enabled": true,
-  "gitlens.lineHistory.enabled": true,
-  // 分支和时间线
-  "gitlens.graphs.repository.enabled": true,
-  "gitlens.timeline.pageSize": 50,
-  // 比较和差异
-  "gitlens.views.compare.enabled": true,
-  "gitlens.views.repositories.enabled": true,
-  // =============================================
   // SQLTools 数据库连接配置
   // =============================================
   "sqltools.connections": [

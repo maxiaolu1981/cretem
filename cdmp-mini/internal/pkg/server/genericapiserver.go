@@ -763,7 +763,10 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	}
 
 	log.Debug("初始化Kafka生产者...")
-	userProducer := NewUserProducer(kafkaOpts, rateLimiter)
+	userProducer, err := NewUserProducer(kafkaOpts, rateLimiter, g.options.ServerRunOptions.ProducerFallbackDir)
+	if err != nil {
+		return fmt.Errorf("failed to create user producer: %w", err)
+	}
 
 	// 为每个主题创建多个消费者实例
 	consumerCount := kafkaOpts.WorkerCount

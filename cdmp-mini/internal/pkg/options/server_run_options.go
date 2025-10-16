@@ -121,6 +121,8 @@ type ServerRunOptions struct {
 	MaxGoroutines    int           `json:"max-goroutines" mapstructure:"max-goroutines"`
 	MaxQueueSize     int           `json:"max-queue-size" mapstructure:"max-queue-size"`
 	TimeoutThreshold time.Duration `json:"timeout-threshold" mapstructure:"timeout-threshold"`
+	// 新增：Kafka 生产者失败消息的降级目录
+	ProducerFallbackDir string `json:"producer-fallback-dir" mapstructure:"producer-fallback-dir"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -157,6 +159,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		EnableUserTraceLogging:   true, //跟踪日志
 		ContactLookupTimeout:     DefaultContactLookupTimeout,
 		ContactRefreshTimeout:    DefaultContactRefreshTimeout,
+		ProducerFallbackDir:      "/var/log/iam/producer",
 	}
 }
 
@@ -420,7 +423,7 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.IntVar(&s.LoginUpdateBatchSize, "server.login-update-batch", s.LoginUpdateBatchSize, ""+
 		"登录时间异步更新单次批量写入的最大条数")
 	fs.DurationVar(&s.LoginUpdateFlushInterval, "server.login-update-flush-interval", s.LoginUpdateFlushInterval, ""+
-		"登录时间异步更新强制刷新间隔")
+		"登录时间异Async更新强制刷新间隔")
 	fs.DurationVar(&s.LoginUpdateTimeout, "server.login-update-timeout", s.LoginUpdateTimeout, ""+
 		"登录时间批量更新的数据库超时时间")
 	fs.DurationVar(&s.LoginCredentialCacheTTL, "server.login-credential-cache-ttl", s.LoginCredentialCacheTTL, ""+
@@ -432,4 +435,5 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&s.AdminToken, "server.admin-token", s.AdminToken,
 		"管理API的简单访问令牌（默认为空，仅允许本地访问）")
 	fs.BoolVar(&s.FastDebugStartup, "server.fast-debug-startup", s.FastDebugStartup, "调试模式下是否跳过耗时的依赖等待，加速本地调试启动")
+	fs.StringVar(&s.ProducerFallbackDir, "server.producer-fallback-dir", s.ProducerFallbackDir, "Directory to store failed Kafka producer messages as a fallback.")
 }

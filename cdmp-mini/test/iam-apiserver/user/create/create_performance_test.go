@@ -1243,7 +1243,7 @@ func TestCreatePerformance(t *testing.T) {
 	defer recorder.Flush(t)
 
 	scenarios := []performanceScenario{
-		//baselineSerialScenario(),
+		baselineSerialScenario(),
 		baselineConcurrentScenario(),
 		//	baselineSustainedScenario(),
 		//	stressSpikeScenario(),

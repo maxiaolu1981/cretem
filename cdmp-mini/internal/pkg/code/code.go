@@ -55,7 +55,21 @@ func (coder ErrCode) HTTPStatus() int {
 	return coder.HTTP
 }
 
-// ==================== 关键修改：重构 register 函数 ====================
+// Coder defines an interface for an error code detail information.
+type Coder interface {
+	// HTTP status that should be used for the associated error code.
+	HTTPStatus() int
+
+	// External (user) facing error text.
+	String() string
+
+	// Reference returns the reference document.
+	Reference() string
+
+	// Code returns the integer code of the coder
+	Code() int
+}
+
 // register 按 HTTP 通用规则注册错误码，支持所有合法 HTTP 状态码（100~599）
 func register(code int, httpStatus int, message string, refs ...string) {
 	// 1. 校验 HTTP 状态码是否符合通用规则（100~599 是标准 HTTP 状态码区间）
@@ -67,7 +81,7 @@ func register(code int, httpStatus int, message string, refs ...string) {
 	switch httpStatus {
 	case 404:
 		if !strings.Contains(message, "不存在") && !strings.Contains(message, "未找到") {
-	//		fmt.Printf("[WARN] HTTP 404 建议用于「资源不存在」场景，当前描述：%s\n", message)
+			fmt.Printf("[WARN] HTTP 404 建议用于「资源不存在」场景，当前描述：%s\n", message)
 		}
 	case 409:
 		if !strings.Contains(message, "冲突") && !strings.Contains(message, "已存在") {

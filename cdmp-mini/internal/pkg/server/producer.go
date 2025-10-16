@@ -1,19 +1,21 @@
-// internal/pkg/server/producer.go
 package server
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
-	rat "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/ratelimiter"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/ratelimiter"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -22,85 +24,83 @@ import (
 )
 
 var _ producer.MessageProducer = (*UserProducer)(nil)
-var KafkaBrokers = []string{"192.168.10.8:9092", "192.168.10.8:9093", "192.168.10.8:9094"}
 
 type UserProducer struct {
-	writer       *kafka.Writer
-	retryWriter  *kafka.Writer
+	producer     sarama.AsyncProducer
 	kafkaOptions *options.KafkaOptions
-	// inFlightSem controls synchronous in-flight sends to provide backpressure
-	inFlightSem chan struct{}
-	// 生产端限速器
-	rateLimiter *rat.RateLimiterController
+	wg           sync.WaitGroup
+	shutdown     chan struct{}
+	limiter      *ratelimiter.RateLimiterController
+	fallbackDir  string // 新增：降级文件目录
 }
 
-// internal/pkg/server/producer.go
+func NewUserProducer(
+	options *options.KafkaOptions,
+	limiter *ratelimiter.RateLimiterController,
+	fallbackDir string,
+) (*UserProducer, error) {
+	log.Infof("[Producer] Initializing with options: %+v", options)
 
-// rateLimiter 可为nil，若不为nil则启用生产端限速
-// 日志：创建UserProducer时输出限速器初始状态
-func NewUserProducer(options *options.KafkaOptions, rateLimiter *rat.RateLimiterController) *UserProducer {
-	log.Infof("[Producer] 初始化: options=%+v", options)
-	if rateLimiter != nil {
-		log.Infof("[Producer] 限速器初始化，初始速率=%.2f req/s", rateLimiter.GetRate())
-	} else {
-		log.Infof("[Producer] 未启用限速器")
-	}
-	// 主Writer（高性能配置）主业务消息（创建、更新、删除用户）
-	// 批量参数范围提升，连接池参数可调
-	batchSize := options.BatchSize
-	if batchSize < 100 {
-		batchSize = 100
-	} else if batchSize > 1000 {
-		batchSize = 1000
-	}
-	batchBytes := 2 * 1048576
-	mainWriter := &kafka.Writer{
-		Addr:                   kafka.TCP(options.Brokers...),
-		MaxAttempts:            options.MaxRetries,
-		WriteBackoffMin:        50 * time.Millisecond,
-		WriteBackoffMax:        2 * time.Second,
-		BatchBytes:             int64(batchBytes), // 批量字节提升，类型修正
-		BatchSize:              batchSize,
-		BatchTimeout:           options.BatchTimeout,
-		WriteTimeout:           60 * time.Second, // 超时提升
-		Balancer:               &kafka.LeastBytes{},
-		Compression:            kafka.Snappy,
-		RequiredAcks:           kafka.RequiredAcks(options.RequiredAcks),
-		Async:                  false,
-		AllowAutoTopicCreation: true,
-		// 连接池参数可在KafkaOptions中扩展
+	config := sarama.NewConfig()
+	config.Producer.RequiredAcks = sarama.WaitForLocal       // 只需要leader确认
+	config.Producer.Compression = sarama.CompressionSnappy   // 压缩
+	config.Producer.Flush.Frequency = options.FlushFrequency // 刷新频率
+	config.Producer.Flush.MaxMessages = options.FlushMaxMessages
+	config.Producer.Return.Successes = true // 异步发送成功后,返回成功消息
+	config.Producer.Return.Errors = true    // 异步发送失败后,返回失败消息
+
+	producer, err := sarama.NewAsyncProducer(options.Brokers, config)
+	if err != nil {
+		log.Errorf("Failed to create Sarama async producer: %v", err)
+		return nil, fmt.Errorf("failed to create async producer: %w", err)
 	}
 
-	// 重试Writer（高可靠配置）- 不设置 Topic
-	reliableWriter := &kafka.Writer{
-		Addr: kafka.TCP(options.Brokers...),
-		// 注意：这里不设置 Topic，在发送时动态设置
-		//	Topic:           UserRetryTopic, // ✅ 在这里设置Topic
-		MaxAttempts:     10, // 更多重试次数
-		WriteBackoffMin: 500 * time.Millisecond,
-		WriteBackoffMax: 5 * time.Second,
-		BatchSize:       1,                // 每条消息立即发送
-		WriteTimeout:    60 * time.Second, // 更长超时
-		RequiredAcks:    kafka.RequiredAcks(options.RequiredAcks),
-		Async:           false,
-		Compression:     kafka.Snappy,
-		Balancer:        &kafka.Hash{}, // 新增：使用Hash平衡器确保分区均匀分布
-	}
-
-	return &UserProducer{
-		writer:       mainWriter,
-		retryWriter:  reliableWriter,
+	up := &UserProducer{
+		producer:     producer,
 		kafkaOptions: options,
-		inFlightSem:  make(chan struct{}, options.ProducerMaxInFlight), // 并发限流参数可配置
-		rateLimiter:  rateLimiter,
+		shutdown:     make(chan struct{}),
+		limiter:      limiter,
+		fallbackDir:  fallbackDir, // 保存降级目录
+	}
+
+	up.wg.Add(2)
+	go up.handleSuccesses()
+	go up.handleErrors()
+
+	return up, nil
+}
+
+func (p *UserProducer) handleSuccesses() {
+	defer p.wg.Done()
+	for {
+		select {
+		case success := <-p.producer.Successes():
+			if success != nil {
+				log.Debugf("Message sent successfully to topic %s, partition %d, offset %d", success.Topic, success.Partition, success.Offset)
+			}
+		case <-p.shutdown:
+			return
+		}
+	}
+}
+
+func (p *UserProducer) handleErrors() {
+	defer p.wg.Done()
+	for {
+		select {
+		case err := <-p.producer.Errors():
+			if err != nil {
+				log.Errorf("Failed to send message: %v", err)
+				p.writeToFallbackFile(err.Msg) // 写入到降级文件
+			}
+		case <-p.shutdown:
+			return
+		}
 	}
 }
 
 func (p *UserProducer) SendUserCreateMessage(ctx context.Context, user *v1.User) error {
 	log.Debugf("[Producer] SendUserCreateMessage: username=%s", user.Name)
-	// 发送扁平结构，兼容 consumer 直接反序列化 v1.User
-	// 若 user 内部有 Metadata 字段，需展开为顶层字段
-	// 这里假设 v1.User 已经是扁平结构
 	return p.sendUserMessage(ctx, user, OperationCreate, UserCreateTopic)
 }
 
@@ -118,24 +118,89 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 
 	data, err := json.Marshal(deleteData)
 	if err != nil {
-		return errors.WithCode(code.ErrEncodingJSON, "删除消息序列化失败")
+		return errors.WithCode(code.ErrEncodingJSON, "failed to marshal delete message: %v", err)
 	}
 
-	msg := kafka.Message{
-		Key:   []byte(username),
-		Value: data,
-		Time:  time.Now(),
-		Headers: []kafka.Header{
-			{Key: HeaderOperation, Value: []byte(OperationDelete)},
-			{Key: HeaderOriginalTimestamp, Value: []byte(time.Now().Format(time.RFC3339))},
-			{Key: HeaderRetryCount, Value: []byte("0")},
+	msg := &sarama.ProducerMessage{
+		Topic: UserDeleteTopic,
+		Key:   sarama.StringEncoder(username),
+		Value: sarama.ByteEncoder(data),
+		Headers: []sarama.RecordHeader{
+			{Key: []byte(HeaderOperation), Value: []byte(OperationDelete)},
+			{Key: []byte(HeaderOriginalTimestamp), Value: []byte(time.Now().Format(time.RFC3339))},
+			{Key: []byte(HeaderRetryCount), Value: []byte("0")},
 		},
 	}
-	return p.sendWithRetry(ctx, msg, UserDeleteTopic)
+
+	p.producer.Input() <- msg
+	return nil
+}
+
+// 新增：写入降级文件的方法
+func (p *UserProducer) writeToFallbackFile(msg *sarama.ProducerMessage) {
+	if p.fallbackDir == "" {
+		log.Warnf("Fallback directory not configured. Message lost: key=%s", msg.Key)
+		return
+	}
+
+	// 确保目录存在
+	if err := os.MkdirAll(p.fallbackDir, 0755); err != nil {
+		log.Errorf("Failed to create fallback directory %s: %v", p.fallbackDir, err)
+		return
+	}
+
+	// 按天创建文件名
+	fileName := fmt.Sprintf("%s.json", time.Now().Format("2006-01-02"))
+	filePath := filepath.Join(p.fallbackDir, fileName)
+
+	// 构造要写入的 JSON 对象
+	value, _ := msg.Value.Encode()
+
+	var key string
+	if msg.Key != nil {
+		encodedKey, _ := msg.Key.Encode()
+		key = string(encodedKey)
+	}
+
+	fallbackEntry := map[string]interface{}{
+		"topic":     msg.Topic,
+		"key":       key,
+		"value":     string(value),
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	}
+
+	// 序列化为 JSON
+	jsonData, err := json.Marshal(fallbackEntry)
+	if err != nil {
+		log.Errorf("Failed to marshal fallback message to JSON: %v", err)
+		return
+	}
+
+	// 以追加模式打开文件
+	file, err := os.OpenFile(filePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		log.Errorf("Failed to open fallback file %s: %v", filePath, err)
+		return
+	}
+	defer file.Close()
+
+	// 写入 JSON 数据，并在线末添加换行符
+	if _, err := file.Write(append(jsonData, '\n')); err != nil {
+		log.Errorf("Failed to write to fallback file %s: %v", filePath, err)
+	} else {
+		log.Infof("Message successfully written to fallback file: %s", filePath)
+	}
 }
 
 func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, operation, topic string) error {
 	log.Debugf("[Producer] sendUserMessage: username=%s, operation=%s, topic=%s", user.Name, operation, topic)
+
+	if p.limiter != nil {
+		if err := p.limiter.Wait(ctx); err != nil {
+			return errors.WithCode(code.ErrRateLimitExceeded, "producer rate limit exceeded: %v", err)
+		}
+	}
+
 	start := time.Now()
 	var errSend error
 	defer func() {
@@ -145,378 +210,136 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 	userData, err := json.Marshal(user)
 	if err != nil {
 		errSend = err
-		log.Errorf("用户:%s topic:%v operation:%v消息序列号失败:%v", user.Name, topic, operation, err)
-		return errors.WithCode(code.ErrEncodingJSON, "用户消息序列化失败")
+		log.Errorf("Failed to marshal user %s for topic %s, operation %s: %v", user.Name, topic, operation, err)
+		return errors.WithCode(code.ErrEncodingJSON, "failed to marshal user message: %v", err)
 	}
+
 	now := time.Now()
-	idBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(idBytes, user.ID)
-	msg := kafka.Message{
-		Key:   idBytes,
-		Value: userData,
-		Time:  now,
-		Headers: []kafka.Header{
-			{Key: HeaderOperation, Value: []byte(operation)},
-			{Key: HeaderOriginalTimestamp, Value: []byte(now.Format(time.RFC3339))},
-			{Key: HeaderRetryCount, Value: []byte("0")},
+	msg := &sarama.ProducerMessage{
+		Topic: topic,
+		Key:   sarama.StringEncoder(strconv.FormatUint(user.ID, 10)),
+		Value: sarama.ByteEncoder(userData),
+		Headers: []sarama.RecordHeader{
+			{Key: []byte(HeaderOperation), Value: []byte(operation)},
+			{Key: []byte(HeaderOriginalTimestamp), Value: []byte(now.Format(time.RFC3339))},
+			{Key: []byte(HeaderRetryCount), Value: []byte("0")},
 		},
 	}
-	errSend = p.sendWithRetry(ctx, msg, topic)
-	return errSend
-}
 
-// 添加验证方法
-func (p *UserProducer) validateMessage(msg kafka.Message) error {
-	log.Debugf("[Producer] validateMessage: key=%s", string(msg.Key))
-	// 检查消息是否包含Topic字段（不应该包含）
-	if strings.TrimSpace(msg.Topic) != "" {
-		err := errors.WithCode(code.ErrMissingHeader, "必须设置topic")
-		log.Errorf("%v %v", errors.GetMessage(err), err)
-		return err
-	}
+	p.producer.Input() <- msg
 	return nil
 }
 
-// sendWithRetry 带重试的发送逻辑
-func (p *UserProducer) sendWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
-	log.Debugf("[Producer] sendWithRetry: key=%s, topic=%s", string(msg.Key), topic)
-	// 生产端限速：如有配置则等待令牌
-	if p.rateLimiter != nil {
-		//	curRate := p.rateLimiter.GetRate()
-		//log.Debugf("[Producer限速] 当前速率=%.2f req/s, 等待令牌...", curRate)
-		if err := p.rateLimiter.Wait(ctx); err != nil {
-			log.Errorf("[Producer限速] 等待令牌失败: %v", err)
-			return fmt.Errorf("rate limit wait failed: %w", err)
-		}
-	}
-	startTime := time.Now()
-	// 添加详细的发送日志
-	//log.Errorf("准备发送消息到[测试丢失记录问题] %s: key=%s", topic, string(msg.Key))
-	operation := p.getOperationFromHeaders(msg.Headers)
+// sendToRetryTopic is called by the consumer to send a message to the retry topic.
+// It needs to accept a kafka-go message and convert it to a sarama message.
+func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
+	log.Warnf("[Producer] Forwarding to retry topic: key=%s, error=%s", string(msg.Key), errorInfo)
 
-	var sendErr error
-	var isRetry bool
-	var success bool
-
-	defer func() {
-		// 只有成功或最终失败时才记录指标
-		if success || sendErr != nil {
-			metrics.RecordKafkaProducerOperation(topic, operation,
-				time.Since(startTime).Seconds(), sendErr, isRetry)
-		}
-	}()
-
-	if err := p.validateMessage(msg); err != nil {
-		sendErr = err
-		return err
+	// Convert kafka.Message to sarama.ProducerMessage
+	saramaMsg := &sarama.ProducerMessage{
+		Topic: UserRetryTopic,
+		Key:   sarama.ByteEncoder(msg.Key),
+		Value: sarama.ByteEncoder(msg.Value),
 	}
 
-	// Try acquire in-flight slot with non-blocking select to avoid long waits
+	// Copy and update headers
+	headers := make([]sarama.RecordHeader, 0, len(msg.Headers)+1)
+	for _, h := range msg.Headers {
+		headers = append(headers, sarama.RecordHeader{Key: []byte(h.Key), Value: h.Value})
+	}
+	headers = p.updateOrAddHeader(headers, HeaderRetryError, errorInfo)
+	saramaMsg.Headers = headers
+
+	// 使用 select 防止阻塞，并在无法立即发送时触发降级
 	select {
-	case p.inFlightSem <- struct{}{}:
-		metrics.ProducerInFlightCurrent.Inc()
-		defer func() {
-			<-p.inFlightSem
-			metrics.ProducerInFlightCurrent.Dec()
-		}()
+	case p.producer.Input() <- saramaMsg:
+		log.Debugf("Successfully enqueued message to retry topic for key: %s", string(msg.Key))
 	default:
-		// saturated, 降级为debug日志，返回限流错误
-		log.Debugf("producer in-flight limit reached, topic=%s", topic)
-		sendErr = fmt.Errorf("producer in-flight limit reached")
-		return errors.WithCode(code.ErrInternalServer, "系统繁忙: 写入排队已满，请重试")
+		log.Errorf("Failed to enqueue message to retry topic: producer input channel is full or closed. Triggering fallback.")
+		p.writeToFallbackFile(saramaMsg)
 	}
 
-	// 创建新的消息
-	sendMsg := kafka.Message{
-		Key:     msg.Key,
-		Value:   msg.Value,
-		Time:    time.Now(),
-		Topic:   topic,
-		Headers: make([]kafka.Header, len(msg.Headers)),
-	}
-	copy(sendMsg.Headers, msg.Headers)
-
-	//首次发送
-	err := p.writer.WriteMessages(ctx, sendMsg)
-	if err == nil {
-		success = true // 标记为成功
-		// ...existing code... // 移除队列长度监控，避免未定义报错
-		// 监控指标补全：成功/失败/耗时
-		metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
-		metrics.MessageProcessingTime.WithLabelValues(topic, operation, "success").Observe(time.Since(startTime).Seconds())
-		log.Debugf("发送用户%s成功: topic=%s, key=%s, 耗时=%v", string(msg.Key), topic, string(msg.Key), time.Since(startTime))
-		return nil
-	}
-	// 首次发送失败，进行重试
-	isRetry = true
-	sendErr = p.sendToRetryTopic(ctx, msg, err.Error())
-	if sendErr != nil {
-		metrics.ProducerFailures.WithLabelValues(topic, operation, metrics.GetKafkaErrorType(sendErr)).Inc()
-		metrics.MessageProcessingTime.WithLabelValues(topic, operation, "failure").Observe(time.Since(startTime).Seconds())
-		log.Errorf("重试发送失败: topic=%s, key=%s, error=%v", topic, string(msg.Key), sendErr)
-		return sendErr
-	}
-	success = true
-	sendErr = nil
-	metrics.ProducerSuccess.WithLabelValues(topic, operation).Inc()
-	metrics.MessageProcessingTime.WithLabelValues(topic, operation, "success").Observe(time.Since(startTime).Seconds())
-	log.Debugf("发送成功(重试): topic=%s, key=%s, 耗时=%v", topic, string(msg.Key), time.Since(startTime))
 	return nil
 }
 
-func (p *UserProducer) getOperationFromHeaders(headers []kafka.Header) string {
+// SendToDeadLetterTopic is called by the consumer to send a message to the dead-letter topic.
+// It needs to accept a kafka-go message and convert it to a sarama message.
+func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
+	log.Errorf("[Producer] Forwarding to dead-letter topic: key=%s, error=%s", string(msg.Key), errorInfo)
+
+	// Convert kafka.Message to sarama.ProducerMessage
+	saramaMsg := &sarama.ProducerMessage{
+		Topic: UserDeadLetterTopic,
+		Key:   sarama.ByteEncoder(msg.Key),
+		Value: sarama.ByteEncoder(msg.Value),
+	}
+
+	// Copy and update headers
+	headers := make([]sarama.RecordHeader, 0, len(msg.Headers)+2)
+	for _, h := range msg.Headers {
+		headers = append(headers, sarama.RecordHeader{Key: []byte(h.Key), Value: h.Value})
+	}
+	headers = p.updateOrAddHeader(headers, "deadletter-reason", errorInfo)
+	headers = p.updateOrAddHeader(headers, "deadletter-timestamp", time.Now().Format(time.RFC3339))
+	saramaMsg.Headers = headers
+
+	p.producer.Input() <- saramaMsg
+	return nil
+}
+
+func (p *UserProducer) Close() error {
+	log.Infof("[Producer] Close called")
+	close(p.shutdown) // Signal background goroutines to exit
+
+	// Drain any remaining messages
+	if p.producer != nil {
+		// Note: AsyncClose does not block. The wg.Wait() below will ensure graceful shutdown.
+		p.producer.AsyncClose()
+	}
+
+	p.wg.Wait() // Wait for goroutines to finish
+	log.Infof("[Producer] Closed successfully")
+	return nil
+}
+
+func (p *UserProducer) getOperationFromHeaders(headers []sarama.RecordHeader) string {
 	for _, h := range headers {
-		if h.Key == HeaderOperation {
+		if string(h.Key) == HeaderOperation {
 			return string(h.Value)
 		}
 	}
 	return "unknown"
 }
 
-func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
-	log.Warnf("[Producer] sendToRetryTopic: key=%s, error=%s", string(msg.Key), errorInfo)
-
-	// 空指针保护
-	if p == nil {
-		log.Error("UserProducer is nil in sendToRetryTopic")
-		return fmt.Errorf("user producer is nil")
-	}
-
-	currentRetryCount := 0
-	for _, h := range msg.Headers {
-		if h.Key == HeaderRetryCount {
-			if cnt, err := strconv.Atoi(string(h.Value)); err == nil {
-				currentRetryCount = cnt
-			}
-			break
-
-		}
-	}
-
-	//检查最大重试次数
-	if currentRetryCount > p.kafkaOptions.MaxRetries {
-		errMsg := fmt.Sprintf("已达最大重试次数（%d次）,将发送到死信区", p.kafkaOptions.MaxRetries)
-		return p.SendToDeadLetterTopic(ctx, msg, errMsg+": "+errorInfo)
-	}
-
-	// 3. 创建重试消息
-	retryMsg := kafka.Message{
-		Key:   msg.Key,
-		Value: msg.Value,
-		Time:  time.Now(),
-		//	Topic: UserRetryTopic,
-	}
-
-	// 复制并更新headers
-	retryMsg.Headers = make([]kafka.Header, len(msg.Headers))
-	copy(retryMsg.Headers, msg.Headers)
-	retryMsg.Headers = p.updateOrAddHeader(retryMsg.Headers, HeaderRetryCount, strconv.Itoa(currentRetryCount))
-	retryMsg.Headers = p.updateOrAddHeader(retryMsg.Headers, HeaderRetryError, errorInfo)
-	retryMsg.Headers = p.updateOrAddHeader(retryMsg.Headers, HeaderNextRetryTS, p.calcNextRetryTS(currentRetryCount).Format(time.RFC3339))
-
-	// 4. 使用增强的同步发送（不改变原有函数名）
-	retryCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	err := p.sendMessageWithRetry(retryCtx, retryMsg, UserRetryTopic)
-	if err != nil {
-		log.Errorf("重试发送失败（key=%s, 第%d次）: %v", string(msg.Key), currentRetryCount, err)
-		// 进入死信队列
-		return p.SendToDeadLetterTopic(ctx, msg, "重试发送失败: "+err.Error())
-	}
-	return nil
-}
-
-// 新增：计算下次重试时间（指数退避策略）
-func (p *UserProducer) calcNextRetryTS(retryCount int) time.Time {
-
-	if retryCount <= 0 {
-		retryCount = 1 // 或者返回默认延迟
-	}
-	// 基础延迟 * 2^(重试次数-1)，避免短期内频繁重试
-	delay := p.kafkaOptions.BaseRetryDelay * time.Duration(1<<(retryCount-1))
-	// 限制最大延迟，避免重试间隔过长
-	if delay > p.kafkaOptions.MaxRetryDelay {
-		delay = p.kafkaOptions.MaxRetryDelay
-	}
-	return time.Now().Add(delay)
-}
-
-func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Message, errorInfo string) error {
-	log.Errorf("[Producer] SendToDeadLetterTopic: key=%s, error=%s", string(msg.Key), errorInfo)
-	start := time.Now()
-	operation := p.getOperationFromHeaders(msg.Headers)
-
-	var sendErr error
-	defer func() {
-		p.recordDeadLetterOperation(UserDeadLetterTopic, operation, start, sendErr, errorInfo, string(msg.Key))
-	}()
-	// 创建死信消息
-	deadLetterMsg := kafka.Message{
-		Key:     msg.Key,
-		Value:   msg.Value,
-		Time:    time.Now(),
-		Headers: p.updateOrAddHeader(msg.Headers, "deadletter-reason", errorInfo),
-	}
-	deadLetterMsg.Headers = p.updateOrAddHeader(deadLetterMsg.Headers, "deadletter-timestamp", time.Now().Format(time.RFC3339))
-
-	// 使用增强的同步发送
-	sendErr = p.sendMessageWithRetry(ctx, deadLetterMsg, UserDeadLetterTopic)
-	return sendErr
-}
-
-// recordDeadLetterOperation 记录死信队列操作指标
-func (p *UserProducer) recordDeadLetterOperation(topic, operation string, start time.Time, err error, errorInfo, messageKey string) {
-	log.Debugf("[Producer] recordDeadLetterOperation: topic=%s, operation=%s, key=%s, error=%v", topic, operation, messageKey, err)
-	duration := time.Since(start).Seconds()
-
-	// 记录死信消息计数
-	metrics.DeadLetterMessages.WithLabelValues(topic, operation).Inc()
-
-	// 记录处理时间
-	status := "dead_letter_success"
-	if err != nil {
-		status = "dead_letter_failure"
-		// 记录死信发送失败的错误
-		errorType := metrics.GetKafkaErrorType(err)
-		metrics.ProducerFailures.WithLabelValues(topic, operation, errorType).Inc()
-	}
-	metrics.MessageProcessingTime.WithLabelValues(topic, operation, status).Observe(duration)
-
-	// 记录日志
-	if err != nil {
-		log.Errorf("死信队列发送失败: key=%s, reason=%s, error=%v", messageKey, errorInfo, err)
-	} else {
-		log.Debugf("发送到死信队列成功: key=%s, reason=%s, 耗时=%v", messageKey, errorInfo, duration)
-	}
-}
-
-func (p *UserProducer) Close() error {
-	log.Infof("[Producer] Close called")
-	if p.writer != nil {
-		if err := p.writer.Close(); err != nil {
-			return err
-		}
-	}
-
-	if p.retryWriter != nil {
-		if err := p.retryWriter.Close(); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (p *UserProducer) updateOrAddHeader(headers []kafka.Header, key, value string) []kafka.Header {
+func (p *UserProducer) updateOrAddHeader(headers []sarama.RecordHeader, key, value string) []sarama.RecordHeader {
 	log.Debugf("[Producer] updateOrAddHeader: key=%s, value=%s", key, value)
-	// 1. 基础校验：阻断空Key输入（避免无效头）
 	if key == "" {
 		panic("kafka header key cannot be empty string")
 	}
 
-	// 2. 统一目标Key为小写（用于忽略大小写匹配，不改变原始Key的展示）
 	targetKeyLower := strings.ToLower(key)
-
-	// 3. 初始化新切片+标记：newHeaders存最终结果，found标记是否已保留一个目标头
-	var newHeaders []kafka.Header
+	var newHeaders []sarama.RecordHeader
 	foundTargetHeader := false
 
-	// 4. 遍历原始切片：逐个处理每个头，筛选重复目标头
 	for _, header := range headers {
-		// 4.1 判断当前头是否为目标头（忽略大小写）
-		currentHeaderKeyLower := strings.ToLower(header.Key)
+		currentHeaderKeyLower := strings.ToLower(string(header.Key))
 		if currentHeaderKeyLower == targetKeyLower {
-			// 4.2 若未保留过目标头：更新其Value，加入新切片，标记已保留
-			if !foundTargetHeader {
-				// 保留原始Key的大小写（仅更新Value），避免修改用户输入的Key格式
-				updatedHeader := kafka.Header{
-					Key:   header.Key,    // 如原Key是"Retry-Error"，仍保留该格式
-					Value: []byte(value), // 写入最新Value
-				}
-				newHeaders = append(newHeaders, updatedHeader)
-				foundTargetHeader = true // 标记已保留，后续重复头不再处理
-			}
-			// 4.3 若已保留过目标头：直接跳过，不加入新切片（删除重复）
-			continue
+			// Update existing header
+			newHeaders = append(newHeaders, sarama.RecordHeader{
+				Key:   []byte(key),
+				Value: []byte(value),
+			})
+			foundTargetHeader = true
+		} else {
+			newHeaders = append(newHeaders, header)
 		}
-
-		// 4.4 非目标头：直接加入新切片（保持原有逻辑不变）
-		newHeaders = append(newHeaders, header)
 	}
 
-	// 5. 若遍历完未找到任何目标头：新增一个（保留用户输入的原始Key大小写）
 	if !foundTargetHeader {
-		newHeaders = append(newHeaders, kafka.Header{
-			Key:   key, // 如用户传"Retry-Error"，新增时就用该Key，不强制小写
+		newHeaders = append(newHeaders, sarama.RecordHeader{
+			Key:   []byte(key),
 			Value: []byte(value),
 		})
 	}
-
 	return newHeaders
-}
-
-// sendMessageWithRetry 增强的同步发送方法
-func (p *UserProducer) sendMessageWithRetry(ctx context.Context, msg kafka.Message, topic string) error {
-	log.Debugf("[Producer] sendMessageWithRetry: key=%s, topic=%s", string(msg.Key), topic)
-	const maxSendRetries = 3
-	var lastErr error
-
-	for i := 0; i < maxSendRetries; i++ {
-		// 使用临时writer，避免长期占用连接
-		// 注意：不要同时在 Writer 和 Message 上设置 Topic（kafka-go 要求只在其中一种设置）
-		writer := &kafka.Writer{
-			Addr:                   kafka.TCP(KafkaBrokers...),
-			Balancer:               &kafka.Hash{},
-			BatchSize:              1, // 同步发送，每批次1条
-			BatchTimeout:           100 * time.Millisecond,
-			Async:                  false,            // 同步模式
-			RequiredAcks:           kafka.RequireOne, // 只需要leader确认
-			AllowAutoTopicCreation: true,             // 允许自动创建主题
-		}
-
-		// 确保消息有Topic
-		sendMsg := kafka.Message{
-			Key:     msg.Key, // ✅ 有Key才能均匀分区
-			Value:   msg.Value,
-			Time:    msg.Time,
-			Headers: msg.Headers,
-			Topic:   topic, // ✅ 确保设置topic
-		}
-
-		// 设置发送超时
-		sendCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-
-		err := writer.WriteMessages(sendCtx, sendMsg)
-
-		// 无论成功失败都立即关闭writer
-		if closeErr := writer.Close(); closeErr != nil {
-			log.Warnf("关闭writer失败: %v", closeErr)
-		}
-		if err == nil {
-			return nil
-		}
-
-		lastErr = err
-		log.Warnf("发送失败（key=%s, topic=%s, 尝试%d/%d）: %v",
-			string(msg.Key), topic, i+1, maxSendRetries, err)
-
-		if i < maxSendRetries-1 {
-			baseDelay := time.Second
-			maxDelay := 30 * time.Second
-			// 指数退避：1s, 2s, 4s, 8s, 16s, 30s, 30s...
-			waitTime := baseDelay * time.Duration(1<<uint(i))
-			if waitTime > maxDelay {
-				waitTime = maxDelay
-			}
-
-			select {
-			case <-time.After(waitTime):
-				continue
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		}
-	}
-	return fmt.Errorf("发送到主题%s重试%d次均失败: %v", topic, maxSendRetries, lastErr)
 }
