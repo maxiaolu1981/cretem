@@ -6,7 +6,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "操作成功",
-    "duration_ms": 431,
+    "duration_ms": 416,
     "checks": {
       "logout_success": true
     },
@@ -21,7 +21,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "操作成功",
-    "duration_ms": 348,
+    "duration_ms": 357,
     "checks": {
       "login_success": true,
       "refresh_token_issued": true
@@ -37,7 +37,7 @@
     "http_status": 400,
     "code": 110004,
     "message": "[code: 110004] refresh token为空",
-    "duration_ms": 377,
+    "duration_ms": 413,
     "checks": {
       "login_success": true
     },

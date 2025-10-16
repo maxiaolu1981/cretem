@@ -4,8 +4,8 @@
     "requests": 25,
     "success_rate": 0,
     "error_rate": 0,
-    "duration_ms": 2,
-    "qps": 8965.753689945588,
+    "duration_ms": 2412,
+    "qps": 10.363483841192155,
     "error_count": 25,
     "latency": {
       "min_ms": 0,

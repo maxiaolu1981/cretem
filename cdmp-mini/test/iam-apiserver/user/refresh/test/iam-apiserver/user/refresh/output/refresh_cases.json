@@ -6,7 +6,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "操作成功",
-    "duration_ms": 345,
+    "duration_ms": 405,
     "checks": {
       "login_success": true,
       "refresh_issued": true,
@@ -23,7 +23,7 @@
     "http_status": 401,
     "code": 100208,
     "message": "[code: 100208] RT解析失败",
-    "duration_ms": 341,
+    "duration_ms": 352,
     "checks": {
       "invalid_refresh_handled": true
     },
@@ -38,7 +38,7 @@
     "http_status": 400,
     "code": 110004,
     "message": "[code: 110004] refresh token为空",
-    "duration_ms": 510,
+    "duration_ms": 362,
     "checks": {
       "login_success": true
     },

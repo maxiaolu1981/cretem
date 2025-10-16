@@ -6,7 +6,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "操作成功",
-    "duration_ms": 339,
+    "duration_ms": 342,
     "checks": {
       "user_returned": true,
       "username_match": true

@@ -6,7 +6,7 @@
     "http_status": 200,
     "code": 100001,
     "message": "操作成功",
-    "duration_ms": 346,
+    "duration_ms": 402,
     "checks": {
       "login_success": true,
       "logout_success": true,
