@@ -82,42 +82,66 @@ type KafkaOptions struct {
 	FlushFrequency time.Duration `json:"flushFrequency" mapstructure:"flushFrequency"`
 	// Sarama producer flush max messages
 	FlushMaxMessages int `json:"flushMaxMessages" mapstructure:"flushMaxMessages"`
+	// Sarama producer compression codec (none,snappy,gzip,lz4,zstd)
+	ProducerCompression string `json:"producerCompression" mapstructure:"producerCompression"`
+	// Whether to return successes on the async channel
+	ProducerReturnSuccesses bool `json:"producerReturnSuccesses" mapstructure:"producerReturnSuccesses"`
+	// Whether to return errors on the async channel
+	ProducerReturnErrors bool `json:"producerReturnErrors" mapstructure:"producerReturnErrors"`
+	// Sarama channel buffer size for async producer
+	ChannelBufferSize int `json:"channelBufferSize" mapstructure:"channelBufferSize"`
+	// Enable background fallback compensation job
+	FallbackRetryEnabled bool `json:"fallbackRetryEnabled" mapstructure:"fallbackRetryEnabled"`
+	// Interval between compensation attempts
+	FallbackRetryInterval time.Duration `json:"fallbackRetryInterval" mapstructure:"fallbackRetryInterval"`
+	// Maximum attempts before giving up (0 means unlimited)
+	FallbackRetryMaxAttempts int `json:"fallbackRetryMaxAttempts" mapstructure:"fallbackRetryMaxAttempts"`
+	// Maximum messages to process in a single compensation cycle (0 means no limit)
+	FallbackRetryBatchSize int `json:"fallbackRetryBatchSize" mapstructure:"fallbackRetryBatchSize"`
 }
 
 // NewKafkaOptions 创建带有默认值的Kafka配置
 func NewKafkaOptions() *KafkaOptions {
 	return &KafkaOptions{
-		Brokers:                []string{"192.168.10.8:9092", "192.168.10.8:9093", "192.168.10.8:9094"},
-		Topic:                  "default-topic",
-		ConsumerGroup:          "default-consumer-group",
-		RequiredAcks:           1, // leader确认
-		BatchSize:              80,
-		BatchTimeout:           60 * time.Millisecond,
-		MaxRetries:             4,
-		MinBytes:               60 * 1024,        // 10KB
-		MaxBytes:               10 * 1024 * 1024, // 10MB
-		WorkerCount:            64,
-		RetryWorkerCount:       3,
-		EnableMetricsRefresh:   true,
-		MetricsRefreshInterval: 30 * time.Second,
-		EnableSSL:              false,
-		SSLCertFile:            "",
-		BaseRetryDelay:         5 * time.Second,
-		MaxRetryDelay:          2 * time.Minute,
-		AutoCreateTopic:        true,
-		DesiredPartitions:      96, //CPU 核数的 2~4 倍设置（如 32、48、64）
-		AutoExpandPartitions:   true,
-		ProducerMaxInFlight:    40000,
-		LagScaleThreshold:      10000,            // 默认滞后阈值
-		LagCheckInterval:       30 * time.Second, // 默认滞后检查间隔
-		MaxDBBatchSize:         230,              // 默认批量写DB大小
-		InstanceID:             "",               // 新增字段默认值为空，建议启动时赋值
-		StartingRate:           10000,
-		MinRate:                10000,
-		MaxRate:                20000,
-		AdjustPeriod:           2 * time.Second,
-		FlushFrequency:         500 * time.Millisecond,
-		FlushMaxMessages:       1024,
+		Brokers:                  []string{"192.168.10.8:9092", "192.168.10.8:9093", "192.168.10.8:9094"},
+		Topic:                    "default-topic",
+		ConsumerGroup:            "default-consumer-group",
+		RequiredAcks:             1, // leader确认
+		BatchSize:                80,
+		BatchTimeout:             60 * time.Millisecond,
+		MaxRetries:               4,
+		MinBytes:                 60 * 1024,        // 10KB
+		MaxBytes:                 10 * 1024 * 1024, // 10MB
+		WorkerCount:              64,
+		RetryWorkerCount:         3,
+		EnableMetricsRefresh:     true,
+		MetricsRefreshInterval:   30 * time.Second,
+		EnableSSL:                false,
+		SSLCertFile:              "",
+		BaseRetryDelay:           5 * time.Second,
+		MaxRetryDelay:            2 * time.Minute,
+		AutoCreateTopic:          true,
+		DesiredPartitions:        96, //CPU 核数的 2~4 倍设置（如 32、48、64）
+		AutoExpandPartitions:     true,
+		ProducerMaxInFlight:      40000,
+		LagScaleThreshold:        10000,            // 默认滞后阈值
+		LagCheckInterval:         30 * time.Second, // 默认滞后检查间隔
+		MaxDBBatchSize:           230,              // 默认批量写DB大小
+		InstanceID:               "",               // 新增字段默认值为空，建议启动时赋值
+		StartingRate:             10000,
+		MinRate:                  10000,
+		MaxRate:                  20000,
+		AdjustPeriod:             2 * time.Second,
+		FlushFrequency:           500 * time.Millisecond,
+		FlushMaxMessages:         1024,
+		ProducerCompression:      "snappy",
+		ProducerReturnSuccesses:  true,
+		ProducerReturnErrors:     true,
+		ChannelBufferSize:        256,
+		FallbackRetryEnabled:     true,
+		FallbackRetryInterval:    5 * time.Minute,
+		FallbackRetryMaxAttempts: 5,
+		FallbackRetryBatchSize:   200,
 	}
 }
 
@@ -188,6 +212,26 @@ func (k *KafkaOptions) Complete() {
 		log.Warnf("Worker数量(%d)超过分区数(%d)，部分worker可能空闲",
 			k.WorkerCount, k.DesiredPartitions)
 	}
+
+	if k.ChannelBufferSize < 0 {
+		k.ChannelBufferSize = 0
+	}
+
+	if k.ProducerCompression == "" {
+		k.ProducerCompression = "snappy"
+	}
+
+	if k.FallbackRetryInterval <= 0 {
+		k.FallbackRetryInterval = time.Minute
+	}
+
+	if k.FallbackRetryBatchSize < 0 {
+		k.FallbackRetryBatchSize = 0
+	}
+
+	if k.FallbackRetryMaxAttempts < 0 {
+		k.FallbackRetryMaxAttempts = 0
+	}
 }
 
 // Validate 验证配置的有效性
@@ -235,6 +279,29 @@ func (k *KafkaOptions) Validate() []error {
 	// 验证worker数量
 	if k.WorkerCount < 1 {
 		errs = append(errs, field.Invalid(field.NewPath("kafka", "workerCount"), k.WorkerCount, "必须大于0"))
+	}
+
+	// 验证producer compression codec
+	switch k.ProducerCompression {
+	case "", "none", "snappy", "gzip", "lz4", "zstd":
+	default:
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "producerCompression"), k.ProducerCompression, "必须为 none,snappy,gzip,lz4 或 zstd"))
+	}
+
+	if k.ChannelBufferSize < 0 {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "channelBufferSize"), k.ChannelBufferSize, "必须大于等于0"))
+	}
+
+	if k.FallbackRetryInterval <= 0 {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "fallbackRetryInterval"), k.FallbackRetryInterval, "必须大于0"))
+	}
+
+	if k.FallbackRetryBatchSize < 0 {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "fallbackRetryBatchSize"), k.FallbackRetryBatchSize, "必须大于等于0"))
+	}
+
+	if k.FallbackRetryMaxAttempts < 0 {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "fallbackRetryMaxAttempts"), k.FallbackRetryMaxAttempts, "必须大于等于0"))
 	}
 
 	// 如果启用SSL，验证证书文件
@@ -323,6 +390,14 @@ func (k *KafkaOptions) AddFlags(fs *pflag.FlagSet) {
 
 	fs.DurationVar(&k.FlushFrequency, "kafka.flush-frequency", k.FlushFrequency, "Sarama producer flush frequency.")
 	fs.IntVar(&k.FlushMaxMessages, "kafka.flush-max-messages", k.FlushMaxMessages, "Sarama producer flush max messages.")
+	fs.StringVar(&k.ProducerCompression, "kafka.producer-compression", k.ProducerCompression, "Sarama producer compression codec (none,snappy,gzip,lz4,zstd).")
+	fs.BoolVar(&k.ProducerReturnSuccesses, "kafka.producer-return-successes", k.ProducerReturnSuccesses, "Whether Sarama async producer should return successes.")
+	fs.BoolVar(&k.ProducerReturnErrors, "kafka.producer-return-errors", k.ProducerReturnErrors, "Whether Sarama async producer should return errors.")
+	fs.IntVar(&k.ChannelBufferSize, "kafka.channel-buffer-size", k.ChannelBufferSize, "Sarama async producer channel buffer size. 0表示使用默认值。")
+	fs.BoolVar(&k.FallbackRetryEnabled, "kafka.fallback-retry-enabled", k.FallbackRetryEnabled, "是否启用本地降级消息的后台补偿任务。")
+	fs.DurationVar(&k.FallbackRetryInterval, "kafka.fallback-retry-interval", k.FallbackRetryInterval, "后台补偿任务的执行间隔。")
+	fs.IntVar(&k.FallbackRetryMaxAttempts, "kafka.fallback-retry-max-attempts", k.FallbackRetryMaxAttempts, "每条降级消息的最大重试次数，0 表示无限重试。")
+	fs.IntVar(&k.FallbackRetryBatchSize, "kafka.fallback-retry-batch-size", k.FallbackRetryBatchSize, "单次补偿任务处理的最大消息数，0 表示不限制。")
 }
 
 // parseBrokersFromEnv 从环境变量字符串解析broker列表

@@ -21,5 +21,3 @@ type MessageProducer interface {
 	// Close 关闭生产者连接
 	Close() error
 }
-
-

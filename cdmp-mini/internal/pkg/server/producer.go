@@ -1,11 +1,13 @@
 package server
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -34,6 +36,14 @@ type UserProducer struct {
 	fallbackDir  string // 新增：降级文件目录
 }
 
+type fallbackMessage struct {
+	Topic     string `json:"topic"`
+	Key       string `json:"key,omitempty"`
+	Value     string `json:"value"`
+	Timestamp string `json:"timestamp"`
+	Attempts  int    `json:"attempts"`
+}
+
 func NewUserProducer(
 	options *options.KafkaOptions,
 	limiter *ratelimiter.RateLimiterController,
@@ -42,12 +52,22 @@ func NewUserProducer(
 	log.Infof("[Producer] Initializing with options: %+v", options)
 
 	config := sarama.NewConfig()
-	config.Producer.RequiredAcks = sarama.WaitForLocal       // 只需要leader确认
-	config.Producer.Compression = sarama.CompressionSnappy   // 压缩
-	config.Producer.Flush.Frequency = options.FlushFrequency // 刷新频率
+	config.Producer.RequiredAcks = sarama.RequiredAcks(options.RequiredAcks)
+
+	compressionCodec, err := parseCompressionCodec(options.ProducerCompression)
+	if err != nil {
+		return nil, fmt.Errorf("invalid compression codec: %w", err)
+	}
+	config.Producer.Compression = compressionCodec
+
+	config.Producer.Flush.Frequency = options.FlushFrequency
 	config.Producer.Flush.MaxMessages = options.FlushMaxMessages
-	config.Producer.Return.Successes = true // 异步发送成功后,返回成功消息
-	config.Producer.Return.Errors = true    // 异步发送失败后,返回失败消息
+	config.Producer.Return.Successes = options.ProducerReturnSuccesses
+	config.Producer.Return.Errors = options.ProducerReturnErrors
+
+	if options.ChannelBufferSize > 0 {
+		config.ChannelBufferSize = options.ChannelBufferSize
+	}
 
 	producer, err := sarama.NewAsyncProducer(options.Brokers, config)
 	if err != nil {
@@ -66,6 +86,11 @@ func NewUserProducer(
 	up.wg.Add(2)
 	go up.handleSuccesses()
 	go up.handleErrors()
+
+	if fallbackDir != "" && options.FallbackRetryEnabled {
+		up.wg.Add(1)
+		go up.runFallbackCompensator()
+	}
 
 	return up, nil
 }
@@ -132,8 +157,17 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 		},
 	}
 
-	p.producer.Input() <- msg
-	return nil
+	select {
+	case p.producer.Input() <- msg:
+		return nil
+	case <-ctx.Done():
+		err := errors.WithCode(code.ErrKafkaFailed, "context cancelled while sending delete message: %v", ctx.Err())
+		return err
+	default:
+		log.Errorf("Failed to enqueue delete message for username=%s: producer input channel is full. Triggering fallback.", username)
+		p.writeToFallbackFile(msg)
+		return errors.WithCode(code.ErrKafkaFailed, "producer input channel is full, delete message written to fallback")
+	}
 }
 
 // 新增：写入降级文件的方法
@@ -162,15 +196,16 @@ func (p *UserProducer) writeToFallbackFile(msg *sarama.ProducerMessage) {
 		key = string(encodedKey)
 	}
 
-	fallbackEntry := map[string]interface{}{
-		"topic":     msg.Topic,
-		"key":       key,
-		"value":     string(value),
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	entry := fallbackMessage{
+		Topic:     msg.Topic,
+		Key:       key,
+		Value:     string(value),
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Attempts:  0,
 	}
 
 	// 序列化为 JSON
-	jsonData, err := json.Marshal(fallbackEntry)
+	jsonData, err := json.Marshal(entry)
 	if err != nil {
 		log.Errorf("Failed to marshal fallback message to JSON: %v", err)
 		return
@@ -226,8 +261,18 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 		},
 	}
 
-	p.producer.Input() <- msg
-	return nil
+	select {
+	case p.producer.Input() <- msg:
+		return nil
+	case <-ctx.Done():
+		errSend = errors.WithCode(code.ErrKafkaFailed, "context cancelled while sending user message: %v", ctx.Err())
+		return errSend
+	default:
+		log.Errorf("Failed to enqueue user message: operation=%s topic=%s username=%s. Triggering fallback.", operation, topic, user.Name)
+		p.writeToFallbackFile(msg)
+		errSend = errors.WithCode(code.ErrKafkaFailed, "producer input channel is full, user message written to fallback")
+		return errSend
+	}
 }
 
 // sendToRetryTopic is called by the consumer to send a message to the retry topic.
@@ -283,7 +328,14 @@ func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Mess
 	headers = p.updateOrAddHeader(headers, "deadletter-timestamp", time.Now().Format(time.RFC3339))
 	saramaMsg.Headers = headers
 
-	p.producer.Input() <- saramaMsg
+	select {
+	case p.producer.Input() <- saramaMsg:
+		return nil
+	default:
+		log.Errorf("Failed to enqueue message to dead-letter topic: producer input channel is full or closed. Triggering fallback.")
+		p.writeToFallbackFile(saramaMsg)
+	}
+
 	return nil
 }
 
@@ -300,6 +352,158 @@ func (p *UserProducer) Close() error {
 	p.wg.Wait() // Wait for goroutines to finish
 	log.Infof("[Producer] Closed successfully")
 	return nil
+}
+
+func (p *UserProducer) runFallbackCompensator() {
+	defer p.wg.Done()
+	logger := log.WithName("fallback-compensator")
+	logger.Info("Compensator started")
+	ticker := time.NewTicker(p.kafkaOptions.FallbackRetryInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-p.shutdown:
+			logger.Info("Compensator shutting down")
+			return
+		case <-ticker.C:
+			p.processFallbackFiles(logger)
+		}
+	}
+}
+
+func (p *UserProducer) processFallbackFiles(logger log.Logger) {
+	if p.fallbackDir == "" {
+		return
+	}
+
+	files, err := filepath.Glob(filepath.Join(p.fallbackDir, "*.json"))
+	if err != nil {
+		logger.Errorf("Failed to list fallback files: %v", err)
+		return
+	}
+
+	if len(files) == 0 {
+		return
+	}
+
+	sort.Strings(files)
+
+	processed := 0
+	maxBatch := p.kafkaOptions.FallbackRetryBatchSize
+
+	for _, filePath := range files {
+		if maxBatch > 0 && processed >= maxBatch {
+			return
+		}
+
+		count, err := p.processFallbackFile(logger, filePath, maxBatch-processed)
+		if err != nil {
+			logger.Errorf("Failed to process fallback file %s: %v", filePath, err)
+		}
+		processed += count
+	}
+}
+
+func (p *UserProducer) processFallbackFile(logger log.Logger, filePath string, remainingQuota int) (int, error) {
+	file, err := os.OpenFile(filePath, os.O_RDWR, 0644)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+
+	tempPath := filePath + ".tmp"
+	tempFile, err := os.OpenFile(tempPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		return 0, err
+	}
+	defer tempFile.Close()
+	writer := bufio.NewWriter(tempFile)
+	defer writer.Flush()
+
+	retryMax := p.kafkaOptions.FallbackRetryMaxAttempts
+	processed := 0
+
+	for scanner.Scan() {
+		if remainingQuota > 0 && processed >= remainingQuota {
+			// Copy remaining entries as-is
+			if _, err := writer.Write(scanner.Bytes()); err != nil {
+				return processed, err
+			}
+			if _, err := writer.WriteString("\n"); err != nil {
+				return processed, err
+			}
+			continue
+		}
+
+		line := scanner.Bytes()
+		var entry fallbackMessage
+		if err := json.Unmarshal(line, &entry); err != nil {
+			logger.Errorf("Invalid fallback entry in %s: %v", filePath, err)
+			continue
+		}
+
+		// Skip if attempts already exceed max retry limit
+		if retryMax > 0 && entry.Attempts >= retryMax {
+			logger.Warnf("Discarding fallback message after max attempts, topic=%s key=%s", entry.Topic, entry.Key)
+			continue
+		}
+
+		if err := p.publishFallbackEntry(entry); err != nil {
+			entry.Attempts++
+			reEncoded, marshalErr := json.Marshal(entry)
+			if marshalErr != nil {
+				logger.Errorf("Failed to re-marshal fallback entry: %v", marshalErr)
+				continue
+			}
+			if _, err := writer.Write(reEncoded); err != nil {
+				return processed, err
+			}
+			if _, err := writer.WriteString("\n"); err != nil {
+				return processed, err
+			}
+			continue
+		}
+
+		processed++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return processed, err
+	}
+
+	// Replace original file with temp file
+	if err := os.Rename(tempPath, filePath); err != nil {
+		return processed, err
+	}
+
+	return processed, nil
+}
+
+func (p *UserProducer) publishFallbackEntry(entry fallbackMessage) error {
+	msg := &sarama.ProducerMessage{
+		Topic: entry.Topic,
+		Value: sarama.ByteEncoder(entry.Value),
+	}
+
+	if entry.Key != "" {
+		msg.Key = sarama.StringEncoder(entry.Key)
+	}
+
+	msg.Headers = []sarama.RecordHeader{
+		{Key: []byte(HeaderRetryCount), Value: []byte(strconv.Itoa(entry.Attempts))},
+	}
+
+	select {
+	case <-p.shutdown:
+		return fmt.Errorf("producer shutting down")
+	case p.producer.Input() <- msg:
+		return nil
+	case <-time.After(5 * time.Second):
+		return fmt.Errorf("enqueue timeout")
+	}
 }
 
 func (p *UserProducer) getOperationFromHeaders(headers []sarama.RecordHeader) string {
@@ -342,4 +546,21 @@ func (p *UserProducer) updateOrAddHeader(headers []sarama.RecordHeader, key, val
 		})
 	}
 	return newHeaders
+}
+
+func parseCompressionCodec(codec string) (sarama.CompressionCodec, error) {
+	switch strings.ToLower(codec) {
+	case "", "none":
+		return sarama.CompressionNone, nil
+	case "snappy":
+		return sarama.CompressionSnappy, nil
+	case "gzip":
+		return sarama.CompressionGZIP, nil
+	case "lz4":
+		return sarama.CompressionLZ4, nil
+	case "zstd":
+		return sarama.CompressionZSTD, nil
+	default:
+		return sarama.CompressionNone, fmt.Errorf("unsupported compression codec %q", codec)
+	}
 }

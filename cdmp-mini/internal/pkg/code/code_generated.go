@@ -72,6 +72,6 @@ func init() {
 	register(ErrKafkaFailed, 404, "严重错误：无法发送到重试Topic！主消息已丢失") // 404：密钥资源不存在
 
 	//9. redis（1004xx）：服务10 + 模块04 + 序号 404
-	register(ErrRedisFailed, 404, "严重错误：无法发送到重试Topic！主消息已丢失") // 404：密钥资源不存在
+	register(ErrRedisFailed, 404, "严重错误：reids错误") // 404：密钥资源不存在
 
 }

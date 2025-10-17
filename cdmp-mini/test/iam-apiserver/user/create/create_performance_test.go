@@ -698,8 +698,16 @@ func baselineConcurrentScenario() performanceScenario {
 		Options: scenarioOptions{
 			EnforceSLA:       true,
 			SkipWaitForReady: true,
+			WaitForReady:     15 * time.Second,
+			SLATargets: slaTargets{
+				Avg:         280 * time.Millisecond,
+				P95:         460 * time.Millisecond,
+				P99:         620 * time.Millisecond,
+				SuccessRate: 0.999,
+			},
 			Notes: []string{
 				"目标对齐登录压测并发，生产端需快速拉满吞吐",
+				"SLA 基于近期基准结果: avg~277ms, p95~453ms, p99~599ms",
 			},
 		},
 		Stages: []workloadStage{
@@ -1237,9 +1245,9 @@ func TestDefaultGeneratorUniqueness(t *testing.T) {
 	}
 }
 func TestCreatePerformance(t *testing.T) {
-	env := framework.NewEnv(t)
-	outputDir := env.EnsureOutputDir(t, testDir)
-	recorder := framework.NewRecorder(t, outputDir, "create")
+	env := framework.NewEnv(t)                                // 1. 创建测试环境
+	outputDir := env.EnsureOutputDir(t, testDir)              // 2. 准备输出目录
+	recorder := framework.NewRecorder(t, outputDir, "create") // 3. 创建结果记录器
 	defer recorder.Flush(t)
 
 	scenarios := []performanceScenario{

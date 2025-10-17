@@ -7,7 +7,6 @@ package code
 import (
 	"fmt"
 	"net/http"
-	"strings"
 
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
@@ -77,17 +76,17 @@ func register(code int, httpStatus int, message string, refs ...string) {
 		panic(fmt.Sprintf("HTTP 状态码 %d 不符合通用规则（必须在 100~599 之间）", httpStatus))
 	}
 
-	// 2. 可选：对常见状态码做语义提示（避免误用，如 404 用于非资源不存在场景）
-	switch httpStatus {
-	case 404:
-		if !strings.Contains(message, "不存在") && !strings.Contains(message, "未找到") {
-			fmt.Printf("[WARN] HTTP 404 建议用于「资源不存在」场景，当前描述：%s\n", message)
-		}
-	case 409:
-		if !strings.Contains(message, "冲突") && !strings.Contains(message, "已存在") {
-			fmt.Printf("[WARN] HTTP 409 建议用于「资源冲突」场景，当前描述：%s\n", message)
-		}
-	}
+	// // 2. 可选：对常见状态码做语义提示（避免误用，如 404 用于非资源不存在场景）
+	// switch httpStatus {
+	// case 404:
+	// 	if !strings.Contains(message, "不存在") && !strings.Contains(message, "未找到") {
+	// 		fmt.Printf("[WARN] HTTP 404 建议用于「资源不存在」场景，当前描述：%s\n", message)
+	// 	}
+	// case 409:
+	// 	if !strings.Contains(message, "冲突") && !strings.Contains(message, "已存在") {
+	// 		fmt.Printf("[WARN] HTTP 409 建议用于「资源冲突」场景，当前描述：%s\n", message)
+	// 	}
+	// }
 
 	// 3. 处理参考文档（保持原有逻辑）
 	var reference string
