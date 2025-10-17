@@ -414,20 +414,26 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		user.Phone = usercache.NormalizePhone(user.Phone)
 		ensureUserInstanceID(&user)
 		log.Debugf("开始建立用户: username=%s", user.Name)
-		if err := c.createUserInDB(ctx, &user); err != nil {
+		created, err := c.createUserInDB(ctx, &user)
+		if err != nil {
 			// 数据库写入失败，直接写入死信区
 			return c.sendToDeadLetter(ctx, msg, "CREATE_DB_ERROR: "+err.Error())
 		}
-		if err := c.setUserCache(ctx, &user, nil); err != nil {
-			log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
+		if created {
+			if err := c.setUserCache(ctx, &user, nil); err != nil {
+				log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
+			} else {
+				log.Debugf("用户%s缓存成功", user.Name)
+			}
+			log.Debugf("用户创建成功: username=%s", user.Name)
+			return nil
 		} else {
-			log.Debugf("用户%s缓存成功", user.Name)
+			log.Warnf("检测到批量创建中的重复用户，已忽略: username=%s", user.Name)
 		}
-		log.Debugf("用户创建成功: username=%s", user.Name)
 		return nil
+	} else {
+		return err
 	}
-
-	return nil
 }
 
 // 删除
@@ -514,7 +520,7 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 	return nil
 }
 
-func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error {
+func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) (bool, error) {
 	user.Email = usercache.NormalizeEmail(user.Email)
 	user.Phone = usercache.NormalizePhone(user.Phone)
 
@@ -533,13 +539,13 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) error 
 		log.Debugf("createUserInDB insert failed: username=%s type=%T err=%v", user.Name, err, err)
 		if isDuplicateKeyDBError(err) {
 			log.Debugf("忽略重复用户插入: username=%s err=%v", user.Name, err)
-			return nil
+			return false, nil
 		}
 		//	metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
-		return fmt.Errorf("数据创建失败: %w", err)
+		return false, fmt.Errorf("数据创建失败: %w", err)
 	}
 	//	log.Infof("[单条插入] 成功: %s", user.Name)
-	return nil
+	return true, nil
 }
 
 func isDuplicateKeyDBError(err error) bool {
@@ -1128,7 +1134,9 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 		successful int
 	)
 	for i := range users {
-		if err := c.createUserInDB(ctx, &users[i]); err != nil {
+
+		created, err := c.createUserInDB(ctx, &users[i])
+		if err != nil {
 			opErr = err
 			errorType := getErrorType(err)
 			log.Errorf("[批量插入] 单条失败: username=%s err=%v", users[i].Name, err)
@@ -1138,11 +1146,15 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 			}
 			continue
 		}
-		successful++
-		if err := c.setUserCache(ctx, &users[i], nil); err != nil {
-			log.Warnf("批量创建后缓存设置失败: username=%s, error=%v", users[i].Name, err)
+		if created {
+			successful++
+			if err := c.setUserCache(ctx, &users[i], nil); err != nil {
+				log.Warnf("批量创建后缓存设置失败: username=%s, error=%v", users[i].Name, err)
+			} else {
+				log.Debugf("批量创建后缓存成功: username=%s", users[i].Name)
+			}
 		} else {
-			log.Debugf("批量创建后缓存成功: username=%s", users[i].Name)
+			log.Warnf("检测到批量创建中的重复用户，已忽略: username=%s", users[i].Name)
 		}
 	}
 	if successful > 0 {

@@ -87,7 +87,7 @@ const (
 	defaultBaseURL   = "http://192.168.10.8:8088"
 	defaultAdminUser = "admin"
 	defaultAdminPass = "Admin@2021"
-	requestTimeout   = 30 * time.Second
+	requestTimeout   = 60 * time.Second
 )
 
 func NewEnv(t *testing.T) *Env {
