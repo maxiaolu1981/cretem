@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	stderrors "errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,11 +38,76 @@ type UserProducer struct {
 }
 
 type fallbackMessage struct {
-	Topic     string `json:"topic"`
-	Key       string `json:"key,omitempty"`
-	Value     string `json:"value"`
-	Timestamp string `json:"timestamp"`
-	Attempts  int    `json:"attempts"`
+	Topic     string           `json:"topic"`
+	Key       string           `json:"key,omitempty"`
+	Value     string           `json:"value"`
+	Timestamp string           `json:"timestamp"`
+	Attempts  int              `json:"attempts"`
+	Headers   []fallbackHeader `json:"headers,omitempty"`
+}
+
+type fallbackHeader struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+const defaultProducerEnqueueTimeout = 500 * time.Millisecond
+
+var errProducerEnqueueTimeout = stderrors.New("producer enqueue timeout")
+
+func (p *UserProducer) getEnqueueTimeout() time.Duration {
+	if p != nil && p.kafkaOptions != nil && p.kafkaOptions.ProducerEnqueueTimeout > 0 {
+		return p.kafkaOptions.ProducerEnqueueTimeout
+	}
+	return defaultProducerEnqueueTimeout
+}
+
+func (p *UserProducer) enqueueWithTimeout(ctx context.Context, msg *sarama.ProducerMessage, wait time.Duration) error {
+	if p == nil || p.producer == nil {
+		return fmt.Errorf("producer unavailable")
+	}
+	timeout := wait
+	if timeout <= 0 {
+		timeout = p.getEnqueueTimeout()
+	}
+	if timeout <= 0 {
+		timeout = defaultProducerEnqueueTimeout
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-p.shutdown:
+		return fmt.Errorf("producer shutting down")
+	case p.producer.Input() <- msg:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return errProducerEnqueueTimeout
+	}
+}
+
+func (p *UserProducer) enqueueOrFallback(ctx context.Context, msg *sarama.ProducerMessage, detail string) error {
+	err := p.enqueueWithTimeout(ctx, msg, 0)
+	if err == nil {
+		return nil
+	}
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		return errors.WithCode(code.ErrKafkaFailed, "context cancelled while enqueuing %s: %v", detail, err)
+	}
+	if err == errProducerEnqueueTimeout {
+		timeout := p.getEnqueueTimeout()
+		log.Errorf("Failed to enqueue %s within %s. Triggering fallback.", detail, timeout)
+		p.writeToFallbackFile(msg)
+		return errors.WithCode(code.ErrKafkaFailed, "producer enqueue timeout after %s, message written to fallback", timeout)
+	}
+	log.Errorf("Failed to enqueue %s: %v. Triggering fallback.", detail, err)
+	p.writeToFallbackFile(msg)
+	return errors.WithCode(code.ErrKafkaFailed, "producer enqueue failed (%v), message written to fallback", err)
 }
 
 func NewUserProducer(
@@ -157,17 +223,10 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 		},
 	}
 
-	select {
-	case p.producer.Input() <- msg:
-		return nil
-	case <-ctx.Done():
-		err := errors.WithCode(code.ErrKafkaFailed, "context cancelled while sending delete message: %v", ctx.Err())
+	if err := p.enqueueOrFallback(ctx, msg, fmt.Sprintf("delete message username=%s topic=%s", username, msg.Topic)); err != nil {
 		return err
-	default:
-		log.Errorf("Failed to enqueue delete message for username=%s: producer input channel is full. Triggering fallback.", username)
-		p.writeToFallbackFile(msg)
-		return errors.WithCode(code.ErrKafkaFailed, "producer input channel is full, delete message written to fallback")
 	}
+	return nil
 }
 
 // 新增：写入降级文件的方法
@@ -202,6 +261,16 @@ func (p *UserProducer) writeToFallbackFile(msg *sarama.ProducerMessage) {
 		Value:     string(value),
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Attempts:  0,
+	}
+
+	if len(msg.Headers) > 0 {
+		entry.Headers = make([]fallbackHeader, 0, len(msg.Headers))
+		for _, header := range msg.Headers {
+			entry.Headers = append(entry.Headers, fallbackHeader{
+				Key:   string(header.Key),
+				Value: string(header.Value),
+			})
+		}
 	}
 
 	// 序列化为 JSON
@@ -261,18 +330,11 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 		},
 	}
 
-	select {
-	case p.producer.Input() <- msg:
-		return nil
-	case <-ctx.Done():
-		errSend = errors.WithCode(code.ErrKafkaFailed, "context cancelled while sending user message: %v", ctx.Err())
-		return errSend
-	default:
-		log.Errorf("Failed to enqueue user message: operation=%s topic=%s username=%s. Triggering fallback.", operation, topic, user.Name)
-		p.writeToFallbackFile(msg)
-		errSend = errors.WithCode(code.ErrKafkaFailed, "producer input channel is full, user message written to fallback")
-		return errSend
+	if err := p.enqueueOrFallback(ctx, msg, fmt.Sprintf("user message operation=%s topic=%s username=%s", operation, topic, user.Name)); err != nil {
+		errSend = err
+		return err
 	}
+	return nil
 }
 
 // sendToRetryTopic is called by the consumer to send a message to the retry topic.
@@ -296,14 +358,20 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 	saramaMsg.Headers = headers
 
 	// 使用 select 防止阻塞，并在无法立即发送时触发降级
-	select {
-	case p.producer.Input() <- saramaMsg:
-		log.Debugf("Successfully enqueued message to retry topic for key: %s", string(msg.Key))
-	default:
-		log.Errorf("Failed to enqueue message to retry topic: producer input channel is full or closed. Triggering fallback.")
+	if err := p.enqueueWithTimeout(ctx, saramaMsg, 0); err != nil {
+		if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("enqueue retry topic cancelled: %w", err)
+		}
+		if err == errProducerEnqueueTimeout {
+			log.Errorf("Retry enqueue timeout for key=%s after %s. Triggering fallback.", string(msg.Key), p.getEnqueueTimeout())
+		} else {
+			log.Errorf("Failed to enqueue message to retry topic: key=%s error=%v. Triggering fallback.", string(msg.Key), err)
+		}
 		p.writeToFallbackFile(saramaMsg)
+		return fmt.Errorf("enqueue retry topic failed: %w", err)
 	}
 
+	log.Debugf("Successfully enqueued message to retry topic for key: %s", string(msg.Key))
 	return nil
 }
 
@@ -328,12 +396,17 @@ func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Mess
 	headers = p.updateOrAddHeader(headers, "deadletter-timestamp", time.Now().Format(time.RFC3339))
 	saramaMsg.Headers = headers
 
-	select {
-	case p.producer.Input() <- saramaMsg:
-		return nil
-	default:
-		log.Errorf("Failed to enqueue message to dead-letter topic: producer input channel is full or closed. Triggering fallback.")
+	if err := p.enqueueWithTimeout(ctx, saramaMsg, 0); err != nil {
+		if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("enqueue dead-letter topic cancelled: %w", err)
+		}
+		if err == errProducerEnqueueTimeout {
+			log.Errorf("Dead-letter enqueue timeout for key=%s after %s. Triggering fallback.", string(msg.Key), p.getEnqueueTimeout())
+		} else {
+			log.Errorf("Failed to enqueue message to dead-letter topic: key=%s error=%v. Triggering fallback.", string(msg.Key), err)
+		}
 		p.writeToFallbackFile(saramaMsg)
+		return fmt.Errorf("enqueue dead-letter topic failed: %w", err)
 	}
 
 	return nil
@@ -356,7 +429,7 @@ func (p *UserProducer) Close() error {
 
 func (p *UserProducer) runFallbackCompensator() {
 	defer p.wg.Done()
-	logger := log.WithName("fallback-compensator")
+	logger := log.WithValues("component", "fallback-compensator")
 	logger.Info("Compensator started")
 	ticker := time.NewTicker(p.kafkaOptions.FallbackRetryInterval)
 	defer ticker.Stop()
@@ -485,25 +558,24 @@ func (p *UserProducer) processFallbackFile(logger log.Logger, filePath string, r
 func (p *UserProducer) publishFallbackEntry(entry fallbackMessage) error {
 	msg := &sarama.ProducerMessage{
 		Topic: entry.Topic,
-		Value: sarama.ByteEncoder(entry.Value),
+		Value: sarama.ByteEncoder([]byte(entry.Value)),
 	}
 
 	if entry.Key != "" {
 		msg.Key = sarama.StringEncoder(entry.Key)
 	}
 
-	msg.Headers = []sarama.RecordHeader{
-		{Key: []byte(HeaderRetryCount), Value: []byte(strconv.Itoa(entry.Attempts))},
+	headers := make([]sarama.RecordHeader, 0, len(entry.Headers))
+	for _, header := range entry.Headers {
+		headers = append(headers, sarama.RecordHeader{
+			Key:   []byte(header.Key),
+			Value: []byte(header.Value),
+		})
 	}
+	headers = p.updateOrAddHeader(headers, HeaderRetryCount, strconv.Itoa(entry.Attempts))
+	msg.Headers = headers
 
-	select {
-	case <-p.shutdown:
-		return fmt.Errorf("producer shutting down")
-	case p.producer.Input() <- msg:
-		return nil
-	case <-time.After(5 * time.Second):
-		return fmt.Errorf("enqueue timeout")
-	}
+	return p.enqueueWithTimeout(context.Background(), msg, 5*time.Second)
 }
 
 func (p *UserProducer) getOperationFromHeaders(headers []sarama.RecordHeader) string {

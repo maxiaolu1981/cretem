@@ -90,6 +90,8 @@ type KafkaOptions struct {
 	ProducerReturnErrors bool `json:"producerReturnErrors" mapstructure:"producerReturnErrors"`
 	// Sarama channel buffer size for async producer
 	ChannelBufferSize int `json:"channelBufferSize" mapstructure:"channelBufferSize"`
+	// Maximum duration to wait while enqueuing a message into the async producer
+	ProducerEnqueueTimeout time.Duration `json:"producerEnqueueTimeout" mapstructure:"producerEnqueueTimeout"`
 	// Enable background fallback compensation job
 	FallbackRetryEnabled bool `json:"fallbackRetryEnabled" mapstructure:"fallbackRetryEnabled"`
 	// Interval between compensation attempts
@@ -137,11 +139,12 @@ func NewKafkaOptions() *KafkaOptions {
 		ProducerCompression:      "snappy",
 		ProducerReturnSuccesses:  true,
 		ProducerReturnErrors:     true,
-		ChannelBufferSize:        256,
+		ChannelBufferSize:        1024,
+		ProducerEnqueueTimeout:   500 * time.Millisecond,
 		FallbackRetryEnabled:     true,
-		FallbackRetryInterval:    5 * time.Minute,
+		FallbackRetryInterval:    30 * time.Second,
 		FallbackRetryMaxAttempts: 5,
-		FallbackRetryBatchSize:   200,
+		FallbackRetryBatchSize:   5000,
 	}
 }
 
@@ -217,6 +220,10 @@ func (k *KafkaOptions) Complete() {
 		k.ChannelBufferSize = 0
 	}
 
+	if k.ProducerEnqueueTimeout <= 0 {
+		k.ProducerEnqueueTimeout = 500 * time.Millisecond
+	}
+
 	if k.ProducerCompression == "" {
 		k.ProducerCompression = "snappy"
 	}
@@ -290,6 +297,10 @@ func (k *KafkaOptions) Validate() []error {
 
 	if k.ChannelBufferSize < 0 {
 		errs = append(errs, field.Invalid(field.NewPath("kafka", "channelBufferSize"), k.ChannelBufferSize, "必须大于等于0"))
+	}
+
+	if k.ProducerEnqueueTimeout <= 0 {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "producerEnqueueTimeout"), k.ProducerEnqueueTimeout, "必须大于0"))
 	}
 
 	if k.FallbackRetryInterval <= 0 {
@@ -394,6 +405,7 @@ func (k *KafkaOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&k.ProducerReturnSuccesses, "kafka.producer-return-successes", k.ProducerReturnSuccesses, "Whether Sarama async producer should return successes.")
 	fs.BoolVar(&k.ProducerReturnErrors, "kafka.producer-return-errors", k.ProducerReturnErrors, "Whether Sarama async producer should return errors.")
 	fs.IntVar(&k.ChannelBufferSize, "kafka.channel-buffer-size", k.ChannelBufferSize, "Sarama async producer channel buffer size. 0表示使用默认值。")
+	fs.DurationVar(&k.ProducerEnqueueTimeout, "kafka.producer-enqueue-timeout", k.ProducerEnqueueTimeout, "异步生产者入队等待的最大时长，超过则触发降级。")
 	fs.BoolVar(&k.FallbackRetryEnabled, "kafka.fallback-retry-enabled", k.FallbackRetryEnabled, "是否启用本地降级消息的后台补偿任务。")
 	fs.DurationVar(&k.FallbackRetryInterval, "kafka.fallback-retry-interval", k.FallbackRetryInterval, "后台补偿任务的执行间隔。")
 	fs.IntVar(&k.FallbackRetryMaxAttempts, "kafka.fallback-retry-max-attempts", k.FallbackRetryMaxAttempts, "每条降级消息的最大重试次数，0 表示无限重试。")

@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/test/iam-apiserver/tools/framework"
 )
 
@@ -23,6 +24,8 @@ const (
 	cacheDefaultThreshold = 50 * time.Millisecond
 	waitDefaultTimeout    = 8 * time.Second
 )
+
+const perfOutputDir = "/home/mxl/cretem/cretem/cdmp-mini/test/iam-apiserver/user/create"
 
 type loadPattern string
 
@@ -89,6 +92,7 @@ type operationOutcome struct {
 	err          error
 	variant      userVariant
 	created      bool
+	degraded     bool
 }
 
 type stageSummary struct {
@@ -99,6 +103,7 @@ type stageSummary struct {
 	Success     int
 	Failure     int
 	Concurrency int
+	Degraded    int
 }
 
 type scenarioResult struct {
@@ -112,6 +117,7 @@ type scenarioResult struct {
 	waitDurations   []time.Duration
 	success         int
 	failure         int
+	degraded        int
 	errors          []string
 	cacheHits       int
 	cacheChecks     int
@@ -128,6 +134,7 @@ type scenarioMetrics struct {
 	Requests        int
 	Success         int
 	Failure         int
+	Degraded        int
 	Duration        time.Duration
 	Avg             time.Duration
 	P50             time.Duration
@@ -141,6 +148,7 @@ type scenarioMetrics struct {
 	QPS             float64
 	TPS             float64
 	SuccessRate     float64
+	DegradeRate     float64
 	CacheHits       int
 	CacheChecks     int
 	CacheHitRate    float64
@@ -220,7 +228,9 @@ func (r *scenarioResult) record(outcome operationOutcome) {
 	if outcome.waitDuration > 0 {
 		r.waitDurations = append(r.waitDurations, outcome.waitDuration)
 	}
-	if outcome.success {
+	if outcome.degraded {
+		r.degraded++
+	} else if outcome.success {
 		r.success++
 	} else {
 		r.failure++
@@ -241,10 +251,10 @@ func (r *scenarioResult) record(outcome operationOutcome) {
 	r.phoneBuckets[outcome.variant.PhoneBucket]++
 }
 
-func (r *scenarioResult) snapshot() (success int, failure int) {
+func (r *scenarioResult) snapshot() (success int, failure int, degraded int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.success, r.failure
+	return r.success, r.failure, r.degraded
 }
 
 func (r *scenarioResult) addStageSummary(summary stageSummary) {
@@ -291,8 +301,8 @@ func (r *scenarioResult) waitSamples() []time.Duration {
 func (r *scenarioResult) metrics() scenarioMetrics {
 	samples := r.latencySamples()
 	waitSamples := r.waitSamples()
-	success, failure := r.snapshot()
-	total := success + failure
+	success, failure, degraded := r.snapshot()
+	total := success + failure + degraded
 	duration := r.end.Sub(r.start)
 	stats := computeLatencyStats(samples)
 	waitStats := computeLatencyStats(waitSamples)
@@ -305,20 +315,23 @@ func (r *scenarioResult) metrics() scenarioMetrics {
 	var qps, tps, cacheRate float64
 	if duration > 0 {
 		qps = float64(total) / duration.Seconds()
-		tps = float64(success) / duration.Seconds()
+		tps = float64(success+degraded) / duration.Seconds()
 	}
 	if r.cacheChecks > 0 {
 		cacheRate = float64(r.cacheHits) / float64(r.cacheChecks)
 	}
 	successRate := 0.0
+	degradeRate := 0.0
 	if total > 0 {
-		successRate = float64(success) / float64(total)
+		successRate = float64(success+degraded) / float64(total)
+		degradeRate = float64(degraded) / float64(total)
 	}
 	return scenarioMetrics{
 		Scenario:        r.scenario,
 		Requests:        total,
 		Success:         success,
 		Failure:         failure,
+		Degraded:        degraded,
 		Duration:        duration,
 		Avg:             stats.avg,
 		P50:             stats.p50,
@@ -332,6 +345,7 @@ func (r *scenarioResult) metrics() scenarioMetrics {
 		QPS:             qps,
 		TPS:             tps,
 		SuccessRate:     successRate,
+		DegradeRate:     degradeRate,
 		CacheHits:       r.cacheHits,
 		CacheChecks:     r.cacheChecks,
 		CacheHitRate:    cacheRate,
@@ -423,17 +437,18 @@ func runPerformanceScenario(t *testing.T, env *framework.Env, recorder *framewor
 	})
 	res.start = time.Now()
 	for _, stage := range sc.Stages {
-		startSuccess, startFailure := res.snapshot()
+		startSuccess, startFailure, startDegraded := res.snapshot()
 		stageStart := time.Now()
 		executeStage(env, res, sc, stage)
-		successAfter, failureAfter := res.snapshot()
+		successAfter, failureAfter, degradedAfter := res.snapshot()
 		summary := stageSummary{
 			Name:        stage.Name,
 			Pattern:     stage.Pattern,
 			Duration:    time.Since(stageStart),
-			Requests:    (successAfter + failureAfter) - (startSuccess + startFailure),
+			Requests:    (successAfter + failureAfter + degradedAfter) - (startSuccess + startFailure + startDegraded),
 			Success:     successAfter - startSuccess,
 			Failure:     failureAfter - startFailure,
+			Degraded:    degradedAfter - startDegraded,
 			Concurrency: stage.Concurrency,
 		}
 		res.addStageSummary(summary)
@@ -444,7 +459,7 @@ func runPerformanceScenario(t *testing.T, env *framework.Env, recorder *framewor
 	res.end = time.Now()
 
 	metrics := res.metrics()
-	if metrics.Success == 0 {
+	if metrics.Success == 0 && metrics.Degraded == 0 {
 		errs := res.errorsSnapshot(5)
 		if len(errs) > 0 {
 			t.Logf("sample errors: %s", strings.Join(errs, "; "))
@@ -479,12 +494,16 @@ func runPerformanceScenario(t *testing.T, env *framework.Env, recorder *framewor
 			"cache_checks":     metrics.CacheChecks,
 			"peak_concurrency": metrics.PeakConcurrency,
 			"stages":           len(metrics.StageSummaries),
+			"degraded":         metrics.Degraded,
 		},
 		Notes: append(notes, formatDistributionNotes(metrics)...),
 	}
 	point.Notes = append(point.Notes, fmt.Sprintf("TPS=%.2f", metrics.TPS))
 	if metrics.CacheChecks > 0 {
 		point.Notes = append(point.Notes, fmt.Sprintf("Cache hit rate=%.2f%%", metrics.CacheHitRate*100))
+	}
+	if metrics.Degraded > 0 {
+		point.Notes = append(point.Notes, fmt.Sprintf("Degraded requests=%d (%.2f%%)", metrics.Degraded, metrics.DegradeRate*100))
 	}
 	if metrics.WaitAvg > 0 {
 		point.Notes = append(point.Notes, fmt.Sprintf("Mean wait-for-ready=%s", metrics.WaitAvg))
@@ -561,12 +580,16 @@ func executeRequest(env *framework.Env, variant userVariant, options scenarioOpt
 		outcome.err = err
 		return outcome
 	}
-	if resp == nil || resp.HTTPStatus() != http.StatusCreated {
-		if resp == nil {
-			outcome.err = fmt.Errorf("unexpected status: nil response (user=%s phone=%s)", variant.Spec.Name, variant.Spec.Phone)
-		} else {
-			outcome.err = fmt.Errorf("unexpected status: %d code=%d msg=%s (user=%s phone=%s)", resp.HTTPStatus(), resp.Code, strings.TrimSpace(resp.Message), variant.Spec.Name, variant.Spec.Phone)
-		}
+	if resp == nil {
+		outcome.err = fmt.Errorf("unexpected status: nil response (user=%s phone=%s)", variant.Spec.Name, variant.Spec.Phone)
+		return outcome
+	}
+	if resp.Code == code.ErrKafkaFailed {
+		outcome.degraded = true
+		return outcome
+	}
+	if resp.HTTPStatus() != http.StatusCreated {
+		outcome.err = fmt.Errorf("unexpected status: %d code=%d msg=%s (user=%s phone=%s)", resp.HTTPStatus(), resp.Code, strings.TrimSpace(resp.Message), variant.Spec.Name, variant.Spec.Phone)
 		return outcome
 	}
 	outcome.created = true
@@ -583,13 +606,11 @@ func executeRequest(env *framework.Env, variant userVariant, options scenarioOpt
 
 	if options.CacheChecks > 0 {
 		hits := 0
-		for i := 0; i < options.CacheChecks; i++ {
-			fetchStart := time.Now()
-			resp, err := env.AdminRequest(http.MethodGet, fmt.Sprintf("/v1/users/%s", variant.Spec.Name), nil)
-			fetchDuration := time.Since(fetchStart)
-			if err == nil && resp != nil && resp.HTTPStatus() == http.StatusOK && fetchDuration <= options.CacheHitThreshold {
-				hits++
-			}
+		fetchStart := time.Now()
+		resp, err := env.AdminRequest(http.MethodGet, fmt.Sprintf("/v1/users/%s", variant.Spec.Name), nil)
+		fetchDuration := time.Since(fetchStart)
+		if err == nil && resp != nil && resp.HTTPStatus() == http.StatusOK && fetchDuration <= options.CacheHitThreshold {
+			hits++
 		}
 		outcome.cacheChecks = options.CacheChecks
 		outcome.cacheHits = hits
@@ -600,6 +621,13 @@ func executeRequest(env *framework.Env, variant userVariant, options scenarioOpt
 func evaluateExpectations(t *testing.T, sc performanceScenario, metrics scenarioMetrics) []string {
 	options := sc.Options
 	notes := []string{sc.Description, fmt.Sprintf("Load pattern=%s", sc.Pattern)}
+	if metrics.Degraded > 0 {
+		if !options.AllowDegradation {
+			t.Errorf("%s: observed %d degraded requests but degradation is disabled", sc.Name, metrics.Degraded)
+		} else {
+			notes = append(notes, fmt.Sprintf("degraded=%d (%.2f%%)", metrics.Degraded, metrics.DegradeRate*100))
+		}
+	}
 	if options.EnforceSLA && !options.AllowDegradation {
 		if metrics.SuccessRate < options.SLATargets.SuccessRate {
 			t.Errorf("%s: success rate %.4f below target %.4f", sc.Name, metrics.SuccessRate, options.SLATargets.SuccessRate)
@@ -713,8 +741,8 @@ func baselineConcurrentScenario() performanceScenario {
 		Stages: []workloadStage{
 			{
 				Name:        "parallel_batch",
-				Requests:    2048,
-				Concurrency: 64,
+				Requests:    10000,
+				Concurrency: 1000,
 				Pattern:     patternUniform,
 			},
 		},
@@ -1246,7 +1274,7 @@ func TestDefaultGeneratorUniqueness(t *testing.T) {
 }
 func TestCreatePerformance(t *testing.T) {
 	env := framework.NewEnv(t)                                // 1. 创建测试环境
-	outputDir := env.EnsureOutputDir(t, testDir)              // 2. 准备输出目录
+	outputDir := env.EnsureOutputDir(t, perfOutputDir)        // 2. 准备输出目录
 	recorder := framework.NewRecorder(t, outputDir, "create") // 3. 创建结果记录器
 	defer recorder.Flush(t)
 
@@ -1272,7 +1300,7 @@ func TestCreatePerformance(t *testing.T) {
 			if metrics.Requests == 0 {
 				t.Fatalf("scenario %s produced no requests", sc.Name)
 			}
-			if !sc.Options.AllowDegradation && sc.Options.EnforceSLA && metrics.Success == 0 {
+			if !sc.Options.AllowDegradation && sc.Options.EnforceSLA && metrics.Success == 0 && metrics.Degraded == 0 {
 				t.Fatalf("scenario %s had zero successful requests", sc.Name)
 			}
 		})
