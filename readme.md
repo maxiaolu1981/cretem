@@ -227,3 +227,98 @@ func (p *UserProducer) handleErrors() {
 如果依赖 Kafka 的自带重试 + 本地降级文件即可满足（例如后续有离线补偿工具处理降级文件），可以保持现状。
 如果希望系统自动恢复，可考虑在 handleErrors 里结合指数退避、限次重发，或把失败消息转发到 user.retry.v1 交由消费者侧重试，再配合死信队列。
 还可以增加后台补偿任务读取 fallbackDir，把未发送成功的消息重新写回 Kafka。
+现状分析
+
+压测 baseline/baseline_concurrent 共触发 3159 次降级，所有降级都伴随 producer enqueue timeout after 500ms，说明 Sarama 输入队列在高并发下持续堵塞。
+运行日志打印的 Kafka 配置显示 ProducerEnqueueTimeout:500ms，不同于代码默认的 3s，当前部署把等待窗口收得很紧，消息稍晚就会落盘降级。
+2025-10-18.json 现为空，证明补偿线程已经回收降级消息，但 API 层仍记录降级，整体成功率和延迟指标继续不达标。
+同一时间段出现多次 audit buffer full, dropping event，表明写链路整体处于高压状态，进一步放大全局背压。
+优化建议
+
+调高 kafka.producer-enqueue-timeout（建议恢复至 ≥3s），或重新打包使用新的默认值后再运行压测，确认超时告警消失。
+结合并发场景评估 --kafka.channel-buffer-size、FlushFrequency、FlushMaxMessages 等参数，给生产端留足队列余量；同时监控 Sarama 成功/失败指标。
+压测过程中同步检查 Kafka broker 健康（堆积、磁盘、网络），排除 broker 端响应慢导致的 500ms 超时。
+调参后重复压测，确认 fallback 文件不再生成，并通过测试工具核对数据库残留用户，确保链路闭环。
+GPT-5-Codex (Preview) • 1x
+{
+  "trace_id": "a3b4c5d6-...-1234",
+  "level": "INFO",
+  "timestamp": "2025-10-19T08:15:12.384Z",
+  "service": "iam-apiserver",
+  "component": "user-api",
+  "call_chain": {
+    "root_operation": "POST /v1/users",
+    "start_time": 1697703312384,
+    "end_time": 1697703312789,
+    "spans": [
+      {
+        "span_id": "s-http",
+        "parent_id": "",
+        "component": "user-api",
+        "operation": "http_request",
+        "start_time": 1697703312384,
+        "end_time": 1697703312760,
+        "duration_ms": 376,
+        "status": "success",
+        "details": {
+          "client_ip": "10.0.0.8",
+          "user_agent": "curl/8.5.0"
+        }
+      },
+      {
+        "span_id": "s-controller",
+        "parent_id": "s-http",
+        "component": "user-controller",
+        "operation": "create_user",
+        "start_time": 1697703312420,
+        "end_time": 1697703312755,
+        "duration_ms": 335,
+        "status": "success",
+        "details": {
+          "requested_username": "alice",
+          "requested_email": "alice@example.com",
+          "requested_phone": "+8613800000000"
+        }
+      }
+      // TODO: 未来应追加 producer/consumer/DB 等子 span
+    ]
+  },
+  "request_context": {
+    "request_id": "req-6f8c479c",
+    "client_ip": "10.0.0.8",
+    "user_id": "admin",
+    "operator": "admin",
+    "http_method": "POST",
+    "http_path": "/v1/users",
+    "http_status": 201,
+    "extra": {
+      "hostname": "apiserver-1",
+      "env": "staging",
+      "user_agent": "curl/8.5.0",
+      "controller": "create_user"
+    }
+  },
+  "business_metrics": {
+    "operation": "POST /v1/users",
+    "total_duration_ms": 405.2,
+    "overall_status": "success",
+    "business_code": "100001",
+    "business_message": "success",
+    "performance_summary": {
+      "api_processing_ms": 335,
+      "kafka_production_ms": 0,
+      "kafka_consumption_ms": 0
+    }
+  },
+  "error_analysis": {
+    "total_errors": 0,
+    "degraded_operations": 0,
+    "error_categories": {
+      "validation": 0,
+      "database": 0,
+      "kafka": 0,
+      "redis": 0,
+      "business": 0
+    }
+  }
+}

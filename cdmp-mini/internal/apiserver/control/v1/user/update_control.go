@@ -2,6 +2,8 @@ package user
 
 import (
 	"context"
+	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +13,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
@@ -22,7 +25,31 @@ import (
 func (u *UserController) Update(ctx *gin.Context) {
 	username := ctx.Param("name") // 从URL路径获取，清晰明确
 	log.Infof("[control] 用户更新请求入口: username=%s", username)
-	operator := common.GetUsername(ctx.Request.Context())
+	traceCtx := ctx.Request.Context()
+	operator := common.GetUsername(traceCtx)
+	trace.SetOperator(traceCtx, operator)
+	controllerCtx, controllerSpan := trace.StartSpan(traceCtx, "user-controller", "update_user")
+	ctx.Request = ctx.Request.WithContext(controllerCtx)
+	trace.SetOperator(controllerCtx, operator)
+	trace.AddRequestTag(controllerCtx, "controller", "update_user")
+	trace.AddRequestTag(controllerCtx, "target_user", username)
+	controllerStatus := "success"
+	controllerCode := strconv.Itoa(code.ErrSuccess)
+	controllerDetails := map[string]interface{}{
+		"request_id":  ctx.Request.Header.Get("X-Request-ID"),
+		"target_user": username,
+		"operator":    operator,
+	}
+	defer func() {
+		if controllerSpan != nil {
+			trace.EndSpan(controllerSpan, controllerStatus, controllerCode, controllerDetails)
+		}
+	}()
+
+	outcomeStatus := "success"
+	outcomeCode := strconv.Itoa(code.ErrSuccess)
+	outcomeMessage := ""
+	outcomeHTTP := http.StatusOK
 	auditLog := func(outcome, message string) {
 		event := audit.BuildEventFromRequest(ctx.Request)
 		event.Action = "user.update"
@@ -35,17 +62,34 @@ func (u *UserController) Update(ctx *gin.Context) {
 		}
 		submitAudit(ctx, event)
 	}
-	metrics.MonitorBusinessOperation("user_service", "list", "http", func() error {
+	err := metrics.MonitorBusinessOperation("user_service", "update_user", "http", func() error {
 
 		var r v1.User
 		if err := ctx.ShouldBindJSON(&r); err != nil {
 			errBind := errors.WithCode(code.ErrBind, "%s", err.Error())
+			controllerStatus = "error"
+			controllerCode = strconv.Itoa(errors.GetCode(errBind))
+			outcomeStatus = "error"
+			outcomeCode = controllerCode
+			outcomeMessage = errors.GetMessage(errBind)
+			outcomeHTTP = errors.GetHTTPStatus(errBind)
 			core.WriteResponse(ctx, errBind, nil)
 			auditLog("fail", errBind.Error())
 			return errBind
 		}
+		trace.AddRequestTag(controllerCtx, "requested_nickname", r.Nickname)
+		trace.AddRequestTag(controllerCtx, "requested_email", r.Email)
+		trace.AddRequestTag(controllerCtx, "requested_phone", r.Phone)
+		trace.AddRequestTag(controllerCtx, "requested_status", r.Status)
+		trace.AddRequestTag(controllerCtx, "requested_is_admin", r.IsAdmin)
 		if strings.TrimSpace(username) == "" {
 			err := errors.WithCode(code.ErrValidation, "用户名不能为空")
+			controllerStatus = "error"
+			controllerCode = strconv.Itoa(errors.GetCode(err))
+			outcomeStatus = "error"
+			outcomeCode = controllerCode
+			outcomeMessage = errors.GetMessage(err)
+			outcomeHTTP = errors.GetHTTPStatus(err)
 			core.WriteResponse(ctx, err, nil)
 			auditLog("fail", err.Error())
 			return err
@@ -54,6 +98,12 @@ func (u *UserController) Update(ctx *gin.Context) {
 			errMsg := strings.Join(errs, ":")
 			log.Warnf("[control] 用户名校验失败: username=%s, error=%s", username, errMsg)
 			err := errors.WithCode(code.ErrValidation, "用户名不合法: %s", errMsg)
+			controllerStatus = "error"
+			controllerCode = strconv.Itoa(errors.GetCode(err))
+			outcomeStatus = "error"
+			outcomeCode = controllerCode
+			outcomeMessage = errors.GetMessage(err)
+			outcomeHTTP = errors.GetHTTPStatus(err)
 			core.WriteResponse(ctx, err, nil)
 			auditLog("fail", err.Error())
 			return err
@@ -75,6 +125,15 @@ func (u *UserController) Update(ctx *gin.Context) {
 		existingUser, err := u.srv.Users().Get(c, username, metav1.GetOptions{}, u.options)
 		if err != nil {
 			log.Errorf("[control] 用户更新 service 层查询失败: username=%s, error=%v", username, err)
+			controllerStatus = "error"
+			controllerCode = strconv.Itoa(errors.GetCode(err))
+			if controllerCode == "-1" {
+				controllerCode = strconv.Itoa(code.ErrUnknown)
+			}
+			outcomeStatus = "error"
+			outcomeCode = controllerCode
+			outcomeMessage = errors.GetMessage(err)
+			outcomeHTTP = errors.GetHTTPStatus(err)
 			core.WriteResponse(ctx, err, nil)
 			auditLog("fail", err.Error())
 			return err
@@ -82,6 +141,12 @@ func (u *UserController) Update(ctx *gin.Context) {
 		//  安全防护：检查是否是防刷标记
 		if existingUser.Name == sru.RATE_LIMIT_PREVENTION {
 			err := errors.WithCode(code.ErrPasswordIncorrect, "用户名密码无效")
+			controllerStatus = "error"
+			controllerCode = strconv.Itoa(errors.GetCode(err))
+			outcomeStatus = "error"
+			outcomeCode = controllerCode
+			outcomeMessage = errors.GetMessage(err)
+			outcomeHTTP = errors.GetHTTPStatus(err)
 			core.WriteResponse(ctx, err, nil)
 			auditLog("fail", err.Error())
 			return err
@@ -123,6 +188,12 @@ func (u *UserController) Update(ctx *gin.Context) {
 
 		if errs := existingUser.ValidateUpdate(); len(errs) != 0 {
 			err := errors.WithCode(code.ErrValidation, "%s", errs.ToAggregate().Error())
+			controllerStatus = "error"
+			controllerCode = strconv.Itoa(errors.GetCode(err))
+			outcomeStatus = "error"
+			outcomeCode = controllerCode
+			outcomeMessage = errors.GetMessage(err)
+			outcomeHTTP = errors.GetHTTPStatus(err)
 			core.WriteResponse(ctx, err, nil)
 			auditLog("fail", err.Error())
 			return err
@@ -132,6 +203,15 @@ func (u *UserController) Update(ctx *gin.Context) {
 		if err := u.srv.Users().Update(c, existingUser,
 			metav1.UpdateOptions{}, u.options); err != nil {
 			log.Errorf("[control] 用户更新 service 层失败: username=%s, error=%v", username, err)
+			controllerStatus = "error"
+			controllerCode = strconv.Itoa(errors.GetCode(err))
+			if controllerCode == "-1" {
+				controllerCode = strconv.Itoa(code.ErrUnknown)
+			}
+			outcomeStatus = "error"
+			outcomeCode = controllerCode
+			outcomeMessage = errors.GetMessage(err)
+			outcomeHTTP = errors.GetHTTPStatus(err)
 			core.WriteResponse(ctx, err, nil)
 			auditLog("fail", err.Error())
 			return err
@@ -146,8 +226,31 @@ func (u *UserController) Update(ctx *gin.Context) {
 			"code":           code.ErrSuccess,
 		}
 
+		controllerDetails["updated_fields"] = []string{
+			"nickname", "email", "phone", "status", "is_admin",
+		}
+		outcomeMessage = "success"
+		awaitTimeout := 30 * time.Second
+		if u.options != nil && u.options.ServerRunOptions != nil && u.options.ServerRunOptions.CtxTimeout > 0 {
+			awaitTimeout = u.options.ServerRunOptions.CtxTimeout
+		}
+		trace.ExpectAsync(controllerCtx, time.Now().Add(awaitTimeout))
 		core.WriteResponse(ctx, nil, successData)
 		auditLog("success", "")
 		return nil
 	})
+
+	if err != nil && outcomeStatus == "success" {
+		outcomeStatus = "error"
+		outcomeCode = strconv.Itoa(errors.GetCode(err))
+		if outcomeCode == "-1" {
+			outcomeCode = strconv.Itoa(code.ErrUnknown)
+		}
+		outcomeMessage = errors.GetMessage(err)
+		outcomeHTTP = errors.GetHTTPStatus(err)
+		controllerStatus = "error"
+		controllerCode = outcomeCode
+	}
+
+	trace.RecordOutcome(controllerCtx, outcomeCode, outcomeMessage, outcomeStatus, outcomeHTTP)
 }

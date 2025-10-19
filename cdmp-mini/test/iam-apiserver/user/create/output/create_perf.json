@@ -1,0 +1,39 @@
+[
+  {
+    "scenario": "baseline/baseline_concurrent",
+    "requests": 10000,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 29638,
+    "qps": 337.39935318249684,
+    "error_count": 0,
+    "success_count": 10000,
+    "latency": {
+      "min_ms": 160.643442,
+      "max_ms": 6946.110994,
+      "avg_ms": 2891.00527,
+      "p50_ms": 2791.100491,
+      "p90_ms": 4561.066354,
+      "p95_ms": 4908.493173,
+      "p99_ms": 5364.557692
+    },
+    "counters": {
+      "cache_checks": 0,
+      "cache_hits": 0,
+      "degraded": 0,
+      "peak_concurrency": 1000,
+      "stages": 1
+    },
+    "notes": [
+      "多用户并发创建 - 模拟真实并发场景",
+      "Load pattern=uniform",
+      "目标对齐登录压测并发，生产端需快速拉满吞吐",
+      "SLA 基于近期基准结果: avg~277ms, p95~453ms, p99~599ms",
+      "username distribution: len_12=3333, len_28=3333, len_45=3334",
+      "password distribution: complex=5000, simple=5000",
+      "email distribution: corp.internal=3333, custom-domain.test=3334, example.com=3333",
+      "phone distribution: domestic=5000, international=5000",
+      "TPS=337.40"
+    ]
+  }
+]

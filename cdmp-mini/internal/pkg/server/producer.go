@@ -20,6 +20,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/ratelimiter"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
@@ -54,6 +55,23 @@ type fallbackHeader struct {
 const defaultProducerEnqueueTimeout = 500 * time.Millisecond
 
 var errProducerEnqueueTimeout = stderrors.New("producer enqueue timeout")
+
+func injectTraceHeader(ctx context.Context, msg *sarama.ProducerMessage) {
+	if msg == nil {
+		return
+	}
+	traceID := trace.TraceIDFromContext(ctx)
+	if traceID == "" {
+		return
+	}
+	for i := range msg.Headers {
+		if string(msg.Headers[i].Key) == HeaderTraceID {
+			msg.Headers[i].Value = []byte(traceID)
+			return
+		}
+	}
+	msg.Headers = append(msg.Headers, sarama.RecordHeader{Key: []byte(HeaderTraceID), Value: []byte(traceID)})
+}
 
 func (p *UserProducer) getEnqueueTimeout() time.Duration {
 	if p != nil && p.kafkaOptions != nil && p.kafkaOptions.ProducerEnqueueTimeout > 0 {
@@ -102,10 +120,12 @@ func (p *UserProducer) enqueueOrFallback(ctx context.Context, msg *sarama.Produc
 	if err == errProducerEnqueueTimeout {
 		timeout := p.getEnqueueTimeout()
 		log.Errorf("Failed to enqueue %s within %s. Triggering fallback.", detail, timeout)
+		trace.AddRequestTag(ctx, "async_forward_to", "fallback_storage")
 		p.writeToFallbackFile(msg)
 		return errors.WithCode(code.ErrKafkaFailed, "producer enqueue timeout after %s, message written to fallback", timeout)
 	}
 	log.Errorf("Failed to enqueue %s: %v. Triggering fallback.", detail, err)
+	trace.AddRequestTag(ctx, "async_forward_to", "fallback_storage")
 	p.writeToFallbackFile(msg)
 	return errors.WithCode(code.ErrKafkaFailed, "producer enqueue failed (%v), message written to fallback", err)
 }
@@ -191,16 +211,23 @@ func (p *UserProducer) handleErrors() {
 }
 
 func (p *UserProducer) SendUserCreateMessage(ctx context.Context, user *v1.User) error {
+	trace.AddRequestTag(ctx, "username", user.Name)
 	log.Debugf("[Producer] SendUserCreateMessage: username=%s", user.Name)
 	return p.sendUserMessage(ctx, user, OperationCreate, UserCreateTopic)
 }
 
 func (p *UserProducer) SendUserUpdateMessage(ctx context.Context, user *v1.User) error {
+	trace.AddRequestTag(ctx, "username", user.Name)
 	log.Debugf("[Producer] SendUserUpdateMessage: username=%s", user.Name)
 	return p.sendUserMessage(ctx, user, OperationUpdate, UserUpdateTopic)
 }
 
 func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username string) error {
+	spanCtx, span := trace.StartSpan(ctx, "kafka-producer", "send_delete")
+	if spanCtx != nil {
+		ctx = spanCtx
+	}
+	trace.AddRequestTag(ctx, "username", username)
 	log.Debugf("[Producer] SendUserDeleteMessage: username=%s", username)
 	deleteData := map[string]interface{}{
 		"username":   username,
@@ -209,6 +236,10 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 
 	data, err := json.Marshal(deleteData)
 	if err != nil {
+		trace.EndSpan(span, "error", strconv.Itoa(code.ErrEncodingJSON), map[string]interface{}{
+			"username": username,
+			"error":    err.Error(),
+		})
 		return errors.WithCode(code.ErrEncodingJSON, "failed to marshal delete message: %v", err)
 	}
 
@@ -223,8 +254,24 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 		},
 	}
 
-	if err := p.enqueueOrFallback(ctx, msg, fmt.Sprintf("delete message username=%s topic=%s", username, msg.Topic)); err != nil {
-		return err
+	injectTraceHeader(ctx, msg)
+	errSend := p.enqueueOrFallback(ctx, msg, fmt.Sprintf("delete message username=%s topic=%s", username, msg.Topic))
+	status := "success"
+	codeStr := strconv.Itoa(code.ErrSuccess)
+	if errSend != nil {
+		status = "error"
+		if c := errors.GetCode(errSend); c != 0 {
+			codeStr = strconv.Itoa(c)
+		} else {
+			codeStr = strconv.Itoa(code.ErrUnknown)
+		}
+	}
+	trace.EndSpan(span, status, codeStr, map[string]interface{}{
+		"username": username,
+		"topic":    msg.Topic,
+	})
+	if errSend != nil {
+		return errSend
 	}
 	return nil
 }
@@ -297,10 +344,20 @@ func (p *UserProducer) writeToFallbackFile(msg *sarama.ProducerMessage) {
 }
 
 func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, operation, topic string) error {
+	spanCtx, span := trace.StartSpan(ctx, "kafka-producer", fmt.Sprintf("send_%s", operation))
+	if spanCtx != nil {
+		ctx = spanCtx
+	}
 	log.Debugf("[Producer] sendUserMessage: username=%s, operation=%s, topic=%s", user.Name, operation, topic)
+	trace.AddRequestTag(ctx, "topic", topic)
+	trace.AddRequestTag(ctx, "operation", operation)
+	trace.AddRequestTag(ctx, "username", user.Name)
 
 	if p.limiter != nil {
 		if err := p.limiter.Wait(ctx); err != nil {
+			trace.EndSpan(span, "error", strconv.Itoa(code.ErrRateLimitExceeded), map[string]interface{}{
+				"error": err.Error(),
+			})
 			return errors.WithCode(code.ErrRateLimitExceeded, "producer rate limit exceeded: %v", err)
 		}
 	}
@@ -309,6 +366,21 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 	var errSend error
 	defer func() {
 		metrics.RecordKafkaProducerOperation(topic, operation, time.Since(start).Seconds(), errSend, false)
+		status := "success"
+		codeStr := strconv.Itoa(code.ErrSuccess)
+		if errSend != nil {
+			status = "error"
+			if c := errors.GetCode(errSend); c != 0 {
+				codeStr = strconv.Itoa(c)
+			} else {
+				codeStr = strconv.Itoa(code.ErrUnknown)
+			}
+		}
+		trace.EndSpan(span, status, codeStr, map[string]interface{}{
+			"username":  user.Name,
+			"topic":     topic,
+			"operation": operation,
+		})
 	}()
 
 	userData, err := json.Marshal(user)
@@ -330,6 +402,7 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 		},
 	}
 
+	injectTraceHeader(ctx, msg)
 	if err := p.enqueueOrFallback(ctx, msg, fmt.Sprintf("user message operation=%s topic=%s username=%s", operation, topic, user.Name)); err != nil {
 		errSend = err
 		return err

@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"net/http"
 	"strconv"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	authkeys "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/auth/keys"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/util"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/validator/jwtvalidator"
@@ -17,11 +19,52 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-func (u *UserService) ChangePassword(ctx context.Context, user *v1.User, claims *jwtvalidator.CustomClaims, opt *options.Options) error {
+func (u *UserService) ChangePassword(ctx context.Context, user *v1.User, claims *jwtvalidator.CustomClaims, opt *options.Options) (err error) {
+	serviceCtx, span := trace.StartSpan(ctx, "user-service", "change_password")
+	if serviceCtx != nil {
+		ctx = serviceCtx
+	}
+	trace.AddRequestTag(ctx, "target_user", user.Name)
+
+	spanStatus := "success"
+	businessCode := strconv.Itoa(code.ErrSuccess)
+	spanDetails := map[string]any{
+		"username": user.Name,
+	}
+	outcomeStatus := "success"
+	outcomeCode := businessCode
+	outcomeMessage := ""
+	outcomeHTTP := http.StatusOK
+	defer func() {
+		if err != nil {
+			spanStatus = "error"
+			outcomeStatus = "error"
+			if c := errors.GetCode(err); c != 0 {
+				businessCode = strconv.Itoa(c)
+				outcomeCode = businessCode
+			} else {
+				businessCode = strconv.Itoa(code.ErrUnknown)
+				outcomeCode = businessCode
+			}
+			if msg := errors.GetMessage(err); msg != "" {
+				outcomeMessage = msg
+			}
+			if status := errors.GetHTTPStatus(err); status != 0 {
+				outcomeHTTP = status
+			} else {
+				outcomeHTTP = http.StatusInternalServerError
+			}
+		}
+		if span != nil {
+			trace.EndSpan(span, spanStatus, businessCode, spanDetails)
+		}
+		trace.RecordOutcome(ctx, outcomeCode, outcomeMessage, outcomeStatus, outcomeHTTP)
+	}()
+
 	// 判断用户是否存在 - forceRefresh=true 强制回源验证
-	ruser, err := u.checkUserExist(ctx, user.Name, true)
-	if err != nil {
-		log.Debugf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", user.Name, err)
+	ruser, checkErr := u.checkUserExist(ctx, user.Name, true)
+	if checkErr != nil {
+		log.Debugf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", user.Name, checkErr)
 	}
 	if ruser != nil && ruser.Name == RATE_LIMIT_PREVENTION {
 		log.Debugf("用户%s不存在,无法修改密码", user.Name)
@@ -36,8 +79,10 @@ func (u *UserService) ChangePassword(ctx context.Context, user *v1.User, claims 
 		return nil, nil
 	})
 	if err != nil {
+		spanDetails["db_update"] = "failed"
 		return err
 	}
+	spanDetails["db_update"] = "success"
 
 	// 强制用户所有设备登出（带重试机制，与数据库更新保持统一风格）
 	_, err = util.RetryWithBackoff(u.Options.RedisOptions.MaxRetries, isRetryableError, func() (interface{}, error) {
@@ -52,13 +97,19 @@ func (u *UserService) ChangePassword(ctx context.Context, user *v1.User, claims 
 		return nil, nil
 	})
 	if err != nil {
+		spanDetails["logout_devices"] = "failed"
 		log.Warnf("清理用户令牌失败: %v", err)
 		// 不阻塞密码修改主流程
+	} else {
+		spanDetails["logout_devices"] = "success"
 	}
 
-	if err := u.blacklistAccessToken(ctx, claims); err != nil {
-		log.Warnf("写入访问令牌黑名单失败: %v", err)
+	if blErr := u.blacklistAccessToken(ctx, claims); blErr != nil {
+		spanDetails["blacklist_token"] = "failed"
+		log.Warnf("写入访问令牌黑名单失败: %v", blErr)
 		// 不触发回滚，记录日志即可
+	} else {
+		spanDetails["blacklist_token"] = "success"
 	}
 
 	log.Infof("用户%s修改密码成功，所有设备会话已强制登出", user.Name)

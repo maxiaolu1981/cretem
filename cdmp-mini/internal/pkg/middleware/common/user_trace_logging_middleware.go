@@ -1,17 +1,18 @@
 package common
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	uuid "github.com/satori/go.uuid"
 
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	apiv1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/version"
 )
@@ -22,13 +23,18 @@ type UserTraceConfig struct {
 	ServiceName  string
 	Env          string
 	PathPrefixes []string
+	AwaitTimeout time.Duration
 }
 
-// UserTraceLoggingMiddleware emits JSON-formatted spans for user-related APIs.
+// UserTraceLoggingMiddleware instruments user-related APIs with tracing and metrics.
 func UserTraceLoggingMiddleware(cfg UserTraceConfig) gin.HandlerFunc {
 	if len(cfg.PathPrefixes) == 0 {
 		cfg.PathPrefixes = []string{"/v1/users"}
 	}
+	if cfg.AwaitTimeout <= 0 {
+		cfg.AwaitTimeout = 30 * time.Second
+	}
+
 	hostname, _ := os.Hostname()
 	buildInfo := version.Get()
 
@@ -37,87 +43,112 @@ func UserTraceLoggingMiddleware(cfg UserTraceConfig) gin.HandlerFunc {
 			return
 		}
 
-		if !cfg.Enabled {
+		path := c.FullPath()
+		if path == "" {
+			path = c.Request.URL.Path
+		}
+
+		if !cfg.Enabled || !matchesPrefix(path, cfg.PathPrefixes) {
 			c.Next()
 			return
 		}
 
+		metrics.HTTPMiddlewareStart()
+		defer metrics.HTTPMiddlewareEnd()
+
+		requestID := ensureRequestID(c)
+		operation := c.Request.Method + " " + path
+
+		traceCtx, _ := trace.Start(
+			c.Request.Context(),
+			trace.Options{
+				TraceID:      requestID,
+				Service:      nonEmpty(cfg.ServiceName, "iam-apiserver"),
+				Component:    "user-api",
+				Operation:    operation,
+				Phase:        trace.PhaseHTTP,
+				Path:         path,
+				Method:       c.Request.Method,
+				ClientIP:     c.ClientIP(),
+				RequestID:    requestID,
+				AwaitTimeout: cfg.AwaitTimeout,
+			},
+		)
+
+		trace.AddRequestTag(traceCtx, "hostname", hostname)
+		trace.AddRequestTag(traceCtx, "env", cfg.Env)
+		trace.AddRequestTag(traceCtx, "build_version", buildInfo.GitVersion)
+		trace.AddRequestTag(traceCtx, "user_agent", c.Request.UserAgent())
+		trace.AddRequestTag(traceCtx, "host", c.Request.Host)
+
+		c.Request = c.Request.WithContext(traceCtx)
+
 		start := time.Now()
-		requestID := GetRequestIDFromContext(c)
-		if requestID == "" {
-			requestID = GetRequestIDFromHeaders(c)
-		}
-		if requestID == "" {
-			requestID = uuid.Must(uuid.NewV4()).String()
-			c.Set(XRequestIDKey, requestID)
-			c.Request.Header.Set(XRequestIDKey, requestID)
-		}
-		spanID := uuid.Must(uuid.NewV4()).String()
 
 		c.Next()
 
-		fullPath := c.FullPath()
-		if fullPath == "" {
-			fullPath = c.Request.URL.Path
-		}
-		if !matchesPrefix(fullPath, cfg.PathPrefixes) {
-			return
+		duration := time.Since(start)
+		statusCode := c.Writer.Status()
+		trace.UpdateHTTPStatus(traceCtx, statusCode)
+
+		operator := extractTraceUserID(c)
+		if operator != "" {
+			trace.SetOperator(traceCtx, operator)
 		}
 
-		end := time.Now()
-		durationMs := float64(end.Sub(start)) / float64(time.Millisecond)
-		startMs := start.UnixNano() / int64(time.Millisecond)
-		endMs := end.UnixNano() / int64(time.Millisecond)
+		statusStr := strconv.Itoa(statusCode)
+		errorType := classifyStatus(statusCode)
 
-		status := "success"
-		if c.Writer.Status() >= http.StatusBadRequest {
-			status = "error"
+		requestSize := c.Request.ContentLength
+		if requestSize < 0 {
+			requestSize = 0
+		}
+		responseSize := int64(c.Writer.Size())
+		if responseSize < 0 {
+			responseSize = 0
 		}
 
-		var errMsg interface{}
-		if len(c.Errors) > 0 {
-			errMsg = c.Errors.String()
-		}
+		metrics.RecordHTTPRequest(
+			path,
+			c.Request.Method,
+			statusStr,
+			duration.Seconds(),
+			requestSize,
+			responseSize,
+			c.ClientIP(),
+			c.Request.UserAgent(),
+			c.Request.Host,
+			"",
+			errorType,
+			operator,
+			"",
+		)
 
-		operation := c.Request.Method + " " + fullPath
-		payload := map[string]interface{}{
-			"trace": map[string]interface{}{
-				"trace_id":       requestID,
-				"root_operation": operation,
-				"start_time":     startMs,
-			},
-			"span": map[string]interface{}{
-				"operation":   operation,
-				"id":          spanID,
-				"parent_id":   requestID,
-				"service":     nonEmpty(cfg.ServiceName, "iam-apiserver"),
-				"start_time":  startMs,
-				"end_time":    endMs,
-				"duration_ms": durationMs,
-				"status":      status,
-				"error":       errMsg,
-				"component":   "user-api",
-			},
-			"context": map[string]interface{}{
-				"user_id":    extractTraceUserID(c),
-				"order_id":   extractTraceOrderID(c),
-				"client_ip":  c.ClientIP(),
-				"request_id": requestID,
-			},
-			"resource": map[string]interface{}{
-				"host":    hostname,
-				"env":     cfg.Env,
-				"version": buildInfo.GitVersion,
-			},
-		}
-
-		data, err := json.Marshal(payload)
-		if err != nil {
-			log.Debugw("user trace logging marshal failed", "error", err, "operation", operation)
-			return
-		}
-		log.Debug(string(data))
+		trace.Complete(traceCtx)
 	}
+}
+
+func classifyStatus(status int) string {
+	if status >= http.StatusInternalServerError {
+		return "server_error"
+	}
+	if status >= http.StatusBadRequest {
+		return "client_error"
+	}
+	return "success"
+}
+
+func ensureRequestID(c *gin.Context) string {
+	requestID := GetRequestIDFromContext(c)
+	if requestID == "" {
+		requestID = GetRequestIDFromHeaders(c)
+	}
+	if requestID == "" {
+		requestID = uuid.Must(uuid.NewV4()).String()
+	}
+	c.Set(XRequestIDKey, requestID)
+	c.Request.Header.Set(XRequestIDKey, requestID)
+	return requestID
 }
 
 func matchesPrefix(path string, prefixes []string) bool {
@@ -154,22 +185,6 @@ func extractTraceUserID(c *gin.Context) string {
 	}
 	if val := c.Param("name"); val != "" {
 		return val
-	}
-	return ""
-}
-
-func extractTraceOrderID(c *gin.Context) string {
-	if c == nil {
-		return ""
-	}
-	if orderID := c.Query("order_id"); orderID != "" {
-		return orderID
-	}
-	if orderID := c.Param("order_id"); orderID != "" {
-		return orderID
-	}
-	if orderID := c.Query("orderId"); orderID != "" {
-		return orderID
 	}
 	return ""
 }

@@ -2,6 +2,8 @@ package user
 
 import (
 	"context"
+	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -9,6 +11,7 @@ import (
 	"github.com/bytedance/gopkg/util/logger"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/fields"
@@ -16,7 +19,54 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error) {
+func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *options.Options) (result *v1.UserList, err error) {
+	serviceCtx, serviceSpan := trace.StartSpan(ctx, "user-service", "list_users")
+	if serviceCtx != nil {
+		ctx = serviceCtx
+	}
+
+	spanStatus := "success"
+	businessCode := strconv.Itoa(code.ErrSuccess)
+	spanDetails := map[string]any{
+		"field_selector": opts.FieldSelector,
+	}
+	outcomeStatus := "success"
+	outcomeCode := businessCode
+	outcomeMessage := ""
+	outcomeHTTP := http.StatusOK
+
+	defer func() {
+		if err != nil {
+			spanStatus = "error"
+			outcomeStatus = "error"
+			if c := errors.GetCode(err); c != 0 {
+				businessCode = strconv.Itoa(c)
+				outcomeCode = businessCode
+			} else {
+				businessCode = strconv.Itoa(code.ErrUnknown)
+				outcomeCode = businessCode
+			}
+			if msg := errors.GetMessage(err); msg != "" {
+				outcomeMessage = msg
+			}
+			if status := errors.GetHTTPStatus(err); status != 0 {
+				outcomeHTTP = status
+			} else {
+				outcomeHTTP = http.StatusInternalServerError
+			}
+		}
+		if opts.Limit != nil {
+			spanDetails["limit"] = *opts.Limit
+		}
+		if opts.Offset != nil {
+			spanDetails["offset"] = *opts.Offset
+		}
+		if serviceSpan != nil {
+			trace.EndSpan(serviceSpan, spanStatus, businessCode, spanDetails)
+		}
+		trace.RecordOutcome(ctx, outcomeCode, outcomeMessage, outcomeStatus, outcomeHTTP)
+	}()
+
 	startTime := time.Now()
 
 	var username string
@@ -32,6 +82,8 @@ func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *op
 	if username == "" {
 		return nil, errors.WithCode(code.ErrInvalidParameter, "必须指定用户名进行查询")
 	}
+	trace.AddRequestTag(ctx, "target_user", username)
+	spanDetails["target_user"] = username
 
 	//判断用户是否存在
 	ruser, err := u.checkUserExist(ctx, username, true)
@@ -133,10 +185,12 @@ func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *op
 	processingTime := time.Since(startTime)
 	logger.Debugf("Successfully processed %d users in %v", len(resultItems), processingTime)
 
-	return &v1.UserList{
+	result = &v1.UserList{
 		ListMeta: users.ListMeta,
 		Items:    resultItems,
-	}, nil
+	}
+	spanDetails["returned_count"] = len(resultItems)
+	return result, nil
 }
 
 // processUserWorker 处理单个用户的worker
@@ -167,14 +221,29 @@ func (u *UserService) processUserWorker(
 		default:
 		}
 
+		itemCtx, itemSpan := trace.StartSpan(ctx, "user-service", "process_user")
+		spanStatus := "success"
+		spanCode := strconv.Itoa(code.ErrSuccess)
+		spanDetails := map[string]any{
+			"user_id":  user.ID,
+			"username": user.Name,
+		}
+
 		// 处理单个用户（带超时控制）
-		processedUser, err := u.processSingleUserWithTimeout(ctx, user)
+		processedUser, err := u.processSingleUserWithTimeout(itemCtx, user)
 		if err != nil {
 			if atomic.CompareAndSwapInt32(hasError, 0, 1) {
 				select {
 				case errChan <- err:
 				default: // 避免阻塞
 				}
+			}
+			spanStatus = "error"
+			if c := errors.GetCode(err); c != 0 {
+				spanCode = strconv.Itoa(c)
+			}
+			if itemSpan != nil {
+				trace.EndSpan(itemSpan, spanStatus, spanCode, spanDetails)
 			}
 			return
 		}
@@ -187,6 +256,10 @@ func (u *UserService) processUserWorker(
 			logger.Warnf("User ID %d not found in index map", user.ID)
 		}
 		mu.Unlock()
+		if itemSpan != nil {
+			spanDetails["policy_count"] = processedUser.TotalPolicy
+			trace.EndSpan(itemSpan, spanStatus, spanCode, spanDetails)
+		}
 	}
 }
 

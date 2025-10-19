@@ -43,6 +43,9 @@ var (
 	BusinessThroughputStats *prometheus.SummaryVec // 业务吞吐量统计
 	BusinessErrorRate       *prometheus.GaugeVec   // 业务错误率
 
+	TraceSpanDuration      *prometheus.HistogramVec
+	TraceOperationDuration *prometheus.HistogramVec
+
 	UserCreateStepDuration   *prometheus.HistogramVec
 	UserCreateSlowStepsTotal *prometheus.CounterVec
 
@@ -283,6 +286,24 @@ func init() {
 			Help: "Business operation error rate percentage",
 		},
 		[]string{"service", "operation"}, // ✅ 正确
+	)
+
+	TraceSpanDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "trace_span_duration_seconds",
+			Help:    "Duration of individual trace spans",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 2, 5},
+		},
+		[]string{"component", "operation", "status"},
+	)
+
+	TraceOperationDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "trace_operation_duration_seconds",
+			Help:    "Total duration for traced operations",
+			Buckets: []float64{0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30},
+		},
+		[]string{"operation", "phase", "status"},
 	)
 
 	UserCreateStepDuration = prometheus.NewHistogramVec(
@@ -844,6 +865,8 @@ func init() {
 		BusinessInProgress,
 		BusinessThroughputStats,
 		BusinessErrorRate,
+		TraceSpanDuration,
+		TraceOperationDuration,
 		UserCreateStepDuration,
 		UserCreateSlowStepsTotal,
 		AuditEventsTotal,
@@ -1298,6 +1321,22 @@ func RecordBusinessQPS(service, operation string, qps float64) {
 // RecordBusinessErrorRate 记录业务错误率
 func RecordBusinessErrorRate(service, operation string, errorRate float64) {
 	BusinessErrorRate.WithLabelValues(service, operation).Set(errorRate)
+}
+
+// RecordTraceSpanDuration records duration for individual trace spans.
+func RecordTraceSpanDuration(component, operation, status string, duration time.Duration) {
+	if TraceSpanDuration == nil {
+		return
+	}
+	TraceSpanDuration.WithLabelValues(component, operation, status).Observe(duration.Seconds())
+}
+
+// RecordTraceOperationDuration records duration for a full traced operation phase.
+func RecordTraceOperationDuration(operation, phase, status string, duration time.Duration) {
+	if TraceOperationDuration == nil {
+		return
+	}
+	TraceOperationDuration.WithLabelValues(operation, phase, status).Observe(duration.Seconds())
 }
 
 // RecordAuditEvent 记录审计事件发生次数。

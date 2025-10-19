@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -121,12 +122,18 @@ type scenarioResult struct {
 	errors          []string
 	cacheHits       int
 	cacheChecks     int
-	cleanup         map[string]struct{}
+	cleanup         map[string]bool
 	nameBuckets     map[string]int
 	passwordBuckets map[string]int
 	emailBuckets    map[string]int
 	phoneBuckets    map[string]int
 	stageSummaries  []stageSummary
+}
+
+type cleanupTask struct {
+	Name        string
+	RequireWait bool
+	Degraded    bool
 }
 
 type scenarioMetrics struct {
@@ -208,7 +215,7 @@ func (o scenarioOptions) normalized() scenarioOptions {
 func newScenarioResult(sc performanceScenario) *scenarioResult {
 	return &scenarioResult{
 		scenario:        sc,
-		cleanup:         make(map[string]struct{}),
+		cleanup:         make(map[string]bool),
 		nameBuckets:     make(map[string]int),
 		passwordBuckets: make(map[string]int),
 		emailBuckets:    make(map[string]int),
@@ -230,6 +237,7 @@ func (r *scenarioResult) record(outcome operationOutcome) {
 	}
 	if outcome.degraded {
 		r.degraded++
+		r.cleanup[outcome.variant.Spec.Name] = false
 	} else if outcome.success {
 		r.success++
 	} else {
@@ -239,7 +247,7 @@ func (r *scenarioResult) record(outcome operationOutcome) {
 		}
 	}
 	if outcome.created {
-		r.cleanup[outcome.variant.Spec.Name] = struct{}{}
+		r.cleanup[outcome.variant.Spec.Name] = true
 	}
 	if outcome.cacheChecks > 0 {
 		r.cacheChecks += outcome.cacheChecks
@@ -271,6 +279,20 @@ func (r *scenarioResult) cleanupList() []string {
 		out = append(out, name)
 	}
 	return out
+}
+
+func (r *scenarioResult) cleanupTasks() []cleanupTask {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	tasks := make([]cleanupTask, 0, len(r.cleanup))
+	for name, requireWait := range r.cleanup {
+		tasks = append(tasks, cleanupTask{
+			Name:        name,
+			RequireWait: requireWait,
+			Degraded:    !requireWait,
+		})
+	}
+	return tasks
 }
 
 func (r *scenarioResult) errorsSnapshot(limit int) []string {
@@ -426,13 +448,24 @@ func runPerformanceScenario(t *testing.T, env *framework.Env, recorder *framewor
 	sc.Options = sc.Options.normalized()
 	res := newScenarioResult(sc)
 	t.Cleanup(func() {
-		for _, name := range res.cleanupList() {
-			if sc.Options.SkipWaitForReady {
-				if err := env.WaitForUser(name, sc.Options.WaitForReady); err != nil {
-					t.Logf("cleanup wait for user %s failed: %v", name, err)
+		tasks := res.cleanupTasks()
+		standard := make([]cleanupTask, 0, len(tasks))
+		degraded := make([]string, 0, len(tasks))
+		for _, task := range tasks {
+			if task.Degraded {
+				if task.Name != "" {
+					degraded = append(degraded, task.Name)
 				}
+				continue
 			}
-			env.ForceDeleteUserIgnore(name)
+			standard = append(standard, task)
+		}
+		followup := parallelCleanup(t, env, standard, sc.Options)
+		if len(followup) > 0 {
+			degraded = append(degraded, followup...)
+		}
+		if len(degraded) > 0 {
+			cleanupDegradedUsers(t, env, degraded, sc.Options.WaitForReady)
 		}
 	})
 	res.start = time.Now()
@@ -510,6 +543,170 @@ func runPerformanceScenario(t *testing.T, env *framework.Env, recorder *framewor
 	}
 	recorder.AddPerformance(point)
 	return metrics
+}
+
+func parallelCleanup(t testing.TB, env *framework.Env, tasks []cleanupTask, opts scenarioOptions) []string {
+	t.Helper()
+	if len(tasks) == 0 {
+		return nil
+	}
+	workerCount := runtime.NumCPU()
+	if workerCount < 2 {
+		workerCount = 2
+	}
+	if workerCount > 16 {
+		workerCount = 16
+	}
+	if workerCount > len(tasks) {
+		workerCount = len(tasks)
+	}
+	if workerCount == 0 {
+		workerCount = 1
+	}
+	jobs := make(chan cleanupTask)
+	var wg sync.WaitGroup
+	waitTimeout := opts.WaitForReady
+	if waitTimeout <= 0 {
+		waitTimeout = waitDefaultTimeout
+	}
+	var followupMu sync.Mutex
+	followup := make([]string, 0)
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for task := range jobs {
+				if task.Name == "" {
+					continue
+				}
+				needFollow := false
+				if task.RequireWait && opts.SkipWaitForReady {
+					if err := env.WaitForUser(task.Name, waitTimeout); err != nil {
+						t.Logf("cleanup wait for user %s failed: %v", task.Name, err)
+						needFollow = true
+					}
+				}
+				deleted, err := attemptForceDelete(env, task.Name)
+				if err != nil {
+					t.Logf("cleanup delete %s failed: %v", task.Name, err)
+					needFollow = true
+				} else if !deleted {
+					needFollow = true
+				}
+				if needFollow {
+					followupMu.Lock()
+					followup = append(followup, task.Name)
+					followupMu.Unlock()
+				}
+			}
+		}()
+	}
+	for _, task := range tasks {
+		if task.Name == "" {
+			continue
+		}
+		jobs <- task
+	}
+	close(jobs)
+	wg.Wait()
+	return followup
+}
+
+func cleanupDegradedUsers(t testing.TB, env *framework.Env, names []string, waitHint time.Duration) {
+	t.Helper()
+	if len(names) == 0 {
+		return
+	}
+	pending := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if name == "" {
+			continue
+		}
+		pending[name] = struct{}{}
+	}
+	if len(pending) == 0 {
+		return
+	}
+	deadline := time.Now().Add(resolveDegradedCleanupDeadline(waitHint))
+	time.Sleep(2 * time.Second)
+	for len(pending) > 0 {
+		if time.Now().After(deadline) {
+			break
+		}
+		for name := range pending {
+			exists, err := degradedUserExists(env, name)
+			if err != nil {
+				t.Logf("degraded cleanup probe for %s failed: %v", name, err)
+				continue
+			}
+			if !exists {
+				continue
+			}
+			deleted, err := attemptForceDelete(env, name)
+			if err != nil {
+				t.Logf("degraded cleanup delete %s failed: %v", name, err)
+				continue
+			}
+			if deleted {
+				delete(pending, name)
+			}
+		}
+		if len(pending) == 0 {
+			break
+		}
+		time.Sleep(1500 * time.Millisecond)
+	}
+	for name := range pending {
+		t.Logf("cleanup degraded user %s timed out; manual cleanup may be required", name)
+	}
+}
+
+func resolveDegradedCleanupDeadline(waitHint time.Duration) time.Duration {
+	base := 2 * time.Minute
+	if waitHint <= 0 {
+		waitHint = waitDefaultTimeout
+	}
+	factor := waitHint * 6
+	if factor > base {
+		base = factor
+	}
+	return base
+}
+
+func degradedUserExists(env *framework.Env, name string) (bool, error) {
+	resp, err := env.AdminRequest(http.MethodGet, fmt.Sprintf("/v1/users/%s", name), nil)
+	if err != nil {
+		return false, err
+	}
+	if resp == nil {
+		return false, fmt.Errorf("nil response while probing user %s", name)
+	}
+	switch resp.HTTPStatus() {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected status %d while probing user %s", resp.HTTPStatus(), name)
+	}
+}
+
+func attemptForceDelete(env *framework.Env, name string) (bool, error) {
+	resp, err := env.ForceDeleteUser(name)
+	if err != nil {
+		return false, err
+	}
+	if resp == nil {
+		return false, fmt.Errorf("nil response while deleting user %s", name)
+	}
+	switch resp.HTTPStatus() {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusNotFound:
+		return false, nil
+	default:
+		return false, fmt.Errorf("unexpected delete status %d for user %s", resp.HTTPStatus(), name)
+	}
 }
 
 func executeStage(env *framework.Env, res *scenarioResult, sc performanceScenario, stage workloadStage) {

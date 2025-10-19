@@ -2,14 +2,18 @@ package user
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/bytedance/gopkg/util/logger"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/db"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	apierrors "github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
 // Get 查询用户（按用户名）- 生产级大并发版本
@@ -17,6 +21,23 @@ func (u *Users) Get(ctx context.Context, username string,
 	opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
 
 	log.Debugf("store:开始处理用户%vget请求...", username)
+	storeCtx, storeSpan := trace.StartSpan(ctx, "user-store", "get_user")
+	if storeCtx != nil {
+		ctx = storeCtx
+	}
+	trace.AddRequestTag(ctx, "target_user", username)
+
+	spanStatus := "success"
+	spanCode := strconv.Itoa(code.ErrSuccess)
+	spanDetails := map[string]any{
+		"username": username,
+	}
+	defer func() {
+		if storeSpan != nil {
+			trace.EndSpan(storeSpan, spanStatus, spanCode, spanDetails)
+		}
+	}()
+
 	// 设置包含重试时间预算的超时上下文
 	totalCtx, cancel := u.createTimeoutContext(ctx, opt.ServerRunOptions.CtxTimeout, 3)
 	defer cancel()
@@ -47,8 +68,16 @@ func (u *Users) Get(ctx context.Context, username string,
 	})
 
 	if err != nil {
+		spanStatus = "error"
+		if c := apierrors.GetCode(err); c != 0 {
+			spanCode = strconv.Itoa(c)
+		}
 		return nil, u.handleGetError(err)
 	}
 	log.Debugf("查询用户%s成功", username)
+	spanDetails["cached_user"] = resultUser != nil
+	if resultUser != nil {
+		spanDetails["result_id"] = resultUser.ID
+	}
 	return resultUser, nil
 }

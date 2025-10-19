@@ -19,6 +19,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
@@ -97,6 +98,10 @@ func parseInstanceID(idStr string) int {
 
 // 消费
 func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, ready *sync.WaitGroup) {
+	ctx, span := trace.StartSpan(ctx, "kafka-consumer", "start_consuming")
+	trace.AddRequestTag(ctx, "topic", c.topic)
+	trace.AddRequestTag(ctx, "group", c.groupID)
+	defer trace.EndSpan(span, "success", "", map[string]interface{}{})
 	log.Infof("[Consumer] StartConsuming: topic=%s, groupID=%s, workerCount=%d", c.topic, c.groupID, workerCount)
 	// job 用于在 fetcher 与 worker 之间传递消息，并携带一个 done 通道用于返回处理结果
 	type job struct {
@@ -114,7 +119,11 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 			})
 		}
 	}
-	defer signalReady()
+	ctx, dispatcherSpan := trace.StartSpan(ctx, "kafka-consumer", "dispatch_loop")
+	defer func() {
+		trace.EndSpan(dispatcherSpan, "success", "", nil)
+		signalReady()
+	}()
 
 	// 启动 worker 池，只负责处理业务，不直接调用 FetchMessage/CommitMessages
 	var workerWg sync.WaitGroup
@@ -134,8 +143,50 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 				messageKey := string(j.msg.Key)
 				processStart := time.Now()
 
+				// 构建异步 trace 上下文
+				msgCtx, msgSpan := c.startAsyncTraceContext(ctx, j.msg, operation, workerID)
+
 				// 处理消息（带重试的业务处理）
-				err := c.processMessageWithRetry(ctx, j.msg, 3)
+				err := c.processMessageWithRetry(msgCtx, j.msg, 3)
+
+				businessCode := strconv.Itoa(code.ErrSuccess)
+				status := "success"
+				message := "message processed"
+				if forwarded, ok := trace.GetRequestTag(msgCtx, "async_forward_to"); ok {
+					status = "degraded"
+					businessCode = strconv.Itoa(code.ErrKafkaFailed)
+					if target, ok := forwarded.(string); ok && target != "" {
+						message = fmt.Sprintf("forwarded to %s", target)
+					} else {
+						message = "forwarded to fallback"
+					}
+				}
+				if err != nil {
+					status = "error"
+					if c := errors.GetCode(err); c != 0 {
+						businessCode = strconv.Itoa(c)
+					} else {
+						businessCode = strconv.Itoa(code.ErrUnknown)
+					}
+					message = err.Error()
+				}
+				spanDetails := map[string]interface{}{
+					"topic":       c.topic,
+					"partition":   j.msg.Partition,
+					"offset":      j.msg.Offset,
+					"worker_id":   workerID,
+					"operation":   operation,
+					"message_key": messageKey,
+				}
+				if forwarded, ok := trace.GetRequestTag(msgCtx, "async_forward_to"); ok {
+					spanDetails["forward_target"] = forwarded
+				}
+				if err != nil {
+					spanDetails["error"] = err.Error()
+				}
+				trace.EndSpan(msgSpan, status, businessCode, spanDetails)
+				trace.RecordOutcome(msgCtx, businessCode, message, status, 0)
+				trace.Complete(msgCtx)
 
 				// 在本地记录指标（worker 负责记录处理耗时/成功/失败）
 				c.recordConsumerMetrics(operation, messageKey, processStart, err, j.workerID)
@@ -734,6 +785,65 @@ func (c *UserConsumer) getOperationFromHeaders(headers []kafka.Header) string {
 		}
 	}
 	return OperationCreate
+}
+
+func (c *UserConsumer) getTraceIDFromHeaders(headers []kafka.Header) string {
+	for _, header := range headers {
+		if header.Key == HeaderTraceID {
+			return string(header.Value)
+		}
+	}
+	return ""
+}
+
+func (c *UserConsumer) getHeaderValue(headers []kafka.Header, key string) string {
+	for _, header := range headers {
+		if header.Key == key {
+			return string(header.Value)
+		}
+	}
+	return ""
+}
+
+func (c *UserConsumer) startAsyncTraceContext(parentCtx context.Context, msg kafka.Message, operation string, workerID int) (context.Context, *trace.Span) {
+	traceID := c.getTraceIDFromHeaders(msg.Headers)
+	if traceID == "" {
+		traceID = trace.TraceIDFromContext(parentCtx)
+	}
+	if traceID == "" {
+		traceID = fmt.Sprintf("generated-%d", time.Now().UnixNano())
+	}
+	opName := operation
+	if strings.TrimSpace(opName) == "" {
+		opName = "unknown"
+	}
+	_, asyncCtx := trace.NewDetached(trace.Options{
+		TraceID:   traceID,
+		Service:   "iam-apiserver",
+		Component: "user-consumer",
+		Operation: fmt.Sprintf("%s_async", opName),
+		RequestID: traceID,
+		Path:      c.topic,
+		Method:    "KAFKA",
+		Now:       time.Now(),
+	})
+
+	trace.AddRequestTag(asyncCtx, "topic", c.topic)
+	trace.AddRequestTag(asyncCtx, "group", c.groupID)
+	trace.AddRequestTag(asyncCtx, "partition", msg.Partition)
+	trace.AddRequestTag(asyncCtx, "offset", msg.Offset)
+	trace.AddRequestTag(asyncCtx, "worker_id", workerID)
+	trace.AddRequestTag(asyncCtx, "operation", opName)
+	if len(msg.Key) > 0 {
+		trace.AddRequestTag(asyncCtx, "message_key", string(msg.Key))
+	}
+	if attemptHeader := c.getHeaderValue(msg.Headers, HeaderRetryCount); attemptHeader != "" {
+		trace.AddRequestTag(asyncCtx, "retry_count", attemptHeader)
+	}
+
+	spanName := fmt.Sprintf("process_%s", opName)
+	spanCtx, span := trace.StartSpan(asyncCtx, "kafka-consumer", spanName)
+	return spanCtx, span
 }
 
 func shouldRetry(err error) bool {

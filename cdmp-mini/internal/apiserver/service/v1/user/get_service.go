@@ -4,40 +4,101 @@ import (
 	"context"
 	"errors"
 	"net"
+	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-redis/redis/v8"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
+	apierrors "github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
-
+func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (result *v1.User, err error) {
 	log.Debug("service:开始处理用户查询请求...")
 
-	cacheKey := u.generateUserCacheKey(username)
-	// 先尝试无锁查询缓存（大部分请求应该在这里返回）
-	user, found, err := u.tryGetFromCache(ctx, username)
-	if err != nil {
-		// 缓存查询错误，记录但继续流程
-		log.Errorf("缓存查询异常，继续流程", "error", err.Error(), "username", username)
-		// 使用 WithLabelValues 来记录错误
-		metrics.CacheErrors.WithLabelValues("query_failed", "get").Inc()
+	serviceCtx, serviceSpan := trace.StartSpan(ctx, "user-service", "get_user")
+	if serviceCtx != nil {
+		ctx = serviceCtx
 	}
-	// 缓存命中，直接返回
-	if found {
-		return user, nil
+
+	cacheKey := u.generateUserCacheKey(username)
+	trace.AddRequestTag(ctx, "target_user", username)
+	trace.AddRequestTag(ctx, "cache_key", cacheKey)
+
+	spanStatus := "success"
+	outcomeStatus := "success"
+	outcomeCode := strconv.Itoa(code.ErrSuccess)
+	outcomeMessage := ""
+	outcomeHTTP := http.StatusOK
+	cacheHitLabel := "miss"
+	sharedResult := false
+
+	spanDetails := map[string]interface{}{
+		"target_user": username,
+		"cache_key":   cacheKey,
+	}
+
+	defer func() {
+		if err != nil {
+			spanStatus = "error"
+			outcomeStatus = "error"
+			if c := apierrors.GetCode(err); c != 0 {
+				outcomeCode = strconv.Itoa(c)
+			} else {
+				outcomeCode = strconv.Itoa(code.ErrUnknown)
+			}
+			if msg := apierrors.GetMessage(err); msg != "" {
+				outcomeMessage = msg
+			}
+			if status := apierrors.GetHTTPStatus(err); status != 0 {
+				outcomeHTTP = status
+			} else {
+				outcomeHTTP = http.StatusInternalServerError
+			}
+		}
+		spanDetails["cache_hit"] = cacheHitLabel
+		spanDetails["singleflight_shared"] = sharedResult
+		if result != nil {
+			spanDetails["result_user"] = result.Name
+		}
+		if serviceSpan != nil {
+			trace.EndSpan(serviceSpan, spanStatus, outcomeCode, spanDetails)
+		}
+		trace.RecordOutcome(ctx, outcomeCode, outcomeMessage, outcomeStatus, outcomeHTTP)
+	}()
+
+	cachedUser, found, cacheErr := u.tryGetFromCache(ctx, username)
+	if cacheErr != nil {
+		log.Errorf("缓存查询异常，继续流程", "error", cacheErr.Error(), "username", username)
+		metrics.CacheErrors.WithLabelValues("query_failed", "get").Inc()
+		cacheHitLabel = "error"
+	}
+	if cacheErr == nil && found {
+		switch {
+		case cachedUser == nil:
+			cacheHitLabel = "null_hit"
+		case cachedUser.Name == RATE_LIMIT_PREVENTION:
+			cacheHitLabel = "negative_hit"
+		default:
+			cacheHitLabel = "hit"
+		}
+		result = cachedUser
+		return result, nil
 	}
 
 	// 缓存未命中，使用singleflight保护数据库查询
-	result, err, shared := u.group.Do(cacheKey, func() (interface{}, error) {
+	var dbResult interface{}
+	dbResult, err, sharedResult = u.group.Do(cacheKey, func() (interface{}, error) {
 		return u.getUserFromDBAndSetCache(ctx, username)
 	})
-	if shared {
+	if sharedResult {
 		log.Debugf("数据库查询被合并，共享结果", "username", username)
 		metrics.RequestsMerged.WithLabelValues("get").Inc()
 	}
@@ -45,11 +106,12 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 		return nil, err
 	}
 
-	if result == nil {
+	if dbResult == nil {
 		return nil, nil
 	}
 
-	return result.(*v1.User), nil
+	result = dbResult.(*v1.User)
+	return result, nil
 }
 
 // 专门处理缓存查询，不包含降级逻辑

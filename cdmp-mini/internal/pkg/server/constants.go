@@ -45,6 +45,7 @@ const (
 	HeaderNextRetryTS       = "next-retry-ts"
 	HeaderDeadLetterReason  = "deadletter-reason"
 	HeaderDeadLetterTS      = "deadletter-timestamp"
+	HeaderTraceID           = "trace-id"
 
 	// Operation Types
 	OperationCreate = "create"

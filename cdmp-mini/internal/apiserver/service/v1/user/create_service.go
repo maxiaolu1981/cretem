@@ -8,7 +8,10 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
+
+	"strconv"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -16,7 +19,24 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
 
-func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
+func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) (err error) {
+	ctx, span := trace.StartSpan(ctx, "user-service", "create")
+	trace.AddRequestTag(ctx, "username", user.Name)
+	businessCode := strconv.Itoa(code.ErrSuccess)
+	spanStatus := "success"
+	defer func() {
+		if err != nil {
+			spanStatus = "error"
+			if c := errors.GetCode(err); c != 0 {
+				businessCode = strconv.Itoa(c)
+			} else {
+				businessCode = strconv.Itoa(code.ErrUnknown)
+			}
+		}
+		trace.EndSpan(span, spanStatus, businessCode, map[string]interface{}{
+			"username": user.Name,
+		})
+	}()
 
 	log.Debugf("service:开始处理用户%v创建请求...", user.Name)
 
@@ -39,21 +59,35 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	)
 
 	wg.Add(2)
-	go func() {
+	go func(ctx context.Context) {
 		defer wg.Done()
+		spanCtx, contactSpan := trace.StartSpan(ctx, "user-service", "ensure_contacts_unique")
 		start := time.Now()
-		err := u.ensureContactUniqueness(parallelCtx, user)
+		err := u.ensureContactUniqueness(spanCtx, user)
 		contactsDuration = time.Since(start)
 		contactsErr = err
+		status := "success"
+		codeStr := strconv.Itoa(code.ErrSuccess)
 		if err != nil {
 			cancel()
+			status = "error"
+			if c := errors.GetCode(err); c != 0 {
+				codeStr = strconv.Itoa(c)
+			} else {
+				codeStr = strconv.Itoa(code.ErrUnknown)
+			}
 		}
-	}()
+		trace.EndSpan(contactSpan, status, codeStr, map[string]interface{}{
+			"username":    user.Name,
+			"duration_ms": contactsDuration.Milliseconds(),
+		})
+	}(parallelCtx)
 
-	go func() {
+	go func(ctx context.Context) {
 		defer wg.Done()
+		spanCtx, checkSpan := trace.StartSpan(ctx, "user-service", "check_user_exist")
 		start := time.Now()
-		ruser, err := u.checkUserExist(parallelCtx, user.Name, false)
+		ruser, err := u.checkUserExist(spanCtx, user.Name, false)
 		existenceDuration = time.Since(start)
 		existErr = err
 		if err == nil {
@@ -62,7 +96,21 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 				cancel()
 			}
 		}
-	}()
+		status := "success"
+		codeStr := strconv.Itoa(code.ErrSuccess)
+		if err != nil {
+			status = "error"
+			if c := errors.GetCode(err); c != 0 {
+				codeStr = strconv.Itoa(c)
+			} else {
+				codeStr = strconv.Itoa(code.ErrUnknown)
+			}
+		}
+		trace.EndSpan(checkSpan, status, codeStr, map[string]interface{}{
+			"username":    user.Name,
+			"duration_ms": existenceDuration.Milliseconds(),
+		})
+	}(parallelCtx)
 
 	wg.Wait()
 
@@ -79,27 +127,46 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	}
 
 	if contactsErr != nil {
-		return contactsErr
+		err = contactsErr
+		return err
 	}
 	if existErr != nil {
 		log.Debugf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查, 放行该用户: %v", user.Name, existErr)
 	}
 	if existingUser != nil && existingUser.Name != RATE_LIMIT_PREVENTION {
 		log.Debugf("用户%s已经存在,无法创建", user.Name)
-		return errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在")
+		err = errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在")
+		return err
 	}
 
 	if u.Producer == nil {
 		log.Errorf("生产者转换错误")
-		return errors.WithCode(code.ErrKafkaFailed, "Kafka生产者未初始化")
+		err = errors.WithCode(code.ErrKafkaFailed, "Kafka生产者未初始化")
+		return err
 	}
 	// 发送到Kafka
 	sendStart := time.Now()
-	errKafka := u.Producer.SendUserCreateMessage(ctx, user)
+	sendCtx, sendSpan := trace.StartSpan(ctx, "user-service", "producer_send_create")
+	trace.AddRequestTag(sendCtx, "username", user.Name)
+	errKafka := u.Producer.SendUserCreateMessage(sendCtx, user)
 	u.recordUserCreateStep(ctx, "kafka_send_create_user", "kafka", user.Name, time.Since(sendStart), errKafka)
+	sendStatus := "success"
+	sendCode := strconv.Itoa(code.ErrSuccess)
 	if errKafka != nil {
 		log.Errorf("requestID=%v: 生产者消息发送失败 username=%s, err=%v", ctx.Value("requestID"), user.Name, errKafka)
-		return errors.WithCode(code.ErrKafkaFailed, "kafka生产者消息发送失败")
+		sendStatus = "error"
+		if c := errors.GetCode(errKafka); c != 0 {
+			sendCode = strconv.Itoa(c)
+		} else {
+			sendCode = strconv.Itoa(code.ErrUnknown)
+		}
+		err = errors.WithCode(code.ErrKafkaFailed, "kafka生产者消息发送失败")
+	}
+	trace.EndSpan(sendSpan, sendStatus, sendCode, map[string]interface{}{
+		"username": user.Name,
+	})
+	if errKafka != nil {
+		return err
 	}
 	log.Debugw("用户创建请求已发送到Kafka", "username", user.Name)
 
