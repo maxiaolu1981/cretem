@@ -33,7 +33,6 @@ func (u *UserService) Update(ctx context.Context, user *v1.User, opts metav1.Upd
 			"username": user.Name,
 		})
 	}()
-	log.Debug("service:开始处理用户更新请求...")
 
 	user.Email = usercache.NormalizeEmail(user.Email)
 	user.Phone = usercache.NormalizePhone(user.Phone)
@@ -44,7 +43,7 @@ func (u *UserService) Update(ctx context.Context, user *v1.User, opts metav1.Upd
 	spanStatusCheck := "success"
 	spanCodeCheck := strconv.Itoa(code.ErrSuccess)
 	if existErr != nil {
-		log.Debugf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", user.Name, existErr)
+		log.Warnf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", user.Name, existErr)
 		spanStatusCheck = "error"
 		if c := errors.GetCode(existErr); c != 0 {
 			spanCodeCheck = strconv.Itoa(c)
@@ -52,8 +51,8 @@ func (u *UserService) Update(ctx context.Context, user *v1.User, opts metav1.Upd
 			spanCodeCheck = strconv.Itoa(code.ErrUnknown)
 		}
 	}
-	if ruser != nil && ruser.Name == RATE_LIMIT_PREVENTION {
-		log.Debugf("用户%s不存在,无法更新", user.Name)
+	if ruser != nil && (ruser.Name == RATE_LIMIT_PREVENTION || ruser.Name == BLACKLIST_SENTINEL) {
+
 		err = errors.WithCode(code.ErrUserNotFound, "用户不存在,无法更新")
 		spanStatusCheck = "error"
 		spanCodeCheck = strconv.Itoa(code.ErrUserNotFound)
@@ -92,7 +91,6 @@ func (u *UserService) Update(ctx context.Context, user *v1.User, opts metav1.Upd
 	if errKafka != nil {
 		return err
 	}
-	log.Debugw("用户更新请求已发送到Kafka", "username", user.Name)
 
 	return nil
 }

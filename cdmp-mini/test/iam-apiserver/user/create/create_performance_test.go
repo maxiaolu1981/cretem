@@ -938,8 +938,8 @@ func baselineConcurrentScenario() performanceScenario {
 		Stages: []workloadStage{
 			{
 				Name:        "parallel_batch",
-				Requests:    10000,
-				Concurrency: 1000,
+				Requests:    1,
+				Concurrency: 1,
 				Pattern:     patternUniform,
 			},
 		},

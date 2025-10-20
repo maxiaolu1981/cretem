@@ -108,7 +108,7 @@ func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 		// 关键：在所有认证逻辑前添加/login白名单，直接放行
 		if c.FullPath() == "/login" {
 			// 打印日志便于调试（生产环境可移除）
-			//	log.Infof("[AutoStrategy] 白名单放行：%s %s（跳过所有认证）", c.Request.Method, c.FullPath())
+
 			c.Next() // 直接进入后续处理器（如createAuthHandler）
 			return
 		}
@@ -175,7 +175,7 @@ func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 		}
 
 		// 第五步：获取并校验用户名
-		
+
 		username := operator.GetUsername()
 		if username == "" {
 			err := errors.WithCode(
@@ -192,8 +192,8 @@ func (a AutoStrategy) AuthFunc() gin.HandlerFunc {
 		newCtx := context.WithValue(c.Request.Context(), common.KeyUsername, username)
 
 		c.Request = c.Request.WithContext(newCtx)
-		//log.Infof("AuthFunc认证成功，准备调用c.Next()，请求路径：%s", c.Request.URL.Path) // 新增日志
+
 		c.Next()
-		//log.Infof("AuthFunc的c.Next()执行完成，请求路径：%s", c.Request.URL.Path) // 新增日志
+
 	}
 }

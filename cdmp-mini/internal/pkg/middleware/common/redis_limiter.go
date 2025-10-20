@@ -345,5 +345,4 @@ func CleanupRateLimit(redisCluster *storage.RedisCluster) {
 	localLimiter.counters = make(map[string]*localCounter)
 	localLimiter.Unlock()
 
-	log.Debugf("清理了 %d 个Redis限流key和本地计数器", len(keys))
 }

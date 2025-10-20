@@ -13,7 +13,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/middleware/common"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/fields"
@@ -23,7 +22,6 @@ import (
 
 func (u *UserController) List(ctx *gin.Context) {
 
-	log.Debugf("开始处理list请求...")
 	traceCtx := ctx.Request.Context()
 	operator := common.GetUsername(traceCtx)
 	trace.SetOperator(traceCtx, operator)
@@ -160,9 +158,7 @@ func (u *UserController) List(ctx *gin.Context) {
 		var publicUsers []*v1.PublicUser
 		if len(userList.Items) > 0 {
 			for _, user := range userList.Items {
-				log.Debugf("control:🔍 调试 - 原始用户: ID=%d, Name=%s, IsAdmin=%v", user.ID, user.Name, user.IsAdmin)
 				publicUser := v1.ConvertToPublicUser(user)
-				log.Debugf("control:🔍 调试 - 转换后: ID=%d, Username=%s, IsAdmin=%v", publicUser.ID, publicUser.Username, publicUser.IsAdmin)
 				publicUsers = append(publicUsers, publicUser)
 			}
 		}

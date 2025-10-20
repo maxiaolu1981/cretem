@@ -58,7 +58,7 @@ type Options struct {
 // NewOptions creates an Options object with default parameters.
 func NewOptions() *Options {
 	return &Options{
-		Name:              "性能跟踪日志",
+		Name:              "",
 		Level:             zapcore.DebugLevel.String(),
 		DisableCaller:     false,
 		DisableStacktrace: false,

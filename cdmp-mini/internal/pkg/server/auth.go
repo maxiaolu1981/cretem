@@ -431,7 +431,7 @@ func (g *GenericAPIServer) identityHandler(c *gin.Context) interface{} {
 					}
 
 					// 复用原始 *v1.User，不覆盖为空
-					log.Debugf("IdentityHandler: 复用原始 user，username=%s", originalUser.Name)
+
 					c.Set("username", originalUser) // 显式确认存储类型
 					return originalUser
 				}
@@ -624,11 +624,7 @@ func (g *GenericAPIServer) authenticate(c *gin.Context) (interface{}, error) {
 	g.asyncUpdateLoginTime(user)
 
 	g.auditLoginAttempt(c, login.Username, "success", nil)
-	// 新增：在返回前打印 user 信息，确认非 nil
-	// 5. 关键：打印返回前的用户数据，确认有效
-	//	log.Debugf("authenticate: 成功返回用户数据，username=%s，InstanceID=%s，user=%+v",
-	//	user.Name, user.InstanceID, user)
-	//log.Debugf("正确退出调用方法:%s", c.HandlerName())
+
 	return user, nil
 }
 
@@ -686,7 +682,7 @@ func (g *GenericAPIServer) logoutRespons(c *gin.Context) {
 	go g.executeBackgroundCleanup(claims)
 
 	// 4. 登出成功响应
-	log.Debugf("登出成功，user_id=%s", claims.UserID)
+
 	// 🔧 优化4：成功场景也通过core.WriteResponse，确保格式统一（code=成功码，message=成功消息）
 	core.WriteResponse(c, nil, "登出成功")
 	g.auditLogoutEvent(c, username, "success", "")
@@ -854,7 +850,7 @@ func (g *GenericAPIServer) executeBackgroundCleanup(claims *jwtvalidator.CustomC
 
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			log.Debugf("用户会话不存在，无需清理: user_id=%s", userID)
+			log.Warnf("用户会话不存在，无需清理: user_id=%s", userID)
 			return
 		}
 		log.Errorf("登出清理Lua脚本执行失败: user_id=%s, error=%v", userID, err)
@@ -969,7 +965,6 @@ func (g *GenericAPIServer) generateAccessTokenClaims(data interface{}) jwt.MapCl
 	//统一生成sessionid,存储与at和rt中
 	sessionID := idutil.GenerateSecureSessionID("")
 
-	//log.Debugf("生成atsession_id: %s, 时间: %v", sessionID, time.Now().UnixNano())
 	expirationTime := time.Now().Add(g.options.JwtOptions.Timeout)
 
 	var userID string
@@ -1046,7 +1041,7 @@ func (g *GenericAPIServer) authorizator() func(data interface{}, c *gin.Context)
 			log.L(c).Warnf("用户%s无权访问%s(需要管理员校色)", username, path)
 			return false
 		}
-		//	log.Info("用户认证通过") // 添加参数
+
 		c.Set(common.UsernameKey, username)
 
 		return true
@@ -1077,7 +1072,7 @@ func (g *GenericAPIServer) generateRefreshTokenAndGetUserID(c *gin.Context, atTo
 }
 
 func (g *GenericAPIServer) loginResponse(c *gin.Context, atToken string, expire time.Time) {
-	//	log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
+
 	currentUser, _ := c.Get("current_user")
 	user, _ := currentUser.(*v1.User)
 
@@ -1381,7 +1376,7 @@ func recordErrorToContext(c *gin.Context, err error) {
 //   - httpCode: HTTPStatusMessageFunc映射后的HTTP状态码
 //   - message: HTTPStatusMessageFunc映射后的基础错误消息
 func handleUnauthorized(c *gin.Context, httpCode int, message string) {
-	//log.Debugf("认证中间件: 路由=%s, 请求路径=%s,调用方法=%s", c.FullPath(), c.Request.URL.Path, c.HandlerName())
+
 	// 1. 从上下文提取业务码（优先使用HTTPStatusMessageFunc映射后的withCode错误）
 	bizCode := extractBizCode(c, message)
 	if bizCode == code.ErrExpired {
@@ -1408,7 +1403,7 @@ func handleUnauthorized(c *gin.Context, httpCode int, message string) {
 
 	// 5. 统一返回响应（依赖core.WriteResponse确保格式一致）
 	core.WriteResponse(c, err, extraInfo)
-	//log.Debugf("正确退出调用方法:%s", c.HandlerName())
+
 	// 6. 终止流程：防止后续中间件覆盖当前响应
 	c.Abort()
 }
@@ -1423,11 +1418,11 @@ func LogWithLevelByBizCode(c *gin.Context, bizCode int, message string) {
 			bizCode, requestID, message)
 	// 客户端错误：Debug级别（便于客户端调试，非恶意）
 	case code.ErrInvalidAuthHeader, code.ErrBase64DecodeFail, code.ErrInvalidBasicPayload:
-		log.Debugf("[客户端错误] 未授权（bizCode: %d），request-id: %s，消息: %s",
+		log.Warnf("[客户端错误] 未授权（bizCode: %d），request-id: %s，消息: %s",
 			bizCode, requestID, message)
 	// 常规场景：Info级别（正常用户操作，如令牌过期、缺少头）
 	case code.ErrExpired, code.ErrMissingHeader, code.ErrPermissionDenied:
-		log.Debugf("[常规场景] 未授权（bizCode: %d），request-id: %s，消息: %s",
+		log.Warnf("[常规场景] 未授权（bizCode: %d），request-id: %s，消息: %s",
 			bizCode, requestID, message)
 	// 未分类：Warn级别（需后续补充匹配规则）
 	default:
@@ -1528,7 +1523,7 @@ func (g *GenericAPIServer) getLoginFailCount(c *gin.Context, username string) (i
 	val, err := g.redis.GetKey(c.Request.Context(), key)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
-			//log.Infof("缓存键不存在: key=%s", key)
+
 			return 0, nil
 		} else {
 			log.Errorf("redis服务错误:err=%v", err)
@@ -1537,7 +1532,7 @@ func (g *GenericAPIServer) getLoginFailCount(c *gin.Context, username string) (i
 	}
 	count, err := strconv.Atoi(val)
 	if err != nil {
-		log.Debugf("解析登录失败次数失败: username=%s, val=%s, error=%v", username, val, err)
+		log.Warnf("解析登录失败次数失败: username=%s, val=%s, error=%v", username, val, err)
 		return 0, nil // 解析失败默认返回0次
 	}
 	return count, nil
@@ -1577,7 +1572,6 @@ func (g *GenericAPIServer) setAuthCookies(c *gin.Context, accessToken, refreshTo
 	// 设置Refresh Token Cookie
 	c.SetCookie("refresh_token", refreshToken, refreshTokenMaxAge, "/", domain, secure, true)
 
-	//log.Debugf("认证Cookie设置成功: domain=%s, secure=%t", domain, secure)
 	return nil
 }
 
@@ -1619,13 +1613,11 @@ func extractBizCode(c *gin.Context, message string) int {
 	// 优先：从c.Errors提取带Code()方法的错误
 	if len(c.Errors) > 0 {
 		rawErr := c.Errors.Last().Err
-		log.Debugf("[handleUnauthorized] 从c.Errors获取原始错误: %+v", rawErr)
 
 		// 适配自定义withCode错误（必须实现Code() int方法）
 		if customErr, ok := rawErr.(interface{ Code() int }); ok {
 			bizCode := customErr.Code()
-			log.Debugf("[handleUnauthorized] 从错误中提取业务码: %d（request-id: %s）",
-				bizCode, getRequestID(c))
+
 			return bizCode
 		}
 
@@ -1872,30 +1864,6 @@ func parseTokenWithoutValidation(tokenString string) (gojwt.MapClaims, error) {
 
 	return nil, errors.New("无法解析token claims")
 }
-
-// validateSessionIDConsistency 验证session_id一致性
-// func (g *GenericAPIServer) validateSessionIDConsistency(claims gojwt.MapClaims) error {
-// 	atSessionID, ok := claims["session_id"].(string)
-// 	if !ok || atSessionID == "" {
-// 		return errors.WithCode(code.ErrTokenInvalid, "AT缺少session_id")
-// 	}
-
-// 	// 从Redis获取RT对应的session_id
-// 	rtSessionKey := redisRtSessionIDPrefix + claims["user_id"].(string)
-// 	rtSessionID, err := g.redis.GetKey(context.Background(), rtSessionKey)
-// 	if err != nil {
-// 		return errors.WithCode(code.ErrInternal, "redis获取retSession错误")
-// 	}
-
-// 	log.Debugf("atSessionID=%s", atSessionID)
-// 	log.Debugf("rtSessionID=%s", rtSessionID)
-// 	if rtSessionID != atSessionID {
-// 		log.Warnf("会话不匹配: AT的session_id=%s, RT的session_id=%s", atSessionID, rtSessionID)
-// 		return errors.WithCode(code.ErrTokenMismatch, "会话不匹配")
-// 	}
-
-// 	return nil
-// }
 
 // StoreAuthSessionWithRollback 存储完整的认证会话信息，并返回回滚函数
 func (g *GenericAPIServer) StoreAuthSessionWithRollback(userID, refreshToken string) (func(), error) {

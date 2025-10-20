@@ -24,7 +24,7 @@ import (
 
 func (u *UserController) Update(ctx *gin.Context) {
 	username := ctx.Param("name") // 从URL路径获取，清晰明确
-	log.Infof("[control] 用户更新请求入口: username=%s", username)
+
 	traceCtx := ctx.Request.Context()
 	operator := common.GetUsername(traceCtx)
 	trace.SetOperator(traceCtx, operator)
@@ -139,8 +139,8 @@ func (u *UserController) Update(ctx *gin.Context) {
 			return err
 		}
 		//  安全防护：检查是否是防刷标记
-		if existingUser.Name == sru.RATE_LIMIT_PREVENTION {
-			err := errors.WithCode(code.ErrPasswordIncorrect, "用户名密码无效")
+		if existingUser.Name == sru.RATE_LIMIT_PREVENTION || existingUser.Name == sru.BLACKLIST_SENTINEL {
+			err := errors.WithCode(code.ErrUserNotFound, "用户不存在或已删除")
 			controllerStatus = "error"
 			controllerCode = strconv.Itoa(errors.GetCode(err))
 			outcomeStatus = "error"

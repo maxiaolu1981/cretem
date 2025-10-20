@@ -112,9 +112,7 @@ func (u *UserController) Create(ctx *gin.Context) {
 		} else if r.Status == 0 {
 			r.Status = 1
 		}
-		// 链路追踪日志
-		log.Debugf("[control] 用户创建请求入口: username=%s, operator=%s", r.Name, operator)
-		//校验用户名
+
 		username := r.Name
 
 		if strings.TrimSpace(username) == "" {

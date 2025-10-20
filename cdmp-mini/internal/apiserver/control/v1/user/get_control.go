@@ -124,8 +124,8 @@ func (u *UserController) Get(ctx *gin.Context) {
 			auditLog("fail", err.Error())
 			return err
 		}
-		if user.Name == sru.RATE_LIMIT_PREVENTION {
-			err := errors.WithCode(code.ErrPasswordIncorrect, "用户名密码无效")
+		if user.Name == sru.RATE_LIMIT_PREVENTION || user.Name == sru.BLACKLIST_SENTINEL {
+			err := errors.WithCode(code.ErrUserNotFound, "用户不存在或已删除")
 			controllerStatus = "error"
 			controllerCode = strconv.Itoa(errors.GetCode(err))
 			outcomeStatus = "error"

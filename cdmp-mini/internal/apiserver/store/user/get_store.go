@@ -9,7 +9,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/db"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
@@ -20,7 +19,6 @@ import (
 func (u *Users) Get(ctx context.Context, username string,
 	opts metav1.GetOptions, opt *options.Options) (*v1.User, error) {
 
-	log.Debugf("store:开始处理用户%vget请求...", username)
 	storeCtx, storeSpan := trace.StartSpan(ctx, "user-store", "get_user")
 	if storeCtx != nil {
 		ctx = storeCtx
@@ -74,7 +72,7 @@ func (u *Users) Get(ctx context.Context, username string,
 		}
 		return nil, u.handleGetError(err)
 	}
-	log.Debugf("查询用户%s成功", username)
+
 	spanDetails["cached_user"] = resultUser != nil
 	if resultUser != nil {
 		spanDetails["result_id"] = resultUser.ID

@@ -8,15 +8,6 @@ import (
 )
 
 func InstallMiddlewares(engine *gin.Engine, opt *options.Options) error {
-	//var stack []gin.HandlerFunc
-	// // 🔴 最前端日志：在所有中间件执行前打印原始头
-	// stack = append(stack, func(c *gin.Context) {
-	// 	if c.Request.Method == http.MethodDelete && c.Request.URL.Path == "/logout" {
-	// 		authHeader := c.GetHeader("Authorization")
-	// 		log.Infof("[最前端] 原始Authorization头：[%q]，长度：%d", authHeader, len(authHeader))
-	// 	}
-	// 	c.Next()
-	// })
 
 	// 安装通用中间件
 	commonMiddlewares := common.GetMiddlewareStack(opt)

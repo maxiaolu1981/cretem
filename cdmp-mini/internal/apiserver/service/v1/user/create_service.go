@@ -38,8 +38,6 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		})
 	}()
 
-	log.Debugf("service:开始处理用户%v创建请求...", user.Name)
-
 	// 统一规整邮箱和手机号，确保后续索引和缓存命中
 	user.Email = usercache.NormalizeEmail(user.Email)
 	user.Phone = usercache.NormalizePhone(user.Phone)
@@ -120,7 +118,7 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	if contactsErr != nil {
 		if errors.Is(contactsErr, context.Canceled) || errors.Is(contactsErr, context.DeadlineExceeded) {
 			if existingUser != nil && existingUser.Name != RATE_LIMIT_PREVENTION {
-				log.Debugw("唯一性检查因并行取消提前退出", "username", user.Name)
+				log.Warnf("唯一性检查因并行取消提前退出", "username", user.Name)
 				contactsErr = nil
 			}
 		}
@@ -131,10 +129,10 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		return err
 	}
 	if existErr != nil {
-		log.Debugf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查, 放行该用户: %v", user.Name, existErr)
+		log.Warnf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查, 放行该用户: %v", user.Name, existErr)
 	}
 	if existingUser != nil && existingUser.Name != RATE_LIMIT_PREVENTION {
-		log.Debugf("用户%s已经存在,无法创建", user.Name)
+		log.Warnf("用户%s已经存在,无法创建", user.Name)
 		err = errors.WithCode(code.ErrUserAlreadyExist, "用户已经存在")
 		return err
 	}
@@ -168,7 +166,6 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	if errKafka != nil {
 		return err
 	}
-	log.Debugw("用户创建请求已发送到Kafka", "username", user.Name)
 
 	return nil
 }

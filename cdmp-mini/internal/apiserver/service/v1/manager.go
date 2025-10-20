@@ -1,8 +1,6 @@
 package v1
 
 import (
-	"fmt"
-
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
@@ -11,7 +9,6 @@ import (
 	secret "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/secret"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/service/v1/user"
 
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 )
 
@@ -75,10 +72,5 @@ func NewService(store interfaces.Factory,
 		Options:  options,
 		producer: producer,
 	}
-	// 添加调试信息
-	log.Debugw("service:Producer类型信息",
-		"producerType", fmt.Sprintf("%T", producer),
-		"producerValue", fmt.Sprintf("%+v", producer),
-	)
 	return s, nil
 }

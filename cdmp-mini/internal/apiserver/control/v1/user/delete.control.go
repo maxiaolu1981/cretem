@@ -24,34 +24,7 @@ import (
 
 func (u *UserController) Delete(ctx *gin.Context) {
 
-	// deleteUsername := ctx.Param("name")
-	// if deleteUsername == "" {
-	// 	log.Error("要删除的用户名为空")
-	// 	core.WriteResponse(ctx, errors.WithCode(code.ErrUserNotFound, "要删除的用户名为空"), nil)
-	// 	return
-	// }
-
-	// _, err := interfaces.Client().Users().Get(stdCtx, deleteUsername, metav1.GetOptions{}, u.options)
-	// if err != nil {
-	// 	// 关键：匹配 Get 方法返回的 "用户不存在" 错误码 code.ErrUserNotFound
-	// 	if errors.IsCode(err, code.ErrUserNotFound) {
-	// 		log.Info("用户不存在，无需删除")
-	// 		core.WriteResponse(ctx, nil, "用户不存在，无需删除")
-	// 		return
-	// 	}
-	// 	// 其他错误（如超时、数据库异常）
-	// 	logger.Errorf("查询用户信息失败%s", err)
-	// 	core.WriteResponse(ctx, err, nil) // 直接返回 Get 方法处理后的错误（已包含错误码）
-	// 	return
-	//	}
-
-	// if err := u.srv.Users().Delete(stdCtx, deleteUsername, false, metav1.DeleteOptions{Unscoped: false}, u.options); err != nil {
-	// 	logger.Errorf("用户删除失败%v", err)
-	// 	core.WriteResponse(ctx, err, nil)
-	// 	return
-	// }
-	// logger.Info("用户删除成功")
-	//core.WriteResponse(ctx, nil, nil)
+	
 }
 
 func (u *UserController) ForceDelete(ctx *gin.Context) {
@@ -161,6 +134,11 @@ func (u *UserController) ForceDelete(ctx *gin.Context) {
 		}
 
 		controllerDetails["operator"] = operator
+		awaitTimeout := 30 * time.Second
+		if u.options != nil && u.options.ServerRunOptions != nil && u.options.ServerRunOptions.CtxTimeout > 0 {
+			awaitTimeout = u.options.ServerRunOptions.CtxTimeout
+		}
+		trace.ExpectAsync(controllerCtx, time.Now().Add(awaitTimeout))
 		core.WriteResponse(ctx, nil, successData)
 		auditLog("success", "")
 		trace.RecordOutcome(controllerCtx, strconv.Itoa(code.ErrSuccess), "success", "success", http.StatusOK)

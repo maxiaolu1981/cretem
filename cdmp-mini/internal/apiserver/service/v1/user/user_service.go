@@ -38,10 +38,12 @@ import (
 	"github.com/go-redis/redis/v8"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	serveropts "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/util"
 
@@ -56,7 +58,8 @@ import (
 )
 
 const (
-	RATE_LIMIT_PREVENTION   = "rate_limit_prevention"
+	RATE_LIMIT_PREVENTION   = usercache.NegativeCacheSentinel
+	BLACKLIST_SENTINEL      = usercache.BlacklistSentinel
 	createStepSlowThreshold = 200 * time.Millisecond
 	contactPlaceholderTTL   = 30 * time.Second
 	contactWarmupTimeout    = 2 * time.Minute
@@ -69,6 +72,7 @@ type UserService struct {
 	Redis    *storage.RedisCluster
 	Options  *options.Options
 	Producer producer.MessageProducer
+	Audit    *audit.Manager
 	group    singleflight.Group
 
 	contactWarmupMu   sync.Mutex
@@ -77,12 +81,13 @@ type UserService struct {
 }
 
 // NewUserService 创建用户服务实例
-func NewUserService(store interfaces.Factory, redis *storage.RedisCluster, opts *options.Options, producer producer.MessageProducer) *UserService {
+func NewUserService(store interfaces.Factory, redis *storage.RedisCluster, opts *options.Options, producer producer.MessageProducer, auditMgr *audit.Manager) *UserService {
 	return &UserService{
 		Store:    store,
 		Redis:    redis,
 		Options:  opts,
 		Producer: producer,
+		Audit:    auditMgr,
 	}
 }
 
@@ -145,12 +150,11 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 		metrics.RecordRedisOperation("get", time.Since(startTime).Seconds(), operationErr)
 	}()
 
-	log.Debugf("尝试从缓存获取用户数据: key=%s", cacheKey)
 	data, err := u.Redis.GetKey(ctx, cacheKey)
 	if err != nil {
 		operationErr = err
 		if errors.Is(err, redis.Nil) {
-			log.Debugf("未进行缓存缓 key=%s", cacheKey)
+			log.Warnf("未进行缓存缓 key=%s", cacheKey)
 			return nil, false, nil
 		}
 		log.Errorf("redis服务失败: key=%s, err=%v", cacheKey, err)
@@ -161,18 +165,21 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 	user := v1.User{
 		ObjectMeta: metav1.ObjectMeta{},
 	}
-	//查找到防穿透记录
-	if data == RATE_LIMIT_PREVENTION {
-		log.Debugf("空值缓存命中: key=%s", cacheKey)
-		user.Name = RATE_LIMIT_PREVENTION
+
+	switch data {
+	case RATE_LIMIT_PREVENTION:
+		user.ObjectMeta.Name = RATE_LIMIT_PREVENTION
 		user.Status = -1
 		cacheHit = true
-	} else {
+	case BLACKLIST_SENTINEL:
+		user.ObjectMeta.Name = BLACKLIST_SENTINEL
+		user.Status = -2
+		cacheHit = true
+	default:
 		if err := json.Unmarshal([]byte(data), &user); err != nil {
 			operationErr = err
 			return nil, false, errors.WithCode(code.ErrDecodingFailed, "数据解码失败")
 		}
-		log.Debugf("从缓存中查询到用户:%s: key=%s", user.Name, cacheKey)
 		cacheHit = true
 	}
 
@@ -191,17 +198,15 @@ func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username str
 	if err != nil {
 		if errors.IsCode(err, code.ErrUserNotFound) {
 			metrics.DBQueries.WithLabelValues("not_found").Inc()
-			// 用户不存在，缓存空值（防止缓存击穿）
-			if err := u.cacheNullValue(username); err != nil {
-				log.Errorf("缓存设置失败", "error", err.Error())
+			cacheApplied, blacklisted := u.handleProtectionForMiss(ctx, username)
+			switch {
+			case blacklisted:
+				return &v1.User{ObjectMeta: metav1.ObjectMeta{Name: BLACKLIST_SENTINEL}}, nil
+			case cacheApplied:
+				return &v1.User{ObjectMeta: metav1.ObjectMeta{Name: RATE_LIMIT_PREVENTION}}, nil
+			default:
+				return nil, nil
 			}
-
-			//	log.Debugf("设置用户%s缓存成功", username)
-			return &v1.User{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: RATE_LIMIT_PREVENTION, // 直接赋值
-				},
-			}, nil
 		}
 		return nil, err
 	}
@@ -243,23 +248,23 @@ func (u *UserService) setUserCache(ctx context.Context, username string, user *v
 }
 
 // cacheNullValue 缓存空值（防穿透）
-func (u *UserService) cacheNullValue(username string) error {
-	// 缓存一个短期空值，防止穿透
-	timeout := u.Options.RedisOptions.Timeout
-	if timeout <= 0 {
-		timeout = 500 * time.Millisecond
+func (u *UserService) cacheNullValue(ctx context.Context, username string, ttl time.Duration) error {
+	if u.Redis == nil || username == "" {
+		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	redisCtx, cancel := u.redisOpContext(ctx)
 	defer cancel()
 
 	cacheKey := u.generateUserCacheKey(username)
+	expireTime := ttl
+	if expireTime <= 0 {
+		expireTime = 45 * time.Second
+	}
+	if jitter := time.Duration(rand.Intn(5)) * time.Second; jitter > 0 {
+		expireTime += jitter
+	}
 
-	baseExpire := 45 * time.Second
-	randomExpire := time.Duration(rand.Intn(15)) * time.Second
-	expireTime := baseExpire + randomExpire
-
-	_, err := u.Redis.SetNX(ctx, cacheKey, RATE_LIMIT_PREVENTION, expireTime)
-	return err
+	return u.Redis.SetKey(redisCtx, cacheKey, RATE_LIMIT_PREVENTION, expireTime)
 }
 
 func (u *UserService) shouldRefreshNullCache(ctx context.Context, username string) (bool, string) {
@@ -298,14 +303,12 @@ func (u *UserService) releaseNullCacheRefreshLock(lockKey string) {
 
 func (u *UserService) refreshUserCacheFromDB(ctx context.Context, username string) (*v1.User, error) {
 	refreshKey := fmt.Sprintf("refresh:%s", username)
-	result, err, shared := u.group.Do(refreshKey, func() (interface{}, error) {
+	result, err, _ := u.group.Do(refreshKey, func() (interface{}, error) {
 		dbCtx, cancel := u.newDBContext(ctx, u.contactRefreshTimeout())
 		defer cancel()
 		return u.getUserFromDBAndSetCache(dbCtx, username)
 	})
-	if shared {
-		log.Debugf("负缓存刷新共享结果: username=%s", username)
-	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -313,7 +316,7 @@ func (u *UserService) refreshUserCacheFromDB(ctx context.Context, username strin
 		return nil, nil
 	}
 	user := result.(*v1.User)
-	if user == nil || user.Name == RATE_LIMIT_PREVENTION {
+	if user == nil || user.Name == RATE_LIMIT_PREVENTION || user.Name == BLACKLIST_SENTINEL {
 		return nil, nil
 	}
 	return user, nil
@@ -333,6 +336,244 @@ func (u *UserService) generateEmailCacheKey(email string) string {
 
 func (u *UserService) generatePhoneCacheKey(phone string) string {
 	return usercache.PhoneKey(phone)
+}
+
+func (u *UserService) protectionConfig() serveropts.ProtectionConfig {
+	defaults := serveropts.DefaultProtectionConfig()
+	if u == nil || u.Options == nil || u.Options.AuditOptions == nil {
+		return defaults
+	}
+	cfg := u.Options.AuditOptions.Protection
+	if cfg.NegativeCacheThreshold <= 0 {
+		cfg.NegativeCacheThreshold = defaults.NegativeCacheThreshold
+	}
+	if cfg.NegativeCacheWindow <= 0 {
+		cfg.NegativeCacheWindow = defaults.NegativeCacheWindow
+	}
+	if cfg.NegativeCacheTTL <= 0 {
+		cfg.NegativeCacheTTL = defaults.NegativeCacheTTL
+	}
+	if cfg.BlockThreshold <= 0 {
+		cfg.BlockThreshold = defaults.BlockThreshold
+	}
+	if cfg.BlockWindow <= 0 {
+		cfg.BlockWindow = defaults.BlockWindow
+	}
+	if cfg.BlockDuration <= 0 {
+		cfg.BlockDuration = defaults.BlockDuration
+	}
+	return cfg
+}
+
+func durationToSecondsCeil(d time.Duration) int64 {
+	if d <= 0 {
+		return 0
+	}
+	seconds := d / time.Second
+	if d%time.Second != 0 {
+		seconds++
+	}
+	if seconds <= 0 {
+		seconds = 1
+	}
+	return int64(seconds)
+}
+
+func (u *UserService) redisOpTimeout() time.Duration {
+	if u != nil && u.Options != nil && u.Options.RedisOptions != nil && u.Options.RedisOptions.Timeout > 0 {
+		return u.Options.RedisOptions.Timeout
+	}
+	return 500 * time.Millisecond
+}
+
+func (u *UserService) redisOpContext(parent context.Context) (context.Context, context.CancelFunc) {
+	timeout := u.redisOpTimeout()
+	if parent == nil {
+		parent = context.Background()
+	}
+	return context.WithTimeout(parent, timeout)
+}
+
+func (u *UserService) cacheBlacklistSentinel(ctx context.Context, username string, ttl time.Duration) error {
+	if u.Redis == nil || username == "" {
+		return nil
+	}
+	redisCtx, cancel := u.redisOpContext(ctx)
+	defer cancel()
+	expire := ttl
+	if expire <= 0 {
+		expire = 30 * time.Minute
+	}
+	if jitter := time.Duration(rand.Intn(5)) * time.Second; jitter > 0 {
+		expire += jitter
+	}
+	return u.Redis.SetKey(redisCtx, u.generateUserCacheKey(username), BLACKLIST_SENTINEL, expire)
+}
+
+func (u *UserService) setBlacklist(ctx context.Context, username string, ttl time.Duration) error {
+	if u.Redis == nil || username == "" {
+		return nil
+	}
+	key := usercache.BlacklistKey(username)
+	if key == "" {
+		return nil
+	}
+	redisCtx, cancel := u.redisOpContext(ctx)
+	defer cancel()
+	duration := ttl
+	if duration <= 0 {
+		duration = 30 * time.Minute
+	}
+	return u.Redis.SetKey(redisCtx, key, BLACKLIST_SENTINEL, duration)
+}
+
+func (u *UserService) clearProtectionCounters(ctx context.Context, username string) {
+	if u.Redis == nil || username == "" {
+		return
+	}
+	redisCtx, cancel := u.redisOpContext(ctx)
+	defer cancel()
+	keys := []string{
+		usercache.NegativeCounterKey(username),
+		usercache.BlockCounterKey(username),
+	}
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if _, err := u.Redis.DeleteKey(redisCtx, key); err != nil && err != redis.Nil {
+			log.Warnf("清理防护计数失败: key=%s err=%v", key, err)
+		}
+	}
+}
+
+func (u *UserService) emitProtectionAudit(ctx context.Context, username, reason string, metadata map[string]any) {
+	if u == nil || u.Audit == nil {
+		return
+	}
+	eventMetadata := map[string]any{
+		"username": username,
+	}
+	for k, v := range metadata {
+		eventMetadata[k] = v
+	}
+	actor := ""
+	requestID := ""
+	clientIP := ""
+	if traceCtx := trace.FromContext(ctx); traceCtx != nil {
+		actor = traceCtx.RequestContext.Operator
+		if actor == "" {
+			actor = traceCtx.RequestContext.UserID
+		}
+		requestID = traceCtx.RequestContext.RequestID
+		clientIP = traceCtx.RequestContext.ClientIP
+	}
+	event := audit.Event{
+		Actor:        actor,
+		Action:       fmt.Sprintf("user.protection.%s", reason),
+		ResourceType: "user",
+		ResourceID:   username,
+		Target:       username,
+		Outcome:      "warn",
+		RequestID:    requestID,
+		IP:           clientIP,
+		Metadata:     eventMetadata,
+	}
+	u.Audit.Submit(ctx, event)
+}
+
+func (u *UserService) handleProtectionForMiss(ctx context.Context, username string) (bool, bool) {
+	if u.Redis == nil || username == "" {
+		return false, false
+	}
+	cfg := u.protectionConfig()
+	cacheApplied := false
+	blacklisted := false
+
+	if cfg.NegativeCacheThreshold > 0 && cfg.NegativeCacheWindow > 0 {
+		counterKey := usercache.NegativeCounterKey(username)
+		if counterKey != "" {
+			redisCtx, cancel := u.redisOpContext(ctx)
+			count := u.Redis.IncrememntWithExpire(redisCtx, counterKey, durationToSecondsCeil(cfg.NegativeCacheWindow))
+			cancel()
+			if count > 0 {
+				trace.AddRequestTag(ctx, "protection_negative_count", count)
+				if int(count) >= cfg.NegativeCacheThreshold {
+					details := map[string]any{
+						"count":          count,
+						"threshold":      cfg.NegativeCacheThreshold,
+						"window_seconds": durationToSecondsCeil(cfg.NegativeCacheWindow),
+						"ttl_seconds":    durationToSecondsCeil(cfg.NegativeCacheTTL),
+					}
+					if err := u.cacheNullValue(ctx, username, cfg.NegativeCacheTTL); err != nil {
+						log.Warnf("写入负缓存失败: username=%s err=%v", username, err)
+					} else {
+						cacheApplied = true
+						metrics.RecordUserProtectionEvent("negative_cache")
+						trace.AddRequestTag(ctx, "protection_negative_applied", details)
+						u.emitProtectionAudit(ctx, username, "negative-cache", details)
+					}
+				}
+			}
+		}
+	}
+
+	if cfg.BlockThreshold > 0 && cfg.BlockWindow > 0 {
+		counterKey := usercache.BlockCounterKey(username)
+		if counterKey != "" {
+			redisCtx, cancel := u.redisOpContext(ctx)
+			count := u.Redis.IncrememntWithExpire(redisCtx, counterKey, durationToSecondsCeil(cfg.BlockWindow))
+			cancel()
+			if count > 0 {
+				trace.AddRequestTag(ctx, "protection_block_count", count)
+				if int(count) >= cfg.BlockThreshold {
+					details := map[string]any{
+						"count":            count,
+						"threshold":        cfg.BlockThreshold,
+						"window_seconds":   durationToSecondsCeil(cfg.BlockWindow),
+						"duration_seconds": durationToSecondsCeil(cfg.BlockDuration),
+					}
+					if err := u.setBlacklist(ctx, username, cfg.BlockDuration); err != nil {
+						log.Warnf("写入黑名单失败: username=%s err=%v", username, err)
+					} else {
+						blacklisted = true
+						metrics.RecordUserProtectionEvent("blacklist")
+						if err := u.cacheBlacklistSentinel(ctx, username, cfg.BlockDuration); err != nil {
+							log.Warnf("写入黑名单缓存失败: username=%s err=%v", username, err)
+						} else {
+							cacheApplied = true
+						}
+						trace.AddRequestTag(ctx, "protection_blacklist_applied", details)
+						u.emitProtectionAudit(ctx, username, "blacklist", details)
+						u.clearProtectionCounters(ctx, username)
+					}
+				}
+			}
+		}
+	}
+
+	return cacheApplied, blacklisted
+}
+
+func (u *UserService) isUserBlacklisted(ctx context.Context, username string) (bool, error) {
+	if u.Redis == nil || username == "" {
+		return false, nil
+	}
+	key := usercache.BlacklistKey(username)
+	if key == "" {
+		return false, nil
+	}
+	redisCtx, cancel := u.redisOpContext(ctx)
+	defer cancel()
+
+	value, err := u.Redis.GetKey(redisCtx, key)
+	if err != nil {
+		if err == redis.Nil {
+			return false, nil
+		}
+		return false, err
+	}
+	return value == BLACKLIST_SENTINEL, nil
 }
 
 func (u *UserService) normalizeUserContacts(user *v1.User) {
@@ -374,7 +615,6 @@ func (u *UserService) ensureContactCacheReady() {
 		u.contactWarmupMu.Lock()
 		u.contactWarming = false
 		u.contactWarmupMu.Unlock()
-		log.Debugw("联系人唯一性缓存预热完成")
 	}()
 }
 
@@ -625,7 +865,7 @@ func (u *UserService) warmContactCache() error {
 						if ctx.Err() != nil {
 							return ctx.Err()
 						}
-						log.Debugw("预热邮箱唯一性缓存失败", "key", emailKey, "error", err)
+						log.Warnf("预热邮箱唯一性缓存失败", "key", emailKey, "error", err)
 					}
 				}
 			}
@@ -638,7 +878,7 @@ func (u *UserService) warmContactCache() error {
 						if ctx.Err() != nil {
 							return ctx.Err()
 						}
-						log.Debugw("预热手机号唯一性缓存失败", "key", phoneKey, "error", err)
+						log.Warnf("预热手机号唯一性缓存失败", "key", phoneKey, "error", err)
 					}
 				}
 			}
@@ -652,7 +892,6 @@ func (u *UserService) warmContactCache() error {
 		offset += count
 	}
 
-	log.Debugw("联系人唯一性缓存预热结束", "processedUsers", total)
 	return nil
 }
 
@@ -667,12 +906,14 @@ func (u *UserService) checkUserExist(ctx context.Context, username string, force
 		metrics.CacheErrors.WithLabelValues("query_failed", "get").Inc()
 	}
 	if err == nil && found && user != nil {
-		if user.Name == RATE_LIMIT_PREVENTION {
+		switch user.Name {
+		case RATE_LIMIT_PREVENTION:
 			if !forceRefresh {
 				return user, nil
 			}
-			log.Debugf("命中负缓存, 强制回源校验 username=%s", username)
-		} else {
+		case BLACKLIST_SENTINEL:
+			return user, nil
+		default:
 			return user, nil
 		}
 	}
@@ -685,7 +926,6 @@ func (u *UserService) checkUserExist(ctx context.Context, username string, force
 			return u.getUserFromDBAndSetCache(dbCtx, username)
 		})
 		if shared {
-			log.Debugw("数据库查询被合并，共享结果", "username", username)
 			metrics.RequestsMerged.WithLabelValues("get").Inc()
 		}
 		return r, err

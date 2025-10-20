@@ -8,7 +8,6 @@ import (
 
 	apiserveropts "github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
-	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/core"
 )
 
@@ -54,7 +53,7 @@ func RegisterAuditAdminHandlers(rg *gin.RouterGroup, mgr *audit.Manager, opts *a
 			core.WriteResponse(c, nil, gin.H{"events": []any{}, "enabled": true})
 			return
 		}
-		log.Debugf("audit admin: returning %d events", len(events))
+
 		core.WriteResponse(c, nil, gin.H{"events": events, "enabled": true})
 	})
 }

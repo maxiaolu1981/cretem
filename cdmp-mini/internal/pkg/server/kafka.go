@@ -17,7 +17,6 @@ func CheckKafkaConnection(opt *options.Options) error {
 	var lastErr error
 
 	for i := 0; i < opt.KafkaOptions.MaxRetries; i++ {
-		log.Debugf("尝试连接 Kafka (第 %d/%d 次)...", i+1, opt.KafkaOptions.MaxRetries)
 
 		// 方法1: 尝试连接 Broker
 		if err := checkKafkaBrokers(opt.KafkaOptions.Brokers, opt.KafkaOptions.BatchTimeout); err != nil {

@@ -88,10 +88,9 @@ func (u *UserService) List(ctx context.Context, opts metav1.ListOptions, opt *op
 	//判断用户是否存在
 	ruser, err := u.checkUserExist(ctx, username, true)
 	if err != nil {
-		log.Debugf("查询用户%s checkUserExist方法返回错误: %v", username, err)
+		log.Warnf("查询用户%s checkUserExist方法返回错误: %v", username, err)
 	}
-	if ruser != nil && ruser.Name == RATE_LIMIT_PREVENTION {
-		log.Debugf("用户%s不存在,无法查询", username)
+	if ruser != nil && (ruser.Name == RATE_LIMIT_PREVENTION || ruser.Name == BLACKLIST_SENTINEL) {
 		return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在,无法查询")
 	}
 

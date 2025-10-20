@@ -153,6 +153,8 @@ var (
 	CacheNullValuesCount prometheus.Gauge // 修正：去掉指针
 	// 空值缓存操作统计
 	CacheNullValueOperations *prometheus.CounterVec
+	// UserProtectionEvents 统计用户防护动作触发次数，例如负缓存、黑名单
+	UserProtectionEvents *prometheus.CounterVec
 )
 
 // -------------------------- 2. 在 init 函数中初始化指标 + 手动注册 --------------------------
@@ -841,6 +843,14 @@ func init() {
 		[]string{"operation"}, // operation: set, hit, expire
 	)
 
+	UserProtectionEvents = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "user_protection_events_total",
+			Help: "Total number of user protection events triggered",
+		},
+		[]string{"type"}, // type: negative_cache, blacklist
+	)
+
 	// -------------------------- 手动注册所有指标到 Prometheus 默认注册表 --------------------------
 	// MustRegister：注册失败会panic（适合初始化阶段，提前暴露配置错误）
 	prometheus.MustRegister(
@@ -946,6 +956,7 @@ func init() {
 		CacheErrors,
 		CacheNullValuesCount, // 修正：现在可以正确注册
 		CacheNullValueOperations,
+		UserProtectionEvents,
 	)
 }
 
@@ -1362,6 +1373,14 @@ func RecordAuditFailure(action, resourceType string) {
 		resourceType = "unknown"
 	}
 	AuditEventFailures.WithLabelValues(action, resourceType).Inc()
+}
+
+// RecordUserProtectionEvent 记录用户防护动作的触发次数。
+func RecordUserProtectionEvent(eventType string) {
+	if eventType == "" {
+		eventType = "unknown"
+	}
+	UserProtectionEvents.WithLabelValues(eventType).Inc()
 }
 
 // GetBusinessOperationLabels 获取业务操作的标准标签

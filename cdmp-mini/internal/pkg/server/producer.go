@@ -135,7 +135,6 @@ func NewUserProducer(
 	limiter *ratelimiter.RateLimiterController,
 	fallbackDir string,
 ) (*UserProducer, error) {
-	log.Infof("[Producer] Initializing with options: %+v", options)
 
 	config := sarama.NewConfig()
 	config.Producer.RequiredAcks = sarama.RequiredAcks(options.RequiredAcks)
@@ -338,8 +337,6 @@ func (p *UserProducer) writeToFallbackFile(msg *sarama.ProducerMessage) {
 	// 写入 JSON 数据，并在线末添加换行符
 	if _, err := file.Write(append(jsonData, '\n')); err != nil {
 		log.Errorf("Failed to write to fallback file %s: %v", filePath, err)
-	} else {
-		log.Infof("Message successfully written to fallback file: %s", filePath)
 	}
 }
 
@@ -348,7 +345,7 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 	if spanCtx != nil {
 		ctx = spanCtx
 	}
-	log.Debugf("[Producer] sendUserMessage: username=%s, operation=%s, topic=%s", user.Name, operation, topic)
+
 	trace.AddRequestTag(ctx, "topic", topic)
 	trace.AddRequestTag(ctx, "operation", operation)
 	trace.AddRequestTag(ctx, "username", user.Name)
@@ -486,7 +483,7 @@ func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Mess
 }
 
 func (p *UserProducer) Close() error {
-	log.Infof("[Producer] Close called")
+
 	close(p.shutdown) // Signal background goroutines to exit
 
 	// Drain any remaining messages
@@ -496,7 +493,7 @@ func (p *UserProducer) Close() error {
 	}
 
 	p.wg.Wait() // Wait for goroutines to finish
-	log.Infof("[Producer] Closed successfully")
+
 	return nil
 }
 

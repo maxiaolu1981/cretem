@@ -21,7 +21,6 @@ import (
 )
 
 func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (result *v1.User, err error) {
-	log.Debug("service:开始处理用户查询请求...")
 
 	serviceCtx, serviceSpan := trace.StartSpan(ctx, "user-service", "get_user")
 	if serviceCtx != nil {
@@ -43,6 +42,19 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 	spanDetails := map[string]interface{}{
 		"target_user": username,
 		"cache_key":   cacheKey,
+	}
+
+	if blocked, blkErr := u.isUserBlacklisted(ctx, username); blkErr != nil {
+		log.Warnf("黑名单状态查询失败: username=%s err=%v", username, blkErr)
+	} else if blocked {
+		cacheHitLabel = "blacklist_active"
+		spanDetails["blacklist_active"] = true
+		trace.AddRequestTag(ctx, "protection_blacklist_active", true)
+		result = &v1.User{ObjectMeta: metav1.ObjectMeta{Name: BLACKLIST_SENTINEL}}
+		if serviceSpan != nil {
+			spanDetails["result_user"] = BLACKLIST_SENTINEL
+		}
+		return result, nil
 	}
 
 	defer func() {
@@ -86,6 +98,10 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 			cacheHitLabel = "null_hit"
 		case cachedUser.Name == RATE_LIMIT_PREVENTION:
 			cacheHitLabel = "negative_hit"
+			trace.AddRequestTag(ctx, "protection_negative_cache_hit", true)
+		case cachedUser.Name == BLACKLIST_SENTINEL:
+			cacheHitLabel = "blacklist_hit"
+			trace.AddRequestTag(ctx, "protection_blacklist_cache_hit", true)
 		default:
 			cacheHitLabel = "hit"
 		}
@@ -99,7 +115,6 @@ func (u *UserService) Get(ctx context.Context, username string, opts metav1.GetO
 		return u.getUserFromDBAndSetCache(ctx, username)
 	})
 	if sharedResult {
-		log.Debugf("数据库查询被合并，共享结果", "username", username)
 		metrics.RequestsMerged.WithLabelValues("get").Inc()
 	}
 	if err != nil {
@@ -133,29 +148,33 @@ func (u *UserService) tryGetFromCache(ctx context.Context, username string) (*v1
 	}
 
 	if isCached {
-		if cachedUser != nil && cachedUser.Name == RATE_LIMIT_PREVENTION {
-			metrics.CacheHits.WithLabelValues("null_hit").Inc()
-			if refreshAllowed, lockKey := u.shouldRefreshNullCache(ctx, username); refreshAllowed {
-				defer u.releaseNullCacheRefreshLock(lockKey)
-				refreshedUser, refreshErr := u.refreshUserCacheFromDB(ctx, username)
-				if refreshErr != nil {
-					log.Warnf("负缓存刷新失败: username=%s err=%v", username, refreshErr)
-				} else if refreshedUser != nil {
-					return refreshedUser, true, nil
-				}
-			} else {
-				refreshedUser, refreshErr := u.refreshUserCacheFromDB(ctx, username)
-				if refreshErr != nil {
-					log.Debugf("负缓存刷新跳过锁, username=%s err=%v", username, refreshErr)
-				} else if refreshedUser != nil {
-					return refreshedUser, true, nil
-				}
-			}
-			return nil, true, nil
-		}
 		if cachedUser != nil {
-			metrics.CacheHits.WithLabelValues("hit").Inc()
-			return cachedUser, true, nil
+			switch cachedUser.Name {
+			case RATE_LIMIT_PREVENTION:
+				metrics.CacheHits.WithLabelValues("null_hit").Inc()
+				trace.AddRequestTag(ctx, "protection_negative_cache_hit", true)
+				if refreshAllowed, lockKey := u.shouldRefreshNullCache(ctx, username); refreshAllowed {
+					defer u.releaseNullCacheRefreshLock(lockKey)
+					refreshedUser, refreshErr := u.refreshUserCacheFromDB(ctx, username)
+					if refreshErr != nil {
+						log.Warnf("负缓存刷新失败: username=%s err=%v", username, refreshErr)
+					} else if refreshedUser != nil {
+						return refreshedUser, true, nil
+					}
+				} else {
+					refreshedUser, refreshErr := u.refreshUserCacheFromDB(ctx, username)
+					if refreshErr != nil {
+						return refreshedUser, true, nil
+					}
+				}
+				return nil, true, nil
+			case BLACKLIST_SENTINEL:
+				metrics.CacheHits.WithLabelValues("blacklist_hit").Inc()
+				return cachedUser, true, nil
+			default:
+				metrics.CacheHits.WithLabelValues("hit").Inc()
+				return cachedUser, true, nil
+			}
 		}
 		metrics.CacheHits.WithLabelValues("null_hit").Inc()
 		return nil, true, nil // 空值缓存命中

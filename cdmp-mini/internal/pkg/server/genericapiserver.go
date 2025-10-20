@@ -221,7 +221,7 @@ func (g *GenericAPIServer) shutdownMySQL(ctx context.Context) error {
 
 func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 	// 初始化日志
-	log.Debugf("正在初始化GenericAPIServer服务器，环境: %s", opts.ServerRunOptions.Mode)
+	log.Infof("正在初始化GenericAPIServer服务器，环境: %s", opts.ServerRunOptions.Mode)
 	// 打印 Kafka 实例ID
 	if opts.KafkaOptions != nil {
 		log.Infof("[Kafka] 当前实例 InstanceID = %s", opts.KafkaOptions.InstanceID)
@@ -266,13 +266,13 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		return nil, err
 	}
 	interfaces.SetClient(storeIns)
-	log.Debug("mysql服务器初始化成功")
+	log.Infof("mysql服务器初始化成功")
 	g.auditServiceEvent("mysql", "startup", "success", nil)
 
 	// ========== 新增：增强版集群状态检查和初始化 ==========
 	if datastore, ok := storeIns.(*mysql.Datastore); ok {
 		if datastore.IsClusterMode() {
-			log.Debug("🚀 检测到Galera集群模式，正在初始化集群连接...")
+			log.Infof("🚀 检测到Galera集群模式，正在初始化集群连接...")
 
 			// 执行集群健康检查
 			if err := initializeGaleraCluster(datastore); err != nil {
@@ -283,7 +283,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 			// 定期监控集群状态（可选）
 			go monitorClusterHealth(datastore, opts.MysqlOptions.HealthCheckInterval)
 		} else {
-			log.Debug("✅ 使用单节点MySQL模式")
+			log.Info("✅ 使用单节点MySQL模式")
 		}
 	}
 
@@ -315,7 +315,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		g.auditServiceEvent("redis", "startup", "fail", err)
 		return nil, err
 	}
-	log.Debug("redis服务器启动成功")
+	log.Info("redis服务器启动成功")
 	g.auditServiceEvent("redis", "startup", "success", nil)
 	// 生成唯一的 KAFKA_INSTANCE_ID
 	instanceID := os.Getenv("KAFKA_INSTANCE_ID")
@@ -343,7 +343,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		g.producer = newNoopProducer()
 		g.setConsumerInstances(nil, nil, nil, nil)
 	} else {
-		log.Debug("kafka服务器启动成功")
+		log.Info("kafka服务器启动成功")
 		g.auditServiceEvent("kafka", "startup", "success", nil)
 	}
 
@@ -454,23 +454,22 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 								if len(instances.retryConsumers) == 0 {
 									metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(float64(p))
 									if isDebug {
-										//	log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), p)
 									}
 								} else {
 									if noOwner, err := getPartitionsWithoutOwner(ctx, brokers, retryGroupId, UserRetryTopic); err == nil {
 										metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(float64(noOwner))
 										if isDebug {
-											//			log.Debugf("指标刷新: topic %s 分区=%d, instances=%d, noOwner=%d", UserRetryTopic, p, len(instances.retryConsumers), noOwner)
+
 										}
 									} else {
 										// 回退到启发式
 										metrics.ConsumerPartitionsNoOwner.WithLabelValues(UserRetryTopic, retryGroupId).Set(0)
-										//		log.Debugf("周期更新: 无法计算无主分区，使用回退值 0: %v", err)
+										log.Warnf("周期更新: 无法计算无主分区，使用回退值 0: %v", err)
 									}
 								}
 							} else {
 								if g.options.ServerRunOptions.Mode == "debug" {
-									//		log.Debugf("周期更新: 无法读取 topic %s 分区信息: %v", UserRetryTopic, err)
+
 								}
 							}
 						}
@@ -478,13 +477,13 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 				}()
 			}
 		}
-		log.Debugf("已启动 %d 个消费者实例", len(instances.createConsumers))
+		log.Infof("已启动 %d 个消费者实例", len(instances.createConsumers))
 	}
 
 	consumerReady.Wait()
 	// 如果我们未创建按实例存储（回退模式），启动单个全局重试消费者
 
-	log.Debug("所有Kafka消费者已启动")
+	log.Infof("所有Kafka消费者已启动")
 	g.printKafkaConfigInfo()
 
 	//安装中间件
@@ -492,7 +491,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 		log.Error("中间件安装失败")
 		return nil, err
 	}
-	log.Debug("中间件安装成功")
+	log.Info("中间件安装成功")
 
 	//. 安装路由
 	g.installRoutes()
@@ -520,7 +519,7 @@ func monitorClusterHealth(datastore *mysql.Datastore, interval time.Duration) {
 			currentStatus.HealthyReplicas != lastStatus.HealthyReplicas {
 
 			if currentStatus.PrimaryHealthy && currentStatus.HealthyReplicas > 0 {
-				log.Debugf("📊 集群状态: 主节点健康，%d/%d 副本可用",
+				log.Warnf("📊 集群状态: 主节点健康，%d/%d 副本可用",
 					currentStatus.HealthyReplicas, currentStatus.ReplicaCount)
 				unhealthyCount = 0
 			} else if !currentStatus.PrimaryHealthy {
@@ -547,7 +546,7 @@ func (g *GenericAPIServer) configureGin() error {
 	// 开发环境配置
 	if g.options.ServerRunOptions.Mode == gin.DebugMode {
 		gin.DebugPrintRouteFunc = func(httpMethod, absolutePath, handlerName string, nuHandlers int) {
-			log.Debugf("📍 %-6s %-50s → %s (%d middleware)",
+			log.Infof("📍 %-6s %-50s → %s (%d middleware)",
 				httpMethod, absolutePath, filepath.Base(handlerName), nuHandlers)
 		}
 	} else {
@@ -592,7 +591,7 @@ func (g *GenericAPIServer) Run(ctx context.Context) error {
 
 	go func() {
 		close(serverStarted)
-		log.Debugf("正在 %s 启动 GenericAPIServer 服务", address)
+
 		if serveErr := g.insecureServer.Serve(listener); serveErr != nil {
 			serverErr <- serveErr
 			return
@@ -603,7 +602,7 @@ func (g *GenericAPIServer) Run(ctx context.Context) error {
 	select {
 	case <-serverStarted:
 		g.auditServiceEvent("api-server", "startup", "success", nil)
-		log.Debug("GenericAPIServer服务器已开始监听，准备进行健康检查...")
+		log.Infof("GenericAPIServer服务器已开始监听，准备进行健康检查...")
 	case <-ctx.Done():
 		listener.Close()
 		reason := fmt.Errorf("启动被取消: %w", ctx.Err())
@@ -682,7 +681,7 @@ func (g *GenericAPIServer) Run(ctx context.Context) error {
 // waitForPortReady 等待端口就绪
 func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
-	log.Debugf("等待端口 %s 就绪，超时时间: %v", address, timeout)
+	log.Warnf("等待端口 %s 就绪，超时时间: %v", address, timeout)
 
 	for attempt := 1; ; attempt++ {
 		// 检查是否超时
@@ -694,13 +693,13 @@ func (g *GenericAPIServer) waitForPortReady(ctx context.Context, address string,
 		conn, err := net.DialTimeout("tcp", address, 100*time.Millisecond)
 		if err == nil {
 			conn.Close()
-			log.Debugf("端口 %s 就绪检测成功，尝试次数: %d", address, attempt)
+			log.Infof("端口 %s 就绪检测成功，尝试次数: %d", address, attempt)
 			return nil
 		}
 
 		// 记录重试信息（每5次尝试记录一次）
 		if attempt%5 == 0 {
-			log.Debugf("端口就绪检测尝试 %d: %v", attempt, err)
+			log.Infof("端口就绪检测尝试 %d: %v", attempt, err)
 		}
 
 		// 等待重试或上下文取消
@@ -750,7 +749,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 
 	var rateLimiter *ratelimiter.RateLimiterController
 	if g.options.ServerRunOptions.EnableRateLimiter {
-		log.Debug("初始化生产端动态限速器...")
+		log.Info("初始化生产端动态限速器...")
 		rateLimiter = ratelimiter.NewRateLimiterController(
 			float64(kafkaOpts.StartingRate), // 初始速率
 			float64(kafkaOpts.MinRate),      // 最小速率
@@ -762,7 +761,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		log.Infof("[Producer] 未启用限速器（EnableRateLimiter=false）")
 	}
 
-	log.Debug("初始化Kafka生产者...")
+	log.Info("初始化Kafka生产者...")
 	userProducer, err := NewUserProducer(kafkaOpts, rateLimiter, g.options.ServerRunOptions.ProducerFallbackDir)
 	if err != nil {
 		return fmt.Errorf("failed to create user producer: %w", err)
@@ -772,7 +771,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	consumerCount := kafkaOpts.WorkerCount
 	retryconsumerCount := kafkaOpts.RetryWorkerCount
 
-	log.Debugf("为每个主题创建 %d 个消费者实例", consumerCount)
+	log.Infof("为每个主题创建 %d 个消费者实例", consumerCount)
 
 	// 创建消费者实例切片
 	createConsumers := make([]*UserConsumer, consumerCount)
@@ -812,7 +811,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		}
 	}
 
-	log.Debugf("初始化重试消费者...")
+	log.Info("初始化重试消费者...")
 	retryGroupId := ConsumerGroupPrefix + "-retry"
 	for i := 0; i < kafkaOpts.RetryWorkerCount; i++ {
 		retryConsumers[i] = NewRetryConsumer(db, g.redis, userProducer, kafkaOpts, UserRetryTopic, retryGroupId)
@@ -830,7 +829,7 @@ func (g *GenericAPIServer) initUserService(factory interfaces.Factory) {
 	if g == nil || factory == nil {
 		return
 	}
-	g.userService = user.NewUserService(factory, g.redis, g.options, g.producer)
+	g.userService = user.NewUserService(factory, g.redis, g.options, g.producer, g.audit)
 }
 
 func (g *GenericAPIServer) initCredentialCache() {
@@ -953,7 +952,7 @@ func (g *GenericAPIServer) monitorRedisConnection(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Debug("Redis集群监控退出")
+			log.Warnf("Redis集群监控退出")
 			return
 		case <-ticker.C:
 			client := g.redis.GetClient()
@@ -967,7 +966,7 @@ func (g *GenericAPIServer) monitorRedisConnection(ctx context.Context) {
 				log.Errorf("Redis集群健康检查失败: %v", err)
 			}
 			// 成功时不输出日志，或者改为Debug级别
-			// log.Debug("Redis集群健康检查通过")
+
 		}
 	}
 }
@@ -983,7 +982,7 @@ func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
 	}
 
 	url := fmt.Sprintf("http://%s/healthz", net.JoinHostPort(host, port))
-	log.Debugf("开始健康检查，目标URL: %s", url)
+	log.Infof("开始健康检查，目标URL: %s", url)
 
 	attempt := 0
 
@@ -1001,17 +1000,17 @@ func (g *GenericAPIServer) ping(ctx context.Context, address string) error {
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			if attempt%3 == 0 { // 每3次失败记录一次日志，避免日志过多
-				log.Debugf("健康检查尝试 %d 失败: %v", attempt, err)
+				log.Infof("健康检查尝试 %d 失败: %v", attempt, err)
 			}
 		} else {
 			defer resp.Body.Close()
 
 			if resp.StatusCode == http.StatusOK {
-				log.Debug("健康检查成功")
+				log.Info("健康检查成功")
 				return nil
 			}
 
-			log.Debugf("健康检查尝试 %d: 状态码 %d", attempt, resp.StatusCode)
+			log.Infof("健康检查尝试 %d: 状态码 %d", attempt, resp.StatusCode)
 		}
 
 		select {
@@ -1036,13 +1035,13 @@ func (g *GenericAPIServer) initRedisStore() error {
 
 	// 启动异步连接任务
 	go func() {
-		log.Debugf("启动Redis集群异步连接任务")
+		log.Info("启动Redis集群异步连接任务")
 		storage.ConnectToRedis(ctx, g.options.RedisOptions)
 		log.Warn("Redis集群异步连接任务退出（可能上下文已取消）")
 	}()
 
 	// 同步等待Redis完全启动
-	log.Debugf("等待Redis集群完全启动...")
+	log.Info("等待Redis集群完全启动...")
 
 	debugMode := g.fastDebugStartupEnabled()
 	basicTimeout := 60 * time.Second
@@ -1050,7 +1049,7 @@ func (g *GenericAPIServer) initRedisStore() error {
 	if debugMode {
 		basicTimeout = 5 * time.Second
 		healthyTimeout = 10 * time.Second
-		log.Debugf("调试模式启用快速启动策略: basicTimeout=%v healthyTimeout=%v", basicTimeout, healthyTimeout)
+		log.Infof("调试模式启用快速启动策略: basicTimeout=%v healthyTimeout=%v", basicTimeout, healthyTimeout)
 	}
 
 	basicErr := g.waitForBasicConnection(basicTimeout)
@@ -1073,7 +1072,7 @@ func (g *GenericAPIServer) initRedisStore() error {
 	}
 
 	if basicErr == nil && healthyErr == nil {
-		log.Debug("✅ Redis集群完全启动并验证成功")
+		log.Info("✅ Redis集群完全启动并验证成功")
 	} else if debugMode {
 		log.Warn("⚠️ 调试模式降级: Redis尚未完全就绪，相关功能可能受限，后台重连成功后会自动恢复")
 	}
@@ -1100,13 +1099,13 @@ func (g *GenericAPIServer) waitForHealthyCluster(ctx context.Context, timeout ti
 		redisClient := g.redis.GetClient()
 		if redisClient != nil {
 			if err := g.pingRedis(ctx, redisClient); err == nil {
-				log.Debugf("Redis集群健康检查通过（尝试 %d 次）", attempt)
+				log.Infof("Redis集群健康检查通过（尝试 %d 次）", attempt)
 				return nil
 			}
 		}
 
 		if attempt%2 == 0 {
-			log.Debugf("等待Redis集群健康检查...（尝试 %d 次）", attempt)
+			log.Infof("等待Redis集群健康检查...（尝试 %d 次）", attempt)
 		}
 		time.Sleep(2 * time.Second)
 	}
@@ -1127,12 +1126,12 @@ func (g *GenericAPIServer) waitForBasicConnection(timeout time.Duration) error {
 		}
 
 		if storage.Connected() && g.redis.GetClient() != nil {
-			log.Debugf("✅ Redis基础连接建立（尝试 %d 次）", attempt)
+			log.Infof("✅ Redis基础连接建立（尝试 %d 次）", attempt)
 			return nil
 		}
 
 		if attempt%3 == 0 {
-			log.Debugf("等待Redis基础连接...（尝试 %d 次）", attempt)
+			log.Infof("等待Redis基础连接...（尝试 %d 次）", attempt)
 		}
 		time.Sleep(1 * time.Second)
 	}
@@ -1149,7 +1148,7 @@ func (g *GenericAPIServer) setupRedisClusterMonitoring() {
 		nodes = []string{fmt.Sprintf("%s:%d", g.options.RedisOptions.Host, g.options.RedisOptions.Port)}
 	}
 
-	log.Debugf("启动Redis集群监控，节点: %v", nodes)
+	log.Infof("启动Redis集群监控，节点: %v", nodes)
 
 	// 创建集群监控器
 	monitor := metrics.NewRedisClusterMonitor(
@@ -1161,7 +1160,7 @@ func (g *GenericAPIServer) setupRedisClusterMonitoring() {
 	// 启动监控
 	go monitor.Start(context.Background())
 
-	log.Debug("✅ Redis集群监控已启动")
+	log.Info("✅ Redis集群监控已启动")
 }
 
 // pingRedis 支持redis.UniversalClient类型
@@ -1170,6 +1169,8 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 	defer cancel()
 
 	// 检查集群状态
+	actualNodeCount := 0
+
 	if clusterClient, ok := client.(*redis.ClusterClient); ok {
 		// 集群模式：检查集群信息
 		clusterInfo, err := clusterClient.ClusterInfo(pingCtx).Result()
@@ -1187,7 +1188,6 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 			//log.Infof("配置的节点列表: %v", g.options.RedisOptions.Addrs)
 
 			lines := strings.Split(clusterNodes, "\n")
-			actualNodeCount := 0
 			for _, line := range lines {
 				if strings.TrimSpace(line) != "" {
 					actualNodeCount++
@@ -1275,8 +1275,12 @@ func (g *GenericAPIServer) pingRedis(ctx context.Context, client redis.Universal
 		if expectedNodes == 0 {
 			expectedNodes = totalNodes
 		}
-		if totalNodes != expectedNodes {
-			log.Warnf("⚠️  节点数量不匹配: 配置%d个, 集群中发现%d个", expectedNodes, totalNodes)
+		observedNodes := totalNodes
+		if actualNodeCount > 0 {
+			observedNodes = actualNodeCount
+		}
+		if observedNodes != expectedNodes {
+			log.Warnf("⚠️  节点数量不匹配: 配置%d个, 集群中发现%d个", expectedNodes, observedNodes)
 		} else {
 			//		log.Infof("✅ 节点数量匹配: %d个", totalNodes)
 		}

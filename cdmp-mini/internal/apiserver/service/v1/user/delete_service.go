@@ -20,7 +20,7 @@ func (u *UserService) DeleteCollection(ctx context.Context, username []string, f
 	//判断用户是否存在
 	for _, name := range username {
 		ruser, err := u.checkUserExist(ctx, name, true)
-		if err != nil || ruser == nil || ruser.Name == RATE_LIMIT_PREVENTION {
+		if err != nil || ruser == nil || ruser.Name == RATE_LIMIT_PREVENTION || ruser.Name == BLACKLIST_SENTINEL {
 			continue
 		} else {
 			u.Delete(ctx, name, true, opts, opt)
@@ -52,11 +52,10 @@ func (u *UserService) Delete(ctx context.Context, username string, force bool, o
 	//检查用户是否存在
 	checkCtx, checkSpan := trace.StartSpan(ctx, "user-service", "check_user_exist")
 	ruser, existErr := u.checkUserExist(checkCtx, username, true)
-	log.Debugf("ruser=%v, err=%v", ruser, existErr)
 	spanStatusCheck := "success"
 	spanCodeCheck := strconv.Itoa(code.ErrSuccess)
 	if existErr != nil {
-		log.Debugf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", username, existErr)
+		log.Warnf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", username, existErr)
 		spanStatusCheck = "error"
 		if c := errors.GetCode(existErr); c != 0 {
 			spanCodeCheck = strconv.Itoa(c)
@@ -64,8 +63,7 @@ func (u *UserService) Delete(ctx context.Context, username string, force bool, o
 			spanCodeCheck = strconv.Itoa(code.ErrUnknown)
 		}
 	}
-	if ruser != nil && ruser.Name == RATE_LIMIT_PREVENTION {
-		log.Debugf("用户%s不存在,无法删除", username)
+	if ruser != nil && (ruser.Name == RATE_LIMIT_PREVENTION || ruser.Name == BLACKLIST_SENTINEL) {
 		err = errors.WithCode(code.ErrUserNotFound, "用户不存在,无法删除")
 		spanStatusCheck = "error"
 		spanCodeCheck = strconv.Itoa(code.ErrUserNotFound)
@@ -114,7 +112,7 @@ func (u *UserService) Delete(ctx context.Context, username string, force bool, o
 			return err
 		}
 		// 记录业务成功
-		log.Debugw("用户删除请求已发送到Kafka", "username", username)
+
 		return nil
 
 	} else { //更新操作

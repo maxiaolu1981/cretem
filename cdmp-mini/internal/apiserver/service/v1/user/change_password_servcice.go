@@ -64,10 +64,10 @@ func (u *UserService) ChangePassword(ctx context.Context, user *v1.User, claims 
 	// 判断用户是否存在 - forceRefresh=true 强制回源验证
 	ruser, checkErr := u.checkUserExist(ctx, user.Name, true)
 	if checkErr != nil {
-		log.Debugf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", user.Name, checkErr)
+		log.Warnf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", user.Name, checkErr)
 	}
-	if ruser != nil && ruser.Name == RATE_LIMIT_PREVENTION {
-		log.Debugf("用户%s不存在,无法修改密码", user.Name)
+	if ruser != nil && (ruser.Name == RATE_LIMIT_PREVENTION || ruser.Name == BLACKLIST_SENTINEL) {
+		log.Warnf("用户%s不存在,无法修改密码", user.Name)
 		return errors.WithCode(code.ErrUserNotFound, "用户不存在")
 	}
 
@@ -89,7 +89,7 @@ func (u *UserService) ChangePassword(ctx context.Context, user *v1.User, claims 
 		if err := u.forceLogoutAllDevices(ctx, user.ID); err != nil {
 			// 如果是"没有会话"这种正常情况，不重试
 			if errors.Is(err, redis.Nil) {
-				log.Debugf("用户%s没有活跃会话", user.Name)
+				log.Warnf("用户%s没有活跃会话,正常返回", user.Name)
 				return nil, nil // 正常返回，不认为是错误
 			}
 			return nil, err
@@ -122,12 +122,12 @@ func (u *UserService) blacklistAccessToken(ctx context.Context, claims *jwtvalid
 	}
 
 	if claims.ID == "" || claims.UserID == "" {
-		log.Debug("访问令牌缺少jti或user_id，跳过黑名单写入")
+		log.Warnf("访问令牌缺少jti或user_id，跳过黑名单写入")
 		return nil
 	}
 
 	blacklistKey := authkeys.BlacklistKey(u.Options.JwtOptions.Blacklist_key_prefix, claims.UserID, claims.ID)
-	fullBlacklistKey := authkeys.WithGenericPrefix(blacklistKey)
+	//fullBlacklistKey := authkeys.WithGenericPrefix(blacklistKey)
 
 	var ttl time.Duration
 	if claims.ExpiresAt != nil {
@@ -143,16 +143,11 @@ func (u *UserService) blacklistAccessToken(ctx context.Context, claims *jwtvalid
 	if err := u.Redis.SetKey(ctx, blacklistKey, "1", ttl); err != nil {
 		return errors.WithCode(code.ErrDatabase, "写入访问令牌黑名单失败: %v", err)
 	}
-
-	log.Debugf("访问令牌已加入黑名单: key=%s, ttl=%s", fullBlacklistKey, ttl.String())
 	return nil
 }
 
 func (u *UserService) forceLogoutAllDevices(ctx context.Context, userID uint64) error {
 	userIDStr := strconv.FormatUint(userID, 10)
-
-	log.Debugf("开始清理用户%s的所有设备会话", userIDStr)
-
 	userSessionsKey := authkeys.UserSessionsKey(userIDStr)
 	refreshPrefix := authkeys.WithGenericPrefix(authkeys.RefreshTokenPrefix(userIDStr))
 
@@ -180,9 +175,7 @@ func (u *UserService) forceLogoutAllDevices(ctx context.Context, userID uint64) 
 		return #tokens
 	`
 
-	log.Debugf("执行Lua脚本，参数: userID=%s", userIDStr)
-
-	result, err := u.Redis.Eval(ctx, luaScript,
+	_, err := u.Redis.Eval(ctx, luaScript,
 		[]string{
 			userSessionsKey,
 		},
@@ -194,17 +187,10 @@ func (u *UserService) forceLogoutAllDevices(ctx context.Context, userID uint64) 
 	if err != nil {
 		log.Errorf("Lua脚本执行失败: %v", err)
 		if errors.Is(err, redis.Nil) {
-			log.Debugf("用户%s没有活跃会话", userIDStr)
+			log.Warnf("用户%s没有活跃会话", userIDStr)
 			return redis.Nil
 		}
 		return errors.WithCode(code.ErrDatabase, "清理用户令牌失败: %v", err)
 	}
-
-	tokenCount := 0
-	if result != nil {
-		tokenCount = int(result.(int64))
-	}
-
-	log.Debugf("用户%s密码修改，清理了%d个refresh token", userIDStr, tokenCount)
 	return nil
 }

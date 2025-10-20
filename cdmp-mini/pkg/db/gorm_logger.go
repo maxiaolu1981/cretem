@@ -73,11 +73,20 @@ func (g *gormLoggerAdapter) Trace(ctx context.Context, begin time.Time, fc func(
 
 	switch {
 	case err != nil && g.config.LogLevel >= logger.Error:
-		log.Errorf("[gorm] error=%v elapsed=%s rows=%d sql=%s", err, elapsed, rowCount, sql)
+		// 过滤 record not found，降级为 INFO
+		if err.Error() == "record not found" {
+			if g.config.LogLevel >= logger.Info {
+				log.Infof("[gorm] record not found elapsed=%s rows=%d sql=%s", elapsed, rowCount, sql)
+			}
+		} else {
+			// 真正的错误仍然记录为 ERROR
+			log.Errorf("[gorm] error=%v elapsed=%s rows=%d sql=%s", err, elapsed, rowCount, sql)
+		}
 	case g.config.SlowThreshold > 0 && elapsed > g.config.SlowThreshold && g.config.LogLevel >= logger.Warn:
 		log.Warnf("[gorm] slow query >= %s elapsed=%s rows=%d sql=%s", g.config.SlowThreshold, elapsed, rowCount, sql)
 	case g.config.LogLevel >= logger.Info:
-		log.Debugf("[gorm] query elapsed=%s rows=%d sql=%s", elapsed, rowCount, sql)
+		// 普通查询也改为 INFO 级别
+		log.Infof("[gorm] query elapsed=%s rows=%d sql=%s", elapsed, rowCount, sql)
 	}
 }
 
