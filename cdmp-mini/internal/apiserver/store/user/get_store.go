@@ -66,11 +66,18 @@ func (u *Users) Get(ctx context.Context, username string,
 	})
 
 	if err != nil {
+		handledErr := u.handleGetError(err)
 		spanStatus = "error"
-		if c := apierrors.GetCode(err); c != 0 {
-			spanCode = strconv.Itoa(c)
+		if handledErr != nil {
+			if c := apierrors.GetCode(handledErr); c != 0 {
+				spanCode = strconv.Itoa(c)
+				if c == code.ErrUserNotFound {
+					spanStatus = "degraded"
+					spanDetails["reason"] = "user_not_found"
+				}
+			}
 		}
-		return nil, u.handleGetError(err)
+		return nil, handledErr
 	}
 
 	spanDetails["cached_user"] = resultUser != nil

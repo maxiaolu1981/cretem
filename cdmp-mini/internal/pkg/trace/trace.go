@@ -202,6 +202,39 @@ func StartSpan(ctx context.Context, component, operation string) (context.Contex
 	return spanCtx, span
 }
 
+// StartSpanWithParent starts a new span and explicitly sets the parent span ID when provided.
+func StartSpanWithParent(ctx context.Context, component, operation, parentID string) (context.Context, *Span) {
+	t := FromContext(ctx)
+	if t == nil {
+		return ctx, nil
+	}
+
+	spanID := uuid.Must(uuid.NewV4()).String()
+	if parentID == "" {
+		if v := ctx.Value(currentSpanKey{}); v != nil {
+			if parent, ok := v.(string); ok {
+				parentID = parent
+			}
+		}
+	}
+
+	span := &Span{
+		ID:        spanID,
+		ParentID:  parentID,
+		Component: component,
+		Operation: operation,
+		StartTime: time.Now(),
+		Status:    "success",
+	}
+
+	t.mu.Lock()
+	t.spans = append(t.spans, span)
+	t.mu.Unlock()
+
+	spanCtx := context.WithValue(ctx, currentSpanKey{}, spanID)
+	return spanCtx, span
+}
+
 // EndSpan finalizes the span with status and details.
 func EndSpan(span *Span, status, businessCode string, details map[string]interface{}, metricsLabels ...string) {
 	if span == nil {
@@ -410,6 +443,21 @@ func (t *Trace) ToLogPayload(asyncSpans []*Span) map[string]interface{} {
 	degraded := 0
 	errors := 0
 
+	errorSpanIDs := make(map[string]struct{})
+	errorParentIDs := make(map[string]struct{})
+	for _, span := range spans {
+		if span.Status == "error" {
+			errorSpanIDs[span.ID] = struct{}{}
+		}
+	}
+	for _, span := range spans {
+		if span.Status == "error" {
+			if _, ok := errorSpanIDs[span.ParentID]; ok {
+				errorParentIDs[span.ParentID] = struct{}{}
+			}
+		}
+	}
+
 	for _, span := range spans {
 		entry := map[string]interface{}{
 			"span_id":     span.ID,
@@ -433,7 +481,9 @@ func (t *Trace) ToLogPayload(asyncSpans []*Span) map[string]interface{} {
 		}
 		spanPayload = append(spanPayload, entry)
 		if span.Status == "error" {
-			errors++
+			if _, hasErrorChild := errorParentIDs[span.ID]; !hasErrorChild {
+				errors++
+			}
 		} else if span.Status == "degraded" {
 			degraded++
 		}
@@ -630,9 +680,11 @@ func (c *Collector) mergeAsync(t *Trace) {
 		c.traces[t.ID] = entry
 	}
 	entry.asyncSpans = append(entry.asyncSpans, spans...)
-	entry.asyncReady = true
+	if !t.asyncExpected {
+		entry.asyncReady = true
+	}
 
-	if entry.httpTrace != nil {
+	if entry.httpTrace != nil && entry.asyncReady {
 		if entry.timer != nil {
 			entry.timer.Stop()
 		}

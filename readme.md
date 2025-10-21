@@ -239,86 +239,15 @@ func (p *UserProducer) handleErrors() {
 结合并发场景评估 --kafka.channel-buffer-size、FlushFrequency、FlushMaxMessages 等参数，给生产端留足队列余量；同时监控 Sarama 成功/失败指标。
 压测过程中同步检查 Kafka broker 健康（堆积、磁盘、网络），排除 broker 端响应慢导致的 500ms 超时。
 调参后重复压测，确认 fallback 文件不再生成，并通过测试工具核对数据库残留用户，确保链路闭环。
-GPT-5-Codex (Preview) • 1x
-{
-  "trace_id": "a3b4c5d6-...-1234",
-  "level": "INFO",
-  "timestamp": "2025-10-19T08:15:12.384Z",
-  "service": "iam-apiserver",
-  "component": "user-api",
-  "call_chain": {
-    "root_operation": "POST /v1/users",
-    "start_time": 1697703312384,
-    "end_time": 1697703312789,
-    "spans": [
-      {
-        "span_id": "s-http",
-        "parent_id": "",
-        "component": "user-api",
-        "operation": "http_request",
-        "start_time": 1697703312384,
-        "end_time": 1697703312760,
-        "duration_ms": 376,
-        "status": "success",
-        "details": {
-          "client_ip": "10.0.0.8",
-          "user_agent": "curl/8.5.0"
-        }
-      },
-      {
-        "span_id": "s-controller",
-        "parent_id": "s-http",
-        "component": "user-controller",
-        "operation": "create_user",
-        "start_time": 1697703312420,
-        "end_time": 1697703312755,
-        "duration_ms": 335,
-        "status": "success",
-        "details": {
-          "requested_username": "alice",
-          "requested_email": "alice@example.com",
-          "requested_phone": "+8613800000000"
-        }
-      }
-      // TODO: 未来应追加 producer/consumer/DB 等子 span
-    ]
-  },
-  "request_context": {
-    "request_id": "req-6f8c479c",
-    "client_ip": "10.0.0.8",
-    "user_id": "admin",
-    "operator": "admin",
-    "http_method": "POST",
-    "http_path": "/v1/users",
-    "http_status": 201,
-    "extra": {
-      "hostname": "apiserver-1",
-      "env": "staging",
-      "user_agent": "curl/8.5.0",
-      "controller": "create_user"
-    }
-  },
-  "business_metrics": {
-    "operation": "POST /v1/users",
-    "total_duration_ms": 405.2,
-    "overall_status": "success",
-    "business_code": "100001",
-    "business_message": "success",
-    "performance_summary": {
-      "api_processing_ms": 335,
-      "kafka_production_ms": 0,
-      "kafka_consumption_ms": 0
-    }
-  },
-  "error_analysis": {
-    "total_errors": 0,
-    "degraded_operations": 0,
-    "error_categories": {
-      "validation": 0,
-      "database": 0,
-      "kafka": 0,
-      "redis": 0,
-      "business": 0
-    }
-  }
-}
+当调用 checkUserExist(ctx, username, forceRefresh) 且 forceRefresh=true 时，会先把上下文包一层 WithForceCacheRefresh。这类调用主要来自强一致性场景：强制删除、批量删除、更新、改密、列表等，我们在这些流程中都传了 true。
+带着这个标记进入 tryGetFromCache 后，如果命中负缓存 (RATE_LIMIT_PREVENTION) 或黑名单哨兵 (BLACKLIST_SENTINEL)，就立即回源 refreshUserCacheFromDB 拉一次数据库，并打出 cache_negative_bypass/cache_blacklist_bypass 标签；成功拿到真实用户会刷新缓存并返回，拿不到则仍视为不存在。
+当 forceRefresh=false（例如创建校验是否重名、普通 GET）时，不会加标记，命中负缓存/黑名单时仍沿用原有逻辑：负缓存场景只做一次性或带锁的后台刷新尝试，黑名单直接返回哨兵，不会强制读库。
+创建场景 forceRefresh=false：checkUserExist 先查缓存。命中真实用户就阻止重复创建；命中负缓存/黑名单时不会立刻回源，只按原有策略处理（负缓存做自刷新或返回不存在，黑名单直接判定不存在）。只有缓存完全未命中才会查一次数据库并把结果写回缓存。这样保持高 QPS 创建路径的轻量级缓存命中。
+
+删除/更新等强一致场景 forceRefresh=true：checkUserExist 一样先查缓存，但如果命中的是负缓存或黑名单哨兵，会立即触发 “强制刷新” 去读库；读到真实用户就刷新缓存并返回，从而保证后续删除用的是最新事实。如果缓存和数据库都确认不存在，就认为用户确实不在（或早已被删），直接走幂等跳过。
+
+真正的删除动作还是交给强制删除的后续逻辑：确认存在后，走 Kafka 消费者落库删除、清理缓存。我们当前重点修的是“查不到/被负缓存拦住导致误判不存在”这个前置条件，确保删除链路能被触发。
+
+所以创建继续走“缓存优先+必要时回源”，删除在找不到的时候会多查一遍数据库（因为 forceRefresh=true 触发强制刷新），避免被负缓存或黑名单挡住。
+
+GPT-5-Codex (Preview) •

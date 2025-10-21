@@ -14,6 +14,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -315,6 +316,7 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 		userID           uint64
 		existingSnapshot *v1.User
 	)
+	retryCount := currentRetryCount
 	if deleteRequest.Username != "" {
 		var existing v1.User
 		if err := rc.db.WithContext(ctx).
@@ -333,6 +335,10 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 	if err := rc.deleteUserFromDB(ctx, deleteRequest.Username); err != nil {
 		// 检查是否为可忽略的错误
 		if rc.isIgnorableDeleteError(err) {
+			if strings.Contains(strings.ToLower(err.Error()), "not found") && retryCount == 0 {
+				trace.AddRequestTag(ctx, "retry_not_found_delete", true)
+				return rc.prepareNextRetry(ctx, msg, currentRetryCount, "DELETE_TARGET_NOT_READY: "+err.Error())
+			}
 			log.Warnf("删除操作遇到可忽略错误，直接提交: username=%s, error=%v",
 				deleteRequest.Username, err)
 			rc.purgeUserState(ctx, deleteRequest.Username, userID, existingSnapshot)

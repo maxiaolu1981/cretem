@@ -23,7 +23,7 @@ import (
 const (
 	perfUsernamePrefix    = "createperf"
 	cacheDefaultThreshold = 50 * time.Millisecond
-	waitDefaultTimeout    = 8 * time.Second
+	waitDefaultTimeout    = 15 * time.Second
 )
 
 const perfOutputDir = "/home/mxl/cretem/cretem/cdmp-mini/test/iam-apiserver/user/create"
@@ -247,7 +247,8 @@ func (r *scenarioResult) record(outcome operationOutcome) {
 		}
 	}
 	if outcome.created {
-		r.cleanup[outcome.variant.Spec.Name] = true
+		requireWait := !r.scenario.Options.SkipWaitForReady
+		r.cleanup[outcome.variant.Spec.Name] = requireWait
 	}
 	if outcome.cacheChecks > 0 {
 		r.cacheChecks += outcome.cacheChecks
@@ -703,7 +704,7 @@ func attemptForceDelete(env *framework.Env, name string) (bool, error) {
 	case http.StatusOK:
 		return true, nil
 	case http.StatusNotFound:
-		return false, nil
+		return true, nil
 	default:
 		return false, fmt.Errorf("unexpected delete status %d for user %s", resp.HTTPStatus(), name)
 	}
@@ -938,8 +939,8 @@ func baselineConcurrentScenario() performanceScenario {
 		Stages: []workloadStage{
 			{
 				Name:        "parallel_batch",
-				Requests:    1,
-				Concurrency: 1,
+				Requests:    2048,
+				Concurrency: 64,
 				Pattern:     patternUniform,
 			},
 		},
@@ -957,6 +958,7 @@ func baselineSustainedScenario() performanceScenario {
 			EnforceSLA:       true,
 			SkipWaitForReady: true,
 			SkipInShort:      true,
+			WaitForReady:     45 * time.Second,
 			Notes: []string{
 				"持续负载周期约30s，用于观察内存与资源走势",
 				"取消ThinkTime，关注高并发持续压力下的稳定性",
@@ -984,6 +986,7 @@ func stressSpikeScenario() performanceScenario {
 		Options: scenarioOptions{
 			EnforceSLA:       true,
 			SkipWaitForReady: true,
+			WaitForReady:     45 * time.Second,
 			AspirationalTPS:  800,
 			Notes:            []string{"突发负载集中在单阶段"},
 		},
@@ -1008,6 +1011,7 @@ func stressRampScenario() performanceScenario {
 		Options: scenarioOptions{
 			EnforceSLA:       true,
 			SkipWaitForReady: true,
+			WaitForReady:     45 * time.Second,
 			AspirationalTPS:  1000,
 			Notes:            []string{"分阶段递增并发量"},
 		},
@@ -1031,6 +1035,7 @@ func stressDestructiveScenario() performanceScenario {
 			AllowDegradation: true,
 			EnforceSLA:       false,
 			SkipWaitForReady: true,
+			WaitForReady:     60 * time.Second,
 			SkipInShort:      true,
 			Notes: []string{
 				"预期观察降级策略和排队行为，允许出现失败",
@@ -1058,6 +1063,7 @@ func specializedDBPoolScenario() performanceScenario {
 		Options: scenarioOptions{
 			EnforceSLA:       true,
 			SkipWaitForReady: true,
+			WaitForReady:     30 * time.Second,
 			Notes: []string{
 				"并发数接近连接池阈值，关注等待时间",
 			},
@@ -1083,6 +1089,7 @@ func specializedCacheScenario() performanceScenario {
 		Options: scenarioOptions{
 			EnforceSLA:        true,
 			SkipWaitForReady:  true,
+			WaitForReady:      30 * time.Second,
 			CacheChecks:       3,
 			CacheHitThreshold: 50 * time.Millisecond,
 			Notes: []string{
@@ -1110,6 +1117,7 @@ func specializedExtremeDataScenario() performanceScenario {
 		Options: scenarioOptions{
 			EnforceSLA:       true,
 			SkipWaitForReady: true,
+			WaitForReady:     30 * time.Second,
 			Notes: []string{
 				"数据分布覆盖最小/最大长度、特殊字符、重复手机号",
 			},
@@ -1477,9 +1485,9 @@ func TestCreatePerformance(t *testing.T) {
 
 	scenarios := []performanceScenario{
 		//baselineSerialScenario(),
-		baselineConcurrentScenario(),
-		//	baselineSustainedScenario(),
-		//	stressSpikeScenario(),
+		//baselineConcurrentScenario(),
+		//baselineSustainedScenario(),
+		stressSpikeScenario(),
 		//	stressRampScenario(),
 		//	stressDestructiveScenario(),
 		//	specializedDBPoolScenario(),

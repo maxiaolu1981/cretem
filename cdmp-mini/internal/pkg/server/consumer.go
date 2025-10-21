@@ -501,6 +501,12 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 		userID           uint64
 		existingSnapshot *v1.User
 	)
+	retryCount := 0
+	if header := c.getHeaderValue(msg.Headers, HeaderRetryCount); header != "" {
+		if parsed, err := strconv.Atoi(header); err == nil {
+			retryCount = parsed
+		}
+	}
 	if deleteRequest.Username != "" {
 		var existing v1.User
 		if err := c.db.WithContext(ctx).
@@ -517,6 +523,16 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 	}
 
 	if err := c.deleteUserFromDB(ctx, deleteRequest.Username); err != nil {
+		if errors.IsCode(err, code.ErrUserNotFound) || stderrs.Is(err, gorm.ErrRecordNotFound) {
+			if retryCount == 0 {
+				trace.AddRequestTag(ctx, "delete_retry_on_not_found", true)
+				log.Warnf("Delete message for %s reached before user exists, scheduling retry", deleteRequest.Username)
+				return c.sendToRetry(ctx, msg, "DELETE_TARGET_NOT_READY: "+err.Error())
+			}
+			trace.AddRequestTag(ctx, "delete_idempotent_skip", true)
+			c.purgeUserState(ctx, deleteRequest.Username, userID, existingSnapshot)
+			return nil
+		}
 		return c.sendToRetry(ctx, msg, "删除用户失败: "+err.Error())
 	}
 

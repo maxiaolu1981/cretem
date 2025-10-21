@@ -1,39 +1,39 @@
 [
   {
-    "scenario": "baseline/baseline_concurrent",
-    "requests": 1,
+    "scenario": "stress/stress_spike",
+    "requests": 4096,
     "success_rate": 1,
     "error_rate": 0,
-    "duration_ms": 108,
-    "qps": 9.218140718347213,
+    "duration_ms": 12337,
+    "qps": 331.99937233767884,
     "error_count": 0,
-    "success_count": 1,
+    "success_count": 4096,
     "latency": {
-      "min_ms": 108.41789,
-      "max_ms": 108.41789,
-      "avg_ms": 108.41789,
-      "p50_ms": 108.41789,
-      "p90_ms": 108.41789,
-      "p95_ms": 108.41789,
-      "p99_ms": 108.41789
+      "min_ms": 122.024905,
+      "max_ms": 1861.850093,
+      "avg_ms": 749.67872,
+      "p50_ms": 725.235416,
+      "p90_ms": 1029.612118,
+      "p95_ms": 1159.427921,
+      "p99_ms": 1491.6581
     },
     "counters": {
       "cache_checks": 0,
       "cache_hits": 0,
       "degraded": 0,
-      "peak_concurrency": 1,
+      "peak_concurrency": 256,
       "stages": 1
     },
     "notes": [
-      "多用户并发创建 - 模拟真实并发场景",
-      "Load pattern=uniform",
-      "目标对齐登录压测并发，生产端需快速拉满吞吐",
-      "SLA 基于近期基准结果: avg~277ms, p95~453ms, p99~599ms",
-      "username distribution: len_28=1",
-      "password distribution: complex=1",
-      "email distribution: corp.internal=1",
-      "phone distribution: international=1",
-      "TPS=9.22"
+      "峰值流量测试 - 短时间内突发高并发",
+      "Load pattern=spike",
+      "TPS 332.00 below aspiration 800.00",
+      "突发负载集中在单阶段",
+      "username distribution: len_12=1365, len_28=1366, len_45=1365",
+      "password distribution: complex=2048, simple=2048",
+      "email distribution: corp.internal=1366, custom-domain.test=1365, example.com=1365",
+      "phone distribution: domestic=2048, international=2048",
+      "TPS=332.00"
     ]
   }
 ]

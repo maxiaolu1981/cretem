@@ -15,6 +15,7 @@ import (
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	"github.com/maxiaolu1981/cretem/nexuscore/component-base/auth"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
 )
@@ -41,6 +42,20 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	// 统一规整邮箱和手机号，确保后续索引和缓存命中
 	user.Email = usercache.NormalizeEmail(user.Email)
 	user.Phone = usercache.NormalizePhone(user.Phone)
+
+	// 对密码进行加密，避免在控制层重复执行
+	passwordStart := time.Now()
+	if user.Password != "" {
+		hashed, hashErr := auth.Encrypt(user.Password)
+		u.recordUserCreateStep(ctx, "encrypt_password", "password", user.Name, time.Since(passwordStart), hashErr)
+		if hashErr != nil {
+			log.Errorf("用户密码加密失败: username=%s, err=%v", user.Name, hashErr)
+			return errors.WithCode(code.ErrEncrypt, "用户密码加密失败")
+		}
+		user.Password = hashed
+	} else {
+		u.recordUserCreateStep(ctx, "encrypt_password", "password", user.Name, time.Since(passwordStart), nil)
+	}
 
 	u.ensureContactCacheReady()
 

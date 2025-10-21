@@ -52,6 +52,146 @@ type fallbackHeader struct {
 	Value string `json:"value"`
 }
 
+type producerMetadata struct {
+	topic        string
+	operation    string
+	traceID      string
+	enqueuedAt   time.Time
+	parentSpanID string
+}
+
+func (m *producerMetadata) markEnqueued() {
+	if m == nil {
+		return
+	}
+	m.enqueuedAt = time.Now()
+}
+
+func attachProducerMetadata(msg *sarama.ProducerMessage, topic, operation, traceID string) *producerMetadata {
+	if msg == nil {
+		return nil
+	}
+	if topic == "" {
+		topic = "unknown"
+	}
+	if operation == "" {
+		operation = "unknown"
+	}
+	meta := &producerMetadata{
+		topic:        topic,
+		operation:    operation,
+		traceID:      traceID,
+		parentSpanID: "",
+	}
+	msg.Metadata = meta
+	return meta
+}
+
+func (p *UserProducer) recordDeliveryMetrics(msg *sarama.ProducerMessage, err error) {
+	if msg == nil {
+		return
+	}
+	meta, ok := msg.Metadata.(*producerMetadata)
+	if !ok || meta == nil {
+		return
+	}
+	if meta.enqueuedAt.IsZero() {
+		return
+	}
+	deliveryLatency := time.Since(meta.enqueuedAt)
+	if deliveryLatency < 0 {
+		deliveryLatency = 0
+	}
+	metrics.RecordKafkaProducerDelivery(meta.topic, meta.operation, deliveryLatency, err)
+	p.emitProducerDeliveryTrace(meta, msg, deliveryLatency, err)
+	msg.Metadata = nil
+}
+
+func (p *UserProducer) emitProducerDeliveryTrace(meta *producerMetadata, msg *sarama.ProducerMessage, latency time.Duration, sendErr error) {
+	if meta == nil {
+		return
+	}
+	traceID := meta.traceID
+	if traceID == "" && msg != nil {
+		traceID = p.getTraceIDFromHeaders(msg.Headers)
+	}
+	if traceID == "" {
+		return
+	}
+
+	operationLabel := meta.operation
+	if operationLabel == "" {
+		operationLabel = "unknown"
+	}
+
+	spanOperation := fmt.Sprintf("broker_ack_%s", operationLabel)
+	_, ctx := trace.NewDetached(trace.Options{
+		TraceID:   traceID,
+		Service:   "iam-apiserver",
+		Component: "kafka-producer",
+		Operation: spanOperation,
+		Phase:     trace.PhaseAsync,
+		Method:    "KAFKA",
+		Path:      meta.topic,
+		Now:       time.Now(),
+	})
+
+	trace.AddRequestTag(ctx, "topic", meta.topic)
+	trace.AddRequestTag(ctx, "operation", operationLabel)
+	trace.AddRequestTag(ctx, "delivery_latency_ms", float64(latency.Milliseconds()))
+	if msg != nil {
+		if msg.Partition >= 0 {
+			trace.AddRequestTag(ctx, "partition", msg.Partition)
+		}
+		if msg.Offset >= 0 {
+			trace.AddRequestTag(ctx, "offset", msg.Offset)
+		}
+		if msg.Key != nil {
+			if encodedKey, err := msg.Key.Encode(); err == nil {
+				trace.AddRequestTag(ctx, "message_key", string(encodedKey))
+			}
+		}
+	}
+
+	spanCtx, span := trace.StartSpanWithParent(ctx, "kafka-producer", "broker_ack", meta.parentSpanID)
+	if sendErr == nil {
+		// Ack succeeds before the consumer finishes, so keep the collector waiting for the downstream span.
+		trace.ExpectAsync(ctx, time.Now().Add(5*time.Second))
+	}
+	details := map[string]interface{}{
+		"topic":          meta.topic,
+		"operation":      operationLabel,
+		"latency_ms":     float64(latency) / float64(time.Millisecond),
+		"parent_span_id": meta.parentSpanID,
+	}
+	if msg != nil {
+		if msg.Partition >= 0 {
+			details["partition"] = msg.Partition
+		}
+		if msg.Offset >= 0 {
+			details["offset"] = msg.Offset
+		}
+	}
+
+	status := "success"
+	codeStr := strconv.Itoa(code.ErrSuccess)
+	message := "broker acknowledged"
+	if sendErr != nil {
+		status = "error"
+		message = sendErr.Error()
+		details["error"] = sendErr.Error()
+		if c := errors.GetCode(sendErr); c != 0 {
+			codeStr = strconv.Itoa(c)
+		} else {
+			codeStr = strconv.Itoa(code.ErrKafkaFailed)
+		}
+	}
+
+	trace.EndSpan(span, status, codeStr, details)
+	trace.RecordOutcome(spanCtx, codeStr, message, status, 0)
+	trace.Complete(spanCtx)
+}
+
 const defaultProducerEnqueueTimeout = 500 * time.Millisecond
 
 var errProducerEnqueueTimeout = stderrors.New("producer enqueue timeout")
@@ -182,12 +322,18 @@ func NewUserProducer(
 
 func (p *UserProducer) handleSuccesses() {
 	defer p.wg.Done()
+	successes := p.producer.Successes()
 	for {
 		select {
-		case success := <-p.producer.Successes():
-			if success != nil {
-				log.Debugf("Message sent successfully to topic %s, partition %d, offset %d", success.Topic, success.Partition, success.Offset)
+		case success, ok := <-successes:
+			if !ok {
+				return
 			}
+			if success == nil {
+				continue
+			}
+			p.recordDeliveryMetrics(success, nil)
+			log.Debugf("Message sent successfully to topic %s, partition %d, offset %d", success.Topic, success.Partition, success.Offset)
 		case <-p.shutdown:
 			return
 		}
@@ -196,12 +342,17 @@ func (p *UserProducer) handleSuccesses() {
 
 func (p *UserProducer) handleErrors() {
 	defer p.wg.Done()
+	errs := p.producer.Errors()
 	for {
 		select {
-		case err := <-p.producer.Errors():
-			if err != nil {
-				log.Errorf("Failed to send message: %v", err)
-				p.writeToFallbackFile(err.Msg) // 写入到降级文件
+		case errMsg, ok := <-errs:
+			if !ok {
+				return
+			}
+			if errMsg != nil {
+				p.recordDeliveryMetrics(errMsg.Msg, errMsg.Err)
+				log.Errorf("Failed to send message: %v", errMsg.Err)
+				p.writeToFallbackFile(errMsg.Msg) // 写入到降级文件
 			}
 		case <-p.shutdown:
 			return
@@ -254,6 +405,13 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 	}
 
 	injectTraceHeader(ctx, msg)
+	meta := attachProducerMetadata(msg, msg.Topic, OperationDelete, trace.TraceIDFromContext(ctx))
+	if meta != nil {
+		if span != nil {
+			meta.parentSpanID = span.ID
+		}
+		meta.markEnqueued()
+	}
 	errSend := p.enqueueOrFallback(ctx, msg, fmt.Sprintf("delete message username=%s topic=%s", username, msg.Topic))
 	status := "success"
 	codeStr := strconv.Itoa(code.ErrSuccess)
@@ -400,6 +558,13 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 	}
 
 	injectTraceHeader(ctx, msg)
+	meta := attachProducerMetadata(msg, msg.Topic, operation, trace.TraceIDFromContext(ctx))
+	if meta != nil {
+		if span != nil {
+			meta.parentSpanID = span.ID
+		}
+		meta.markEnqueued()
+	}
 	if err := p.enqueueOrFallback(ctx, msg, fmt.Sprintf("user message operation=%s topic=%s username=%s", operation, topic, user.Name)); err != nil {
 		errSend = err
 		return err
@@ -425,7 +590,25 @@ func (p *UserProducer) sendToRetryTopic(ctx context.Context, msg kafka.Message, 
 		headers = append(headers, sarama.RecordHeader{Key: []byte(h.Key), Value: h.Value})
 	}
 	headers = p.updateOrAddHeader(headers, HeaderRetryError, errorInfo)
+	currCount := 0
+	for _, h := range headers {
+		if strings.EqualFold(string(h.Key), HeaderRetryCount) {
+			if v, err := strconv.Atoi(string(h.Value)); err == nil {
+				currCount = v
+			}
+			break
+		}
+	}
+	headers = p.updateOrAddHeader(headers, HeaderRetryCount, strconv.Itoa(currCount+1))
 	saramaMsg.Headers = headers
+	traceID := trace.TraceIDFromContext(ctx)
+	if traceID == "" {
+		traceID = p.getTraceIDFromHeaders(headers)
+	}
+	meta := attachProducerMetadata(saramaMsg, saramaMsg.Topic, p.getOperationFromHeaders(headers), traceID)
+	if meta != nil {
+		meta.markEnqueued()
+	}
 
 	// 使用 select 防止阻塞，并在无法立即发送时触发降级
 	if err := p.enqueueWithTimeout(ctx, saramaMsg, 0); err != nil {
@@ -465,6 +648,14 @@ func (p *UserProducer) SendToDeadLetterTopic(ctx context.Context, msg kafka.Mess
 	headers = p.updateOrAddHeader(headers, "deadletter-reason", errorInfo)
 	headers = p.updateOrAddHeader(headers, "deadletter-timestamp", time.Now().Format(time.RFC3339))
 	saramaMsg.Headers = headers
+	traceID := trace.TraceIDFromContext(ctx)
+	if traceID == "" {
+		traceID = p.getTraceIDFromHeaders(headers)
+	}
+	meta := attachProducerMetadata(saramaMsg, saramaMsg.Topic, p.getOperationFromHeaders(headers), traceID)
+	if meta != nil {
+		meta.markEnqueued()
+	}
 
 	if err := p.enqueueWithTimeout(ctx, saramaMsg, 0); err != nil {
 		if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
@@ -644,6 +835,10 @@ func (p *UserProducer) publishFallbackEntry(entry fallbackMessage) error {
 	}
 	headers = p.updateOrAddHeader(headers, HeaderRetryCount, strconv.Itoa(entry.Attempts))
 	msg.Headers = headers
+	meta := attachProducerMetadata(msg, msg.Topic, p.getOperationFromHeaders(headers), p.getTraceIDFromHeaders(headers))
+	if meta != nil {
+		meta.markEnqueued()
+	}
 
 	return p.enqueueWithTimeout(context.Background(), msg, 5*time.Second)
 }
@@ -655,6 +850,15 @@ func (p *UserProducer) getOperationFromHeaders(headers []sarama.RecordHeader) st
 		}
 	}
 	return "unknown"
+}
+
+func (p *UserProducer) getTraceIDFromHeaders(headers []sarama.RecordHeader) string {
+	for _, h := range headers {
+		if strings.EqualFold(string(h.Key), HeaderTraceID) {
+			return string(h.Value)
+		}
+	}
+	return ""
 }
 
 func (p *UserProducer) updateOrAddHeader(headers []sarama.RecordHeader, key, value string) []sarama.RecordHeader {

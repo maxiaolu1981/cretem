@@ -1,0 +1,1141 @@
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:33.018942299Z
+   TraceID: 4e23384d-f9c9-4891-8390-f191419cfa2e
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.53ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.53ms (API), 完整: 1.03ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:31.19698206Z
+   TraceID: 4a8e9674-6205-48e4-b0f0-499b5c2fb677
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.55ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.55ms (API), 完整: 1.05ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:29.58132315Z
+   TraceID: 56a1460c-7d0a-48ec-8aae-88f45b78e678
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.49ms (API), 完整: 0.97ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:27.794541568Z
+   TraceID: 6b6860be-5c53-423f-8893-497a67e16d0e
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.46ms (API), 完整: 0.95ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:26.044799428Z
+   TraceID: e360045e-671d-4d49-9772-22abd82b3279
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.59ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.59ms (API), 完整: 1.24ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:24.385434094Z
+   TraceID: 378ee555-9e46-42c2-be72-0e4f82447958
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.48ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.48ms (API), 完整: 1.00ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:22.789175802Z
+   TraceID: e42d9721-5f41-4624-9b7b-8bbdb8a5ba93
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.46ms (API), 完整: 0.90ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:20.99738909Z
+   TraceID: 42342758-5336-4597-bad3-9d9b1617b232
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.52ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.52ms (API), 完整: 0.96ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:19.25449808Z
+   TraceID: d6ebf4d0-31af-4f16-8ede-b56863baf637
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.57ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.57ms (API), 完整: 1.06ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:17.600739858Z
+   TraceID: bbaa419a-61d7-48d2-a78e-e529a0c57993
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.43ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.43ms (API), 完整: 0.99ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:15.9519088Z
+   TraceID: 068704b3-4060-47e2-a29b-716772084277
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.39ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.39ms (API), 完整: 0.84ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:14.233590211Z
+   TraceID: 6cdf4bb2-2e89-45a1-b6b9-bfa8325878f5
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.65ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.65ms (API), 完整: 1.14ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:12.507369731Z
+   TraceID: 7c4a1b1d-7b5c-4039-bb3c-38bb0eb76cf5
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.71ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.71ms (API), 完整: 1.25ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:10.814123676Z
+   TraceID: d6a2f310-3d68-4ca0-abe2-9fd6ea4a3d11
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.49ms (API), 完整: 0.98ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:09.027472599Z
+   TraceID: beae120c-eb06-4103-9697-555aaf18627b
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.55ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.55ms (API), 完整: 1.06ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:07.492125825Z
+   TraceID: fb4ff51f-4e42-4c04-9c45-8d5dbad3124b
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.49ms (API), 完整: 0.95ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:05.622443208Z
+   TraceID: 20823d7f-f030-4a8f-a571-ad6ce1749c7b
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.51ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.51ms (API), 完整: 1.05ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:04.011780027Z
+   TraceID: 765d5181-29aa-41ec-95fd-3a3186c33a1b
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.55ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.55ms (API), 完整: 1.05ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:02.277514886Z
+   TraceID: b177021b-c6a2-403a-8240-751576a1fc50
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.47ms (API), 完整: 1.04ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:08:00.516934182Z
+   TraceID: d71e0450-6165-4e42-abe5-7df10a5b44db
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.47ms (API), 完整: 0.95ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:58.871143287Z
+   TraceID: 2ad9f4df-d431-4e72-8f1c-9e3d360f6d7d
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.49ms (API), 完整: 1.04ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:57.168294572Z
+   TraceID: 65c2babf-9832-4fdc-b44f-3d053d37edde
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.50ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.50ms (API), 完整: 0.99ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:55.407349335Z
+   TraceID: 631a908b-1435-44cf-911e-a447225da45c
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.56ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.56ms (API), 完整: 1.08ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:53.893235817Z
+   TraceID: 6588e7d0-4218-4ff9-9159-3dbbab44305f
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.33ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.33ms (API), 完整: 0.61ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:52.159501089Z
+   TraceID: 3e3bcc3e-91a1-4c41-a8e1-faac3919df6c
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.49ms (API), 完整: 1.02ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:50.512092227Z
+   TraceID: 987f6fa8-5dfb-41f4-aa6d-6299c056b414
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.46ms (API), 完整: 0.93ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:48.718695782Z
+   TraceID: 6c08c4c0-f76f-458e-b8a8-ba2f9e0eacd9
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.46ms (API), 完整: 0.92ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:47.103961047Z
+   TraceID: fade4b8a-c516-4cb5-a353-420e00d2528c
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.47ms (API), 完整: 0.93ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:45.274007253Z
+   TraceID: a3d164af-bc13-4f83-9a37-a8c8a654d1b4
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.54ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.54ms (API), 完整: 1.05ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:43.746566369Z
+   TraceID: c4f24090-852a-442b-a0ad-eff1fb406fa4
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.43ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.43ms (API), 完整: 0.82ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:41.963551852Z
+   TraceID: 8a5f4522-b2a4-4077-bb28-64a7c8723bb0
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.51ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.51ms (API), 完整: 1.06ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:40.318203838Z
+   TraceID: f5632723-56aa-4a81-ad28-c74b288eba7e
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.51ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.51ms (API), 完整: 1.05ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:38.680019379Z
+   TraceID: 6fb5387d-8221-445e-afe8-2658e052a1bf
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.47ms (API), 完整: 0.93ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:36.833190048Z
+   TraceID: 34a2df15-5e03-40dd-8215-ef6c82b19d5e
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.52ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.52ms (API), 完整: 1.00ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:35.195256215Z
+   TraceID: 91c0b906-affe-4ac5-b89b-1d24a99130fb
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.47ms (API), 完整: 0.91ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:33.516799285Z
+   TraceID: 4f38fac1-b75d-4b97-bd63-45ef02c4b0e2
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.51ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.51ms (API), 完整: 1.01ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:31.79102351Z
+   TraceID: 7283a8f3-9bd1-4108-a45b-07c9f0add37a
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.44ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.44ms (API), 完整: 0.98ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:30.160687205Z
+   TraceID: dcfce22e-a773-4558-a80d-6d24660b175b
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.57ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.57ms (API), 完整: 1.05ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:28.342683882Z
+   TraceID: 343afa75-84ec-42e5-9b70-9e5388e94c78
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.49ms (API), 完整: 0.94ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:26.743280098Z
+   TraceID: 7a07bfe7-d442-4607-a8b7-9a1bca2d8fc2
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.49ms (API), 完整: 0.98ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:25.081042555Z
+   TraceID: 59354531-2109-4c8b-812f-4668c94101d9
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.46ms (API), 完整: 0.96ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:23.264554159Z
+   TraceID: 6d3c93ff-6b2e-4c13-8387-76ab25fcd59b
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.52ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.52ms (API), 完整: 0.99ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:21.556342686Z
+   TraceID: c8b451ec-ce5c-4631-a50b-5b136f4cb182
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.56ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.56ms (API), 完整: 1.02ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:19.978607779Z
+   TraceID: 68d9f0e9-bdfc-4360-9c38-cb0f0abacdd3
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.52ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.52ms (API), 完整: 0.99ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:18.15657365Z
+   TraceID: fd46d7a8-8843-4b49-a93a-f0c2ee5ccec5
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.53ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.53ms (API), 完整: 0.97ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:16.457947328Z
+   TraceID: db31c9b2-0bda-4a63-86ce-6ed4af37d3aa
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.46ms (API), 完整: 0.96ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:14.808408404Z
+   TraceID: 839b4989-b25a-4bcd-8316-c330bdad7bd1
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.47ms (API), 完整: 0.94ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:13.249168798Z
+   TraceID: 847917ec-b5c4-4c12-a328-8a5e219fda9d
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.52ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.52ms (API), 完整: 1.04ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:11.566505208Z
+   TraceID: 3eb96971-31eb-4bc4-9fd0-ed279fe298ff
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.50ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.50ms (API), 完整: 1.05ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:09.659372225Z
+   TraceID: 9b267566-b961-475e-8858-f84630101096
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.71ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.71ms (API), 完整: 1.42ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:08.120509387Z
+   TraceID: 2442f4d9-8aee-4bc6-95fd-91c8d3fefb1b
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.48ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.48ms (API), 完整: 0.93ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:06.329357297Z
+   TraceID: 0c5adf66-209b-4084-8997-03c2b0a5dcb6
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.51ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.51ms (API), 完整: 0.99ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:04.565284932Z
+   TraceID: 970f8ac3-0f08-49f4-accc-929d77b75519
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.47ms (API), 完整: 0.94ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:02.966993124Z
+   TraceID: 2a836d1f-e082-45b3-9c15-71febf90fd7a
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.47ms (API), 完整: 0.91ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:07:01.234682Z
+   TraceID: 512d4c61-49e2-4e7a-9617-9fd61dc4f9d9
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.49ms (API), 完整: 0.96ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:59.654397276Z
+   TraceID: 866539e1-0b53-4b04-8a66-0e86834a8235
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.54ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.54ms (API), 完整: 1.01ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:57.950967577Z
+   TraceID: 7eaa5132-f72e-4a2a-9557-b93c0f83cbf0
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.53ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.53ms (API), 完整: 0.92ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:56.183832738Z
+   TraceID: b81bb848-3f16-49c9-b60a-95ed2ab67099
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.44ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.44ms (API), 完整: 0.90ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:54.423726518Z
+   TraceID: af12a6d7-0922-4705-84c3-4c6cee2d0dd0
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.52ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.52ms (API), 完整: 1.00ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:52.742428544Z
+   TraceID: 8e579f5b-26aa-422f-a55d-8f34d071cac1
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.50ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.50ms (API), 完整: 1.01ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:51.004338445Z
+   TraceID: bd208659-16e7-4817-8dcd-b312b8851ba8
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.46ms (API), 完整: 0.92ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:49.337894668Z
+   TraceID: 7fa4d90c-d921-4e5c-949f-fb17cebc6bde
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.53ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.53ms (API), 完整: 1.08ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:47.695230056Z
+   TraceID: bd2a63f7-5d7a-4b1b-93c6-d9ae187c4241
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.51ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.51ms (API), 完整: 1.01ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:46.052372291Z
+   TraceID: bf832a82-9b8d-4fd1-a19d-ffcc18e79515
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.49ms (API), 完整: 0.96ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:44.22832709Z
+   TraceID: 877591b8-5059-45f1-a338-f63a368e2d03
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.50ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.50ms (API), 完整: 0.92ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:42.519853984Z
+   TraceID: f87c64a4-3d17-48cd-9eb3-0d50255e5e5f
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.46ms (API), 完整: 0.95ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:40.870234675Z
+   TraceID: 529f4886-f784-4677-9e2d-0a1625217ef8
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.48ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.48ms (API), 完整: 0.98ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:39.301128338Z
+   TraceID: dca20bb9-a3e8-49f3-b745-cdb25a6317ea
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.48ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.48ms (API), 完整: 0.98ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:37.441283113Z
+   TraceID: 706f4817-56a7-4cc4-9cbe-965e26569031
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.65ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.65ms (API), 完整: 1.27ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:06:35.838440468Z
+   TraceID: 6a42234b-b477-4113-b4ad-9ac500ff2ec9
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.47ms (API), 完整: 0.92ms
+
+DELETE /v1/users/:name/force → 200 OK
+   时间戳: 2025-10-21T03:05:43.151524684Z
+   TraceID: 30c79930-dabf-42e2-bd3e-8b319812f0aa
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: INFO
+├─ user-controller.delete_user (0.78ms) ✅ [100001] @+1ms
+│  └─ user-service.delete (0.67ms) ✅ [100001] @+1ms
+│     ├─ user-service.check_user_exist (0.35ms) ✅ [100001] @+1ms
+│     └─ user-service.producer_send_delete (0.30ms) ✅ [100001] @+2ms
+│        └─ kafka-producer.send_delete (0.28ms) ✅ [100001] @+2ms
+│           └─ kafka-producer.broker_ack (0.01ms) ✅ [100001] @+203ms
+└─ kafka-consumer.process_delete (3.94ms) ✅ [100001] @+222ms
+   总耗时: 2.10ms (API), 完整: 2.43ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:43.147579508Z
+   TraceID: c52c23fd-8015-4bd7-a70c-e58f4a471b47
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.52ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.52ms (API), 完整: 1.03ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:42.945650685Z
+   TraceID: f1ce48e1-2984-4517-89df-07b2251d6abf
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.31ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.31ms (API), 完整: 0.70ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:42.742900603Z
+   TraceID: 2fbe9344-7351-4b9e-88f8-0722eabb9840
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.53ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.53ms (API), 完整: 1.15ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:42.538954266Z
+   TraceID: 5d15b366-bf54-4683-ac8a-8e3f09c2c65e
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.47ms (API), 完整: 1.09ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:42.33559934Z
+   TraceID: 3ddfa3a7-f772-4bd0-9b28-0acb39a0464e
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.47ms (API), 完整: 0.95ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:42.133126007Z
+   TraceID: 4e77b839-f965-4483-9efd-0f6762e6c6cb
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.56ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.56ms (API), 完整: 1.17ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:41.930921419Z
+   TraceID: ffb43cad-7fc7-4344-aba3-f1148d231ac7
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.26ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.26ms (API), 完整: 0.51ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:41.728773515Z
+   TraceID: 991ecacc-68c2-42ff-86c0-91cc7befc082
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.46ms (API), 完整: 1.05ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:41.525923049Z
+   TraceID: 42a19456-b4d4-4434-b055-3e3bbce5c3e5
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.53ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.53ms (API), 完整: 1.05ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:41.323235448Z
+   TraceID: 54097272-7c0b-49b5-8d46-d7a839b2a5dc
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.44ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.44ms (API), 完整: 0.93ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:41.120424963Z
+   TraceID: 1e6e3a17-824f-4418-bdc4-8d0f21d51bb4
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.52ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.52ms (API), 完整: 1.17ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:40.917927743Z
+   TraceID: 23a1d5b6-d141-4974-ba91-3f5df5fb6cda
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.50ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.50ms (API), 完整: 0.94ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:40.715353346Z
+   TraceID: 687f4f76-396b-4a4f-8c6e-1585a94c6cb7
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.48ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.48ms (API), 完整: 0.99ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:40.512389626Z
+   TraceID: 1e82dece-6988-4d38-b70b-5bcf5457e1c8
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.47ms (API), 完整: 1.02ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:40.309386082Z
+   TraceID: 0dc0fa1e-19c2-432c-a6da-4e265db2fdbc
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.61ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.61ms (API), 完整: 1.12ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:40.107051773Z
+   TraceID: 1d6588c3-1e64-4862-bd13-a7fe33fa112c
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.57ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.57ms (API), 完整: 1.09ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:39.903699264Z
+   TraceID: acc9972f-64e8-4c1a-b175-ebaa71639742
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.53ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.53ms (API), 完整: 1.22ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:39.700636907Z
+   TraceID: 2cbb060d-403c-438b-87e1-7f1601eff59f
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.58ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.58ms (API), 完整: 1.15ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:39.497346008Z
+   TraceID: 35747792-369e-4413-8e7a-cf52a4cd4c7a
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.47ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.47ms (API), 完整: 0.94ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:39.294691601Z
+   TraceID: f422b668-b7e4-4643-a6ca-fcba44fe0fdd
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.52ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.52ms (API), 完整: 1.10ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:39.091458126Z
+   TraceID: 6f9d537f-910a-440a-9e48-7222285693fd
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.61ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.61ms (API), 完整: 1.16ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:38.888890522Z
+   TraceID: b8edf698-3606-484b-979a-14fc02d8c2df
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.46ms (API), 完整: 1.02ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:38.685798638Z
+   TraceID: 7b687e08-7aad-4488-9381-a44e05cda80d
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.57ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.57ms (API), 完整: 1.08ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:38.482680261Z
+   TraceID: 23f131a0-3a09-42be-93ca-151ce77fcafb
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.49ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.49ms (API), 完整: 0.92ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:38.279890122Z
+   TraceID: 17bfd308-52b0-41ef-82ba-5b1e113f4d42
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.59ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.59ms (API), 完整: 1.14ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:38.076217741Z
+   TraceID: dccbef49-30c5-4303-914a-c149a0067198
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.62ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.62ms (API), 完整: 1.11ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:37.87312786Z
+   TraceID: 95f15c6b-61d7-440c-a448-75b53f3bbad1
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.48ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.48ms (API), 完整: 0.94ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:37.670109033Z
+   TraceID: d349a2bb-76f5-4d86-a604-4e07de70e537
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.60ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.60ms (API), 完整: 1.13ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:37.46753831Z
+   TraceID: c509a0f5-c178-44a7-b4f4-afa6361d706e
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.46ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (0.00ms) ✅ @+1ms
+   总耗时: 0.46ms (API), 完整: 0.95ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:37.264111617Z
+   TraceID: 21879c75-da58-4e62-a364-fed8386e5c87
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.51ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.51ms (API), 完整: 1.10ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:37.06051732Z
+   TraceID: 85f87aef-a2e2-43bd-855d-f13b122f5591
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (0.56ms) ❌ [110001]
+   └─ user-service.get_user (0.00ms) ✅
+   总耗时: 0.56ms (API), 完整: 1.06ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:36.858109708Z
+   TraceID: 74502f60-a77a-4afd-8683-edca2742dfae
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (3.75ms) ❌ [110001]
+   └─ user-service.get_user (3.66ms) ✅ [100001]
+      └─ user-store.get_user (0.40ms) ❌ [110001] @+1ms
+   总耗时: 7.41ms (API), 完整: 4.08ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:36.652552079Z
+   TraceID: 081dc55f-9ea8-4c0e-8c6b-8c995079bf5c
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (3.45ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (3.36ms) ✅ [100001] @+1ms
+      └─ user-store.get_user (0.70ms) ❌ [110001] @+2ms
+   总耗时: 6.81ms (API), 完整: 3.87ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:36.447111546Z
+   TraceID: a0b9b197-2896-42f1-8267-89059fd7bbdf
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (3.92ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (3.76ms) ✅ [100001] @+1ms
+      └─ user-store.get_user (0.73ms) ❌ [110001] @+2ms
+   总耗时: 7.68ms (API), 完整: 4.49ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:36.239878154Z
+   TraceID: ceb3bc83-793f-47c5-b74e-e991b98b8025
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (3.66ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (3.47ms) ✅ [100001] @+1ms
+      └─ user-store.get_user (0.77ms) ❌ [110001] @+2ms
+   总耗时: 7.13ms (API), 完整: 4.24ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:36.033850227Z
+   TraceID: b837c040-f5b4-41e3-b385-1c58c48d215c
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (4.30ms) ❌ [110001]
+   └─ user-service.get_user (4.08ms) ✅ [100001]
+      └─ user-store.get_user (0.73ms) ❌ [110001] @+1ms
+   总耗时: 8.38ms (API), 完整: 4.85ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:35.827010104Z
+   TraceID: 9ee50390-dd1b-4233-a267-a016a4c03621
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (4.16ms) ❌ [110001]
+   └─ user-service.get_user (3.98ms) ✅ [100001]
+      └─ user-store.get_user (0.65ms) ❌ [110001] @+1ms
+   总耗时: 8.14ms (API), 完整: 4.53ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:35.621145671Z
+   TraceID: a8f9d859-d705-4b68-b4e8-6b33fc130152
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (12.77ms) ❌ [110001]
+   └─ user-service.get_user (12.72ms) ✅ [100001]
+      └─ user-store.get_user (0.57ms) ❌ [110001] @+1ms
+   总耗时: 25.49ms (API), 完整: 13.14ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:35.406771579Z
+   TraceID: e3517340-dddc-4207-80af-bc5d2b6bd677
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (3.32ms) ❌ [110001]
+   └─ user-service.get_user (3.19ms) ✅ [100001]
+      └─ user-store.get_user (0.69ms) ❌ [110001] @+1ms
+   总耗时: 6.51ms (API), 完整: 3.75ms
+
+GET /v1/users/:name → 404 Not Found
+   时间戳: 2025-10-21T03:05:35.201355049Z
+   TraceID: db254b3c-7656-491a-87f1-02fdefe61fe6
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+└─ user-controller.get_user (3.16ms) ❌ [110001] @+1ms
+   └─ user-service.get_user (3.02ms) ✅ [100001] @+1ms
+      └─ user-store.get_user (0.91ms) ❌ [110001] @+2ms
+   总耗时: 6.18ms (API), 完整: 3.62ms
+
+POST /v1/users → 201 Created
+   时间戳: 2025-10-21T03:04:58.010362349Z
+   TraceID: fc49d53b-c942-4ebe-9b75-f84b51824210
+   用户名: createperf_sustainedcsk6789abcdefghijklm_czqy
+   操作者: admin
+   级别: ERROR
+├─ user-controller.create_user (298.17ms) ✅ [100001] @+15ms
+│  └─ user-service.create (297.78ms) ✅ [100001] @+15ms
+│     ├─ user-service.check_user_exist (42.48ms) ✅ [100001] @+96ms
+│     │  └─ user-store.get_user (0.28ms) ❌ [110001] @+101ms
+│     ├─ user-service.ensure_contacts_unique (216.37ms) ✅ [100001] @+96ms
+│     └─ user-service.producer_send_create (0.09ms) ✅ [100001] @+313ms
+│        └─ kafka-producer.send_create (0.04ms) ✅ [100001] @+313ms
+│           └─ kafka-producer.broker_ack (0.00ms) ✅ [100001] @+459ms
+└─ kafka-consumer.process_create (3.02ms) ✅ [100001] @+45322ms
+   总耗时: 854.87ms (API), 完整: 312.40ms
+

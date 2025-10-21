@@ -80,6 +80,30 @@ type UserService struct {
 	contactCacheReady atomic.Bool
 }
 
+type contextKey string
+
+const forceCacheRefreshKey contextKey = "user.forceCacheRefresh"
+
+// WithForceCacheRefresh 标记当前请求需要绕过负缓存/黑名单哨兵。
+func WithForceCacheRefresh(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, forceCacheRefreshKey, true)
+}
+
+func forceCacheRefreshFromContext(ctx context.Context) bool {
+	if ctx == nil {
+		return false
+	}
+	v, ok := ctx.Value(forceCacheRefreshKey).(bool)
+	if !ok || !v {
+		return false
+	}
+	trace.AddRequestTag(ctx, "force_cache_refresh", true)
+	return true
+}
+
 // NewUserService 创建用户服务实例
 func NewUserService(store interfaces.Factory, redis *storage.RedisCluster, opts *options.Options, producer producer.MessageProducer, auditMgr *audit.Manager) *UserService {
 	return &UserService{
@@ -900,7 +924,11 @@ func (u *UserService) warmContactCache() error {
 
 func (u *UserService) checkUserExist(ctx context.Context, username string, forceRefresh bool) (*v1.User, error) {
 	// 先尝试无锁查询缓存（大部分请求应该在这里返回）
-	user, found, err := u.tryGetFromCache(ctx, username)
+	baseCtx := ctx
+	if forceRefresh {
+		baseCtx = WithForceCacheRefresh(ctx)
+	}
+	user, found, err := u.tryGetFromCache(baseCtx, username)
 	if err != nil {
 		log.Errorf("缓存查询异常，继续流程", "error", err.Error(), "username", username)
 		metrics.CacheErrors.WithLabelValues("query_failed", "get").Inc()
@@ -912,7 +940,9 @@ func (u *UserService) checkUserExist(ctx context.Context, username string, force
 				return user, nil
 			}
 		case BLACKLIST_SENTINEL:
-			return user, nil
+			if !forceRefresh {
+				return user, nil
+			}
 		default:
 			return user, nil
 		}

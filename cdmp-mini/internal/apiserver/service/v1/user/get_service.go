@@ -147,12 +147,24 @@ func (u *UserService) tryGetFromCache(ctx context.Context, username string) (*v1
 		return nil, false, err
 	}
 
+	force := forceCacheRefreshFromContext(ctx)
+
 	if isCached {
 		if cachedUser != nil {
 			switch cachedUser.Name {
 			case RATE_LIMIT_PREVENTION:
 				metrics.CacheHits.WithLabelValues("null_hit").Inc()
 				trace.AddRequestTag(ctx, "protection_negative_cache_hit", true)
+				if force {
+					trace.AddRequestTag(ctx, "cache_negative_bypass", true)
+					refreshedUser, refreshErr := u.refreshUserCacheFromDB(ctx, username)
+					if refreshErr != nil {
+						log.Warnf("负缓存强制刷新失败: username=%s err=%v", username, refreshErr)
+					} else if refreshedUser != nil {
+						return refreshedUser, true, nil
+					}
+					return nil, true, nil
+				}
 				if refreshAllowed, lockKey := u.shouldRefreshNullCache(ctx, username); refreshAllowed {
 					defer u.releaseNullCacheRefreshLock(lockKey)
 					refreshedUser, refreshErr := u.refreshUserCacheFromDB(ctx, username)
@@ -170,6 +182,17 @@ func (u *UserService) tryGetFromCache(ctx context.Context, username string) (*v1
 				return nil, true, nil
 			case BLACKLIST_SENTINEL:
 				metrics.CacheHits.WithLabelValues("blacklist_hit").Inc()
+				trace.AddRequestTag(ctx, "protection_blacklist_cache_hit", true)
+				if force {
+					trace.AddRequestTag(ctx, "cache_blacklist_bypass", true)
+					refreshedUser, refreshErr := u.refreshUserCacheFromDB(ctx, username)
+					if refreshErr != nil {
+						log.Warnf("黑名单缓存强制刷新失败: username=%s err=%v", username, refreshErr)
+					} else if refreshedUser != nil {
+						return refreshedUser, true, nil
+					}
+					return nil, true, nil
+				}
 				return cachedUser, true, nil
 			default:
 				metrics.CacheHits.WithLabelValues("hit").Inc()

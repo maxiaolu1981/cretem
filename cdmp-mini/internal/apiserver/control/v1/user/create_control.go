@@ -25,7 +25,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
-	"github.com/maxiaolu1981/cretem/nexuscore/component-base/auth"
 
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
@@ -141,7 +140,6 @@ func (u *UserController) Create(ctx *gin.Context) {
 			auditBase("fail", err.Error())
 			return err
 		}
-		r.Password, _ = auth.Encrypt(r.Password)
 		r.LoginedAt = time.Now()
 
 		c := ctx.Request.Context()

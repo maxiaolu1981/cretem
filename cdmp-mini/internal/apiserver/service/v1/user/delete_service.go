@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 
 	"strconv"
@@ -54,29 +55,50 @@ func (u *UserService) Delete(ctx context.Context, username string, force bool, o
 	ruser, existErr := u.checkUserExist(checkCtx, username, true)
 	spanStatusCheck := "success"
 	spanCodeCheck := strconv.Itoa(code.ErrSuccess)
+	notFound := false
+
 	if existErr != nil {
-		log.Warnf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查: %v", username, existErr)
-		spanStatusCheck = "error"
-		if c := errors.GetCode(existErr); c != 0 {
-			spanCodeCheck = strconv.Itoa(c)
+		if isUserNotFoundErr(existErr) {
+			notFound = true
+			trace.AddRequestTag(ctx, "check_exist_result", "not_found")
 		} else {
-			spanCodeCheck = strconv.Itoa(code.ErrUnknown)
+			log.Warnf("查询用户%s checkUserExist方法返回错误: %v", username, existErr)
+			spanStatusCheck = "error"
+			if c := errors.GetCode(existErr); c != 0 {
+				spanCodeCheck = strconv.Itoa(c)
+			} else {
+				spanCodeCheck = strconv.Itoa(code.ErrUnknown)
+			}
+			err = existErr
 		}
 	}
-	if ruser != nil && (ruser.Name == RATE_LIMIT_PREVENTION || ruser.Name == BLACKLIST_SENTINEL) {
-		err = errors.WithCode(code.ErrUserNotFound, "用户不存在,无法删除")
-		spanStatusCheck = "error"
-		spanCodeCheck = strconv.Itoa(code.ErrUserNotFound)
+	if err == nil {
+		if ruser == nil {
+			notFound = true
+		} else if ruser.Name == RATE_LIMIT_PREVENTION || ruser.Name == BLACKLIST_SENTINEL {
+			notFound = true
+		}
 	}
+	if notFound {
+		spanStatusCheck = "success"
+		spanCodeCheck = strconv.Itoa(code.ErrSuccess)
+	}
+
 	trace.EndSpan(checkSpan, spanStatusCheck, spanCodeCheck, map[string]interface{}{
-		"username": username,
+		"username":  username,
+		"not_found": notFound,
 	})
 	if err != nil {
 		return err
 	}
-	if existErr != nil {
-		// 继续执行，但将诊断信息写入trace
-		trace.AddRequestTag(ctx, "check_exist_error", existErr.Error())
+
+	if notFound {
+		if !force {
+			err = errors.WithCode(code.ErrUserNotFound, "用户不存在,无法删除")
+			return err
+		}
+		trace.AddRequestTag(ctx, "delete_idempotent_skip", "true")
+		return nil
 	}
 
 	//物理删除
@@ -125,4 +147,37 @@ func (u *UserService) Delete(ctx context.Context, username string, force bool, o
 	}
 
 	return nil
+}
+
+func isUserNotFoundErr(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	visited := map[error]struct{}{}
+	current := err
+
+	for current != nil {
+		if errors.IsCode(current, code.ErrUserNotFound) {
+			return true
+		}
+		visited[current] = struct{}{}
+
+		var next error
+		if cause := errors.Cause(current); cause != nil && cause != current {
+			next = cause
+		} else if unwrapped := stderrors.Unwrap(current); unwrapped != nil && unwrapped != current {
+			next = unwrapped
+		}
+
+		if next == nil {
+			break
+		}
+		if _, seen := visited[next]; seen {
+			break
+		}
+		current = next
+	}
+
+	return false
 }

@@ -30,6 +30,8 @@ var (
 	// 写限流触发计数
 	WriteLimiterTotal *prometheus.CounterVec
 	// initialization moved to init()
+	// ProducerDeliveryLatency 记录生产者消息从入队到Broker确认的耗时
+	ProducerDeliveryLatency *prometheus.HistogramVec
 
 	// 业务处理指标
 	BusinessProcessingTime *prometheus.HistogramVec
@@ -355,6 +357,15 @@ func init() {
 			Help: "Total number of requests blocked by write rate limiter",
 		},
 		[]string{"path", "reason"},
+	)
+
+	ProducerDeliveryLatency = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "kafka_producer_delivery_latency_seconds",
+			Help:    "Time from enqueue to broker acknowledgment for Kafka producer messages",
+			Buckets: []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10},
+		},
+		[]string{"topic", "operation", "result"},
 	)
 
 	// -------------------------- 初始化：Kafka消费者指标 --------------------------
@@ -909,6 +920,7 @@ func init() {
 		// 新增指标
 		ProducerInFlightCurrent,
 		WriteLimiterTotal,
+		ProducerDeliveryLatency,
 
 		// Redis集群指标
 		RedisClusterNodesTotal,
@@ -1155,6 +1167,24 @@ func RecordKafkaProducerOperation(topic, operation string, duration float64, err
 		}
 		MessageProcessingTime.WithLabelValues(topic, operation, status).Observe(duration)
 	}
+}
+
+// RecordKafkaProducerDelivery 记录Kafka生产者从入队到Broker确认的耗时，以及最终结果。
+func RecordKafkaProducerDelivery(topic, operation string, duration time.Duration, err error) {
+	if ProducerDeliveryLatency == nil {
+		return
+	}
+	if topic == "" {
+		topic = "unknown"
+	}
+	if operation == "" {
+		operation = "unknown"
+	}
+	result := "success"
+	if err != nil {
+		result = GetKafkaErrorType(err)
+	}
+	ProducerDeliveryLatency.WithLabelValues(topic, operation, result).Observe(duration.Seconds())
 }
 
 // RecordProducerWALStats 记录生产者WAL队列积压指标
