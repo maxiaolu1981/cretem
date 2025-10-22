@@ -491,35 +491,141 @@ func (c *UserConsumer) processMessage(ctx context.Context, msg kafka.Message) er
 }
 
 func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Message) error {
-	// 兼容两种结构：1. 扁平 v1.User 2. 带 metadata 的嵌套结构
 	var user v1.User
-	if err := json.Unmarshal(msg.Value, &user); err == nil {
-		if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
-			// 字段校验失败，直接写入死信区
-			return c.sendToDeadLetter(ctx, msg, err.Error())
-		}
-		user.Email = usercache.NormalizeEmail(user.Email)
-		user.Phone = usercache.NormalizePhone(user.Phone)
-		ensureUserInstanceID(&user)
-
-		created, err := c.createUserInDB(ctx, &user)
-		if err != nil {
-			// 数据库写入失败，直接写入死信区
-			return c.sendToDeadLetter(ctx, msg, "CREATE_DB_ERROR: "+err.Error())
-		}
-		if created {
-			if err := c.setUserCache(ctx, &user, nil); err != nil {
-				log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
-			}
-
-			return nil
-		} else {
-			log.Warnf("检测到批量创建中的重复用户，已忽略: username=%s", user.Name)
-		}
-		return nil
-	} else {
+	if err := json.Unmarshal(msg.Value, &user); err != nil {
 		return err
 	}
+	if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
+		return c.sendToDeadLetter(ctx, msg, err.Error())
+	}
+	user.Email = usercache.NormalizeEmail(user.Email)
+	user.Phone = usercache.NormalizePhone(user.Phone)
+	ensureUserInstanceID(&user)
+
+	pendingStart := time.Now()
+	markerCtx, markerSpan := trace.StartSpan(ctx, "kafka-consumer", "pending_marker_verify")
+	trace.AddRequestTag(markerCtx, "username", user.Name)
+	pendingExists, pendingValue, pendingTTL, redisGetDuration, redisTTLDur, pendingErr := c.getPendingCreateMarker(markerCtx, user.Name)
+	markerDuration := time.Since(pendingStart)
+	pendingStatus := "success"
+	pendingCode := strconv.Itoa(code.ErrSuccess)
+	if pendingErr != nil {
+		pendingStatus = "error"
+		if c := errors.GetCode(pendingErr); c != 0 {
+			pendingCode = strconv.Itoa(c)
+		} else {
+			pendingCode = strconv.Itoa(code.ErrUnknown)
+		}
+	}
+	details := map[string]interface{}{
+		"username":     user.Name,
+		"duration_ms":  markerDuration.Milliseconds(),
+		"marker_found": pendingExists,
+		"redis_get_ms": redisGetDuration.Milliseconds(),
+		"redis_ttl_ms": redisTTLDur.Milliseconds(),
+	}
+	if pendingValue != "" {
+		details["marker_payload_len"] = len(pendingValue)
+	}
+	if pendingTTL > 0 {
+		details["marker_ttl_ms"] = pendingTTL.Milliseconds()
+	}
+	trace.EndSpan(markerSpan, pendingStatus, pendingCode, details)
+	if pendingErr != nil {
+		trace.AddRequestTag(ctx, "pending_marker_error", pendingErr.Error())
+		return c.sendToRetry(ctx, msg, "PENDING_MARKER_ERROR: "+pendingErr.Error())
+	}
+	trace.AddRequestTag(ctx, "pending_marker_present", pendingExists)
+	if pendingExists && pendingValue != "" {
+		trace.AddRequestTag(ctx, "pending_marker_value_len", len(pendingValue))
+	}
+	if pendingTTL > 0 {
+		trace.AddRequestTag(ctx, "pending_marker_ttl_ms", pendingTTL.Milliseconds())
+	}
+	if !pendingExists {
+		trace.AddRequestTag(ctx, "pending_marker_missing", true)
+		existing, err := c.loadUserSnapshotWithTrace(ctx, user.Name, "pending_marker_missing")
+		if err != nil {
+			return c.sendToRetry(ctx, msg, "CHECK_EXISTING_FAILED: "+err.Error())
+		}
+		if existing != nil {
+			trace.AddRequestTag(ctx, "pending_marker_missing_existing", true)
+			if err := c.setUserCache(ctx, existing, nil); err != nil {
+				log.Warnf("用户创建消息到达但该用户已存在, 刷新缓存失败: username=%s err=%v", existing.Name, err)
+			}
+			return nil
+		}
+		return c.sendToDeadLetter(ctx, msg, "PENDING_MARKER_MISSING")
+	}
+
+	persistStart := time.Now()
+	persistCtx, persistSpan := trace.StartSpan(ctx, "kafka-consumer", "persist_user")
+	trace.AddRequestTag(persistCtx, "username", user.Name)
+	created, err := c.createUserInDB(persistCtx, &user)
+	persistDuration := time.Since(persistStart)
+	persistStatus := "success"
+	persistCode := strconv.Itoa(code.ErrSuccess)
+	if err != nil {
+		persistStatus = "error"
+		if c := errors.GetCode(err); c != 0 {
+			persistCode = strconv.Itoa(c)
+		} else {
+			persistCode = strconv.Itoa(code.ErrUnknown)
+		}
+	}
+	trace.EndSpan(persistSpan, persistStatus, persistCode, map[string]interface{}{
+		"username":    user.Name,
+		"duration_ms": persistDuration.Milliseconds(),
+		"created":     created,
+	})
+	if err != nil {
+		return c.sendToDeadLetter(ctx, msg, "CREATE_DB_ERROR: "+err.Error())
+	}
+	trace.AddRequestTag(ctx, "create_db_inserted", created)
+
+	if created {
+		if err := c.setUserCache(ctx, &user, nil); err != nil {
+			log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
+		}
+	} else {
+		trace.AddRequestTag(ctx, "create_duplicate_skip", true)
+		existing, err := c.loadUserSnapshotWithTrace(ctx, user.Name, "duplicate_refresh")
+		if err == nil && existing != nil {
+			if err := c.setUserCache(ctx, existing, nil); err != nil {
+				log.Warnf("重复创建消息刷新缓存失败: username=%s err=%v", existing.Name, err)
+			}
+		}
+	}
+
+	clearStart := time.Now()
+	clearCtx, clearSpan := trace.StartSpan(ctx, "kafka-consumer", "clear_pending_marker")
+	trace.AddRequestTag(clearCtx, "username", user.Name)
+	clearRedisDuration, clearErr := c.clearPendingCreateMarker(clearCtx, user.Name)
+	clearDuration := time.Since(clearStart)
+	clearStatus := "success"
+	clearCode := strconv.Itoa(code.ErrSuccess)
+	if clearErr != nil {
+		clearStatus = "error"
+		if c := errors.GetCode(clearErr); c != 0 {
+			clearCode = strconv.Itoa(c)
+		} else {
+			clearCode = strconv.Itoa(code.ErrUnknown)
+		}
+	}
+	trace.EndSpan(clearSpan, clearStatus, clearCode, map[string]interface{}{
+		"username":        user.Name,
+		"duration_ms":     clearDuration.Milliseconds(),
+		"cleared":         clearErr == nil,
+		"redis_delete_ms": clearRedisDuration.Milliseconds(),
+	})
+	if clearErr != nil {
+		trace.AddRequestTag(ctx, "pending_marker_clear_failed", true)
+		log.Warnf("清理用户创建幂等标记失败: username=%s err=%v", user.Name, clearErr)
+	} else {
+		trace.AddRequestTag(ctx, "pending_marker_cleared", true)
+	}
+
+	return nil
 }
 
 // 删除
@@ -641,6 +747,148 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) (bool,
 	}
 
 	return true, nil
+}
+
+// loadUserSnapshot 查询数据库中的用户信息，用于判定重复消息或刷新缓存。
+func (c *UserConsumer) loadUserSnapshot(ctx context.Context, username string) (*v1.User, error) {
+	trimmed := strings.TrimSpace(username)
+	if trimmed == "" {
+		return nil, nil
+	}
+	var existing v1.User
+	err := c.db.WithContext(ctx).
+		Where("name = ?", trimmed).
+		First(&existing).Error
+	if err != nil {
+		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	existing.Email = usercache.NormalizeEmail(existing.Email)
+	existing.Phone = usercache.NormalizePhone(existing.Phone)
+	existingCopy := existing
+	return &existingCopy, nil
+}
+
+func (c *UserConsumer) loadUserSnapshotWithTrace(ctx context.Context, username, reason string) (*v1.User, error) {
+	start := time.Now()
+	snapshotCtx, snapshotSpan := trace.StartSpan(ctx, "kafka-consumer", "load_existing_user")
+	trace.AddRequestTag(snapshotCtx, "username", username)
+	if strings.TrimSpace(reason) != "" {
+		trace.AddRequestTag(snapshotCtx, "snapshot_reason", reason)
+	}
+	existing, err := c.loadUserSnapshot(snapshotCtx, username)
+	duration := time.Since(start)
+	status := "success"
+	codeStr := strconv.Itoa(code.ErrSuccess)
+	if err != nil {
+		status = "error"
+		if c := errors.GetCode(err); c != 0 {
+			codeStr = strconv.Itoa(c)
+		} else {
+			codeStr = strconv.Itoa(code.ErrUnknown)
+		}
+	}
+	details := map[string]interface{}{
+		"username":    username,
+		"duration_ms": duration.Milliseconds(),
+		"found":       existing != nil,
+	}
+	if strings.TrimSpace(reason) != "" {
+		details["reason"] = reason
+	}
+	trace.EndSpan(snapshotSpan, status, codeStr, details)
+	return existing, err
+}
+
+// getPendingCreateMarker 读取 Redis 中的 pending 标记，供消费者做幂等校验。
+func (c *UserConsumer) getPendingCreateMarker(ctx context.Context, username string) (bool, string, time.Duration, time.Duration, time.Duration, error) {
+	if c.redis == nil {
+		return false, "", 0, 0, 0, nil
+	}
+	trimmed := strings.TrimSpace(username)
+	if trimmed == "" {
+		return false, "", 0, 0, 0, nil
+	}
+	key := usercache.PendingCreateKey(trimmed)
+	if key == "" {
+		return false, "", 0, 0, 0, nil
+	}
+
+	getStart := time.Now()
+	value, err := c.redis.GetKey(ctx, key)
+	getDuration := time.Since(getStart)
+	getMetricErr := err
+	if err == redis.Nil {
+		getMetricErr = nil
+	}
+	metrics.RecordRedisOperation("pending_marker_get", getDuration.Seconds(), getMetricErr)
+	trace.AddRequestTag(ctx, "pending_marker_get_ms", getDuration.Milliseconds())
+	if err != nil {
+		if err == redis.Nil {
+			return false, "", 0, getDuration, 0, nil
+		}
+		trace.AddRequestTag(ctx, "pending_marker_get_error", err.Error())
+		return false, "", 0, getDuration, 0, err
+	}
+
+	ttlStart := time.Now()
+	ttlSeconds, ttlErr := c.redis.GetExp(ctx, key)
+	ttlDuration := time.Since(ttlStart)
+	ttlMetricErr := ttlErr
+	if ttlErr == storage.ErrKeyNotFound {
+		ttlMetricErr = nil
+	}
+	metrics.RecordRedisOperation("pending_marker_ttl", ttlDuration.Seconds(), ttlMetricErr)
+	trace.AddRequestTag(ctx, "pending_marker_ttl_lookup_ms", ttlDuration.Milliseconds())
+	if ttlErr != nil {
+		if ttlErr == storage.ErrKeyNotFound {
+			return true, value, 0, getDuration, ttlDuration, nil
+		}
+		trace.AddRequestTag(ctx, "pending_marker_ttl_error", ttlErr.Error())
+		log.Debugf("获取 pending 标记TTL失败: key=%s err=%v", key, ttlErr)
+		return true, value, 0, getDuration, ttlDuration, nil
+	}
+
+	var ttl time.Duration
+	if ttlSeconds > 0 {
+		ttl = time.Duration(ttlSeconds) * time.Second
+	}
+	return true, value, ttl, getDuration, ttlDuration, nil
+}
+
+// clearPendingCreateMarker 在消息处理完成后清理 pending 标记，防止重复请求受阻。
+func (c *UserConsumer) clearPendingCreateMarker(ctx context.Context, username string) (time.Duration, error) {
+	if c.redis == nil {
+		return 0, nil
+	}
+	trimmed := strings.TrimSpace(username)
+	if trimmed == "" {
+		return 0, nil
+	}
+	key := usercache.PendingCreateKey(trimmed)
+	if key == "" {
+		return 0, nil
+	}
+	deleteStart := time.Now()
+	deleted, err := c.redis.DeleteKey(ctx, key)
+	deleteDuration := time.Since(deleteStart)
+	deleteMetricErr := err
+	if err == redis.Nil {
+		deleteMetricErr = nil
+	}
+	metrics.RecordRedisOperation("pending_marker_delete", deleteDuration.Seconds(), deleteMetricErr)
+	trace.AddRequestTag(ctx, "pending_marker_clear_ms", deleteDuration.Milliseconds())
+	if err == redis.Nil {
+		return deleteDuration, nil
+	}
+	if err != nil {
+		trace.AddRequestTag(ctx, "pending_marker_clear_error", err.Error())
+		return deleteDuration, err
+	}
+	trace.AddRequestTag(ctx, "pending_marker_cleared", deleted)
+	return deleteDuration, nil
 }
 
 func isDuplicateKeyDBError(err error) bool {

@@ -123,8 +123,9 @@ type ServerRunOptions struct {
 	MaxQueueSize     int           `json:"max-queue-size" mapstructure:"max-queue-size"`
 	TimeoutThreshold time.Duration `json:"timeout-threshold" mapstructure:"timeout-threshold"`
 	// 新增：Kafka 生产者失败消息的降级目录
-	ProducerFallbackDir string `json:"producer-fallback-dir" mapstructure:"producer-fallback-dir"`
-	PasswordHashCost    int    `json:"password-hash-cost" mapstructure:"password-hash-cost"`
+	ProducerFallbackDir  string        `json:"producer-fallback-dir" mapstructure:"producer-fallback-dir"`
+	PasswordHashCost     int           `json:"password-hash-cost" mapstructure:"password-hash-cost"`
+	UserPendingCreateTTL time.Duration `json:"userPendingCreateTTL" mapstructure:"userPendingCreateTTL"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -163,6 +164,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		ContactRefreshTimeout:    DefaultContactRefreshTimeout,
 		ProducerFallbackDir:      "/var/log/iam/producer",
 		PasswordHashCost:         6,
+		UserPendingCreateTTL:     2 * time.Minute,
 	}
 }
 
@@ -290,6 +292,10 @@ func (s *ServerRunOptions) Complete() {
 	if s.PasswordHashCost > bcrypt.MaxCost {
 		s.PasswordHashCost = bcrypt.MaxCost
 	}
+
+	if s.UserPendingCreateTTL <= 0 {
+		s.UserPendingCreateTTL = 2 * time.Minute
+	}
 }
 
 func (s *ServerRunOptions) Validate() []error {
@@ -400,6 +406,14 @@ func (s *ServerRunOptions) Validate() []error {
 		))
 	}
 
+	if s.UserPendingCreateTTL <= 0 {
+		errs = append(errs, field.Invalid(
+			path.Child("userPendingCreateTTL"),
+			s.UserPendingCreateTTL,
+			"pending create 标记的 TTL 必须大于 0",
+		))
+	}
+
 	agg := errs.ToAggregate()
 	if agg == nil {
 		return nil // 无错误时返回空切片，而非nil
@@ -458,4 +472,5 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&s.FastDebugStartup, "server.fast-debug-startup", s.FastDebugStartup, "调试模式下是否跳过耗时的依赖等待，加速本地调试启动")
 	fs.StringVar(&s.ProducerFallbackDir, "server.producer-fallback-dir", s.ProducerFallbackDir, "Directory to store failed Kafka producer messages as a fallback.")
 	fs.IntVar(&s.PasswordHashCost, "server.password-hash-cost", s.PasswordHashCost, "设置bcrypt密码哈希成本（范围 4-31，默认10，压测可适当降低）")
+	fs.DurationVar(&s.UserPendingCreateTTL, "server.user-pending-create-ttl", s.UserPendingCreateTTL, "Redis 用户创建幂等标记的过期时间")
 }

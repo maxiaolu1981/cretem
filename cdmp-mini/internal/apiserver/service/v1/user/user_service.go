@@ -402,6 +402,94 @@ func durationToSecondsCeil(d time.Duration) int64 {
 	return int64(seconds)
 }
 
+func (u *UserService) pendingCreateTTL() time.Duration {
+	if u == nil || u.Options == nil || u.Options.ServerRunOptions == nil {
+		return 2 * time.Minute
+	}
+	ttl := u.Options.ServerRunOptions.UserPendingCreateTTL
+	if ttl <= 0 {
+		return 2 * time.Minute
+	}
+	return ttl
+}
+
+func (u *UserService) pendingCreatePayload(ctx context.Context, username string) string {
+	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
+	payload := map[string]any{
+		"status":    "pending",
+		"username":  username,
+		"timestamp": timestamp,
+	}
+	if traceCtx := trace.FromContext(ctx); traceCtx != nil {
+		if requestID := traceCtx.RequestContext.RequestID; requestID != "" {
+			payload["request_id"] = requestID
+		}
+		if operator := traceCtx.RequestContext.Operator; operator != "" {
+			payload["operator"] = operator
+		}
+		if clientIP := traceCtx.RequestContext.ClientIP; clientIP != "" {
+			payload["client_ip"] = clientIP
+		}
+	}
+	if legacyID := ctx.Value("requestID"); legacyID != nil {
+		payload["legacy_request_id"] = fmt.Sprint(legacyID)
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		log.Warnw("构造用户创建幂等标记payload失败，降级为时间戳", "username", username, "error", err)
+		return timestamp
+	}
+	return string(data)
+}
+
+// markUserPendingCreate 将用户名的 pending 标记写入 Redis，确保 Kafka 侧能够做最终一致性校验。
+func (u *UserService) markUserPendingCreate(ctx context.Context, username string) (bool, bool, time.Duration, time.Duration, time.Duration, error) {
+	trimmed := strings.TrimSpace(username)
+	if trimmed == "" || u == nil || u.Redis == nil {
+		return false, false, 0, 0, 0, nil
+	}
+	key := usercache.PendingCreateKey(trimmed)
+	if key == "" {
+		return false, false, 0, 0, 0, nil
+	}
+	ttl := u.pendingCreateTTL()
+	if ttl <= 0 {
+		ttl = 2 * time.Minute
+	}
+	if jitter := time.Duration(rand.Intn(5)) * time.Second; jitter > 0 {
+		ttl += jitter
+	}
+	payload := u.pendingCreatePayload(ctx, trimmed)
+	redisCtx, cancel := u.redisOpContext(ctx)
+	defer cancel()
+	setNXStart := time.Now()
+	created, err := u.Redis.SetNX(redisCtx, key, payload, ttl)
+	setNXDuration := time.Since(setNXStart)
+	metrics.RecordRedisOperation("pending_marker_setnx", setNXDuration.Seconds(), err)
+	trace.AddRequestTag(ctx, "pending_marker_setnx_ms", setNXDuration.Milliseconds())
+	if err != nil {
+		log.Errorw("设置用户创建幂等标记失败", "username", trimmed, "error", err)
+		trace.AddRequestTag(ctx, "pending_marker_setnx_error", err.Error())
+		return false, false, ttl, setNXDuration, 0, errors.WithCode(code.ErrRedisFailed, "设置用户创建幂等标记失败")
+	}
+	if created {
+		return true, false, ttl, setNXDuration, 0, nil
+	}
+	refreshCtx, refreshCancel := u.redisOpContext(ctx)
+	refreshStart := time.Now()
+	refreshErr := u.Redis.SetKey(refreshCtx, key, payload, ttl)
+	refreshCancel()
+	refreshDuration := time.Since(refreshStart)
+	metrics.RecordRedisOperation("pending_marker_refresh", refreshDuration.Seconds(), refreshErr)
+	trace.AddRequestTag(ctx, "pending_marker_refresh_ms", refreshDuration.Milliseconds())
+	if refreshErr != nil {
+		log.Errorw("刷新用户创建幂等标记失败", "username", trimmed, "error", refreshErr)
+		trace.AddRequestTag(ctx, "pending_marker_refresh_error", refreshErr.Error())
+		return false, false, ttl, setNXDuration, refreshDuration, errors.WithCode(code.ErrRedisFailed, "刷新用户创建幂等标记失败")
+	}
+	return false, true, ttl, setNXDuration, refreshDuration, nil
+}
+
 func (u *UserService) redisOpTimeout() time.Duration {
 	if u != nil && u.Options != nil && u.Options.RedisOptions != nil && u.Options.RedisOptions.Timeout > 0 {
 		return u.Options.RedisOptions.Timeout

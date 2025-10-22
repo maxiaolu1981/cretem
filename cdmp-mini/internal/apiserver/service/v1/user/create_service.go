@@ -142,6 +142,42 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		return err
 	}
 
+	pendingStart := time.Now()
+	pendingCtx, pendingSpan := trace.StartSpan(ctx, "user-service", "mark_pending_create")
+	trace.AddRequestTag(pendingCtx, "username", user.Name)
+	markerCreated, markerRefreshed, pendingTTL, setNXDuration, refreshDuration, pendingErr := u.markUserPendingCreate(pendingCtx, user.Name)
+	pendingDuration := time.Since(pendingStart)
+	pendingStatus := "success"
+	pendingCode := strconv.Itoa(code.ErrSuccess)
+	if pendingErr != nil {
+		pendingStatus = "error"
+		if c := errors.GetCode(pendingErr); c != 0 {
+			pendingCode = strconv.Itoa(c)
+		} else {
+			pendingCode = strconv.Itoa(code.ErrUnknown)
+		}
+	}
+	trace.EndSpan(pendingSpan, pendingStatus, pendingCode, map[string]interface{}{
+		"username":         user.Name,
+		"duration_ms":      pendingDuration.Milliseconds(),
+		"marker_new":       markerCreated,
+		"marker_refresh":   markerRefreshed,
+		"marker_ttl_ms":    pendingTTL.Milliseconds(),
+		"redis_setnx_ms":   setNXDuration.Milliseconds(),
+		"redis_refresh_ms": refreshDuration.Milliseconds(),
+	})
+	u.recordUserCreateStep(ctx, "mark_pending_create", "redis", user.Name, pendingDuration, pendingErr)
+	trace.AddRequestTag(ctx, "pending_marker_new", markerCreated)
+	if markerRefreshed {
+		trace.AddRequestTag(ctx, "pending_marker_refreshed", true)
+	}
+	if pendingTTL > 0 {
+		trace.AddRequestTag(ctx, "pending_marker_ttl_ms", pendingTTL.Milliseconds())
+	}
+	if pendingErr != nil {
+		return pendingErr
+	}
+
 	if u.Producer == nil {
 		log.Errorf("生产者转换错误")
 		err = errors.WithCode(code.ErrKafkaFailed, "Kafka生产者未初始化")

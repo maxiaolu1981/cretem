@@ -9,6 +9,7 @@ const (
 	negativeCounterPrefix = "user:negative-counter:"
 	blockCounterPrefix    = "user:block-counter:"
 	blacklistPrefix       = "user:blacklist:"
+	pendingCreatePrefix   = "user:pending:"
 	NegativeCacheSentinel = "rate_limit_prevention"
 	BlacklistSentinel     = "rate_limit_blacklisted"
 )
@@ -71,4 +72,13 @@ func BlacklistKey(username string) string {
 		return ""
 	}
 	return blacklistPrefix + trimmed
+}
+
+// PendingCreateKey 返回记录用户创建幂等状态的 key。
+func PendingCreateKey(username string) string {
+	trimmed := strings.TrimSpace(username)
+	if trimmed == "" {
+		return ""
+	}
+	return pendingCreatePrefix + trimmed
 }

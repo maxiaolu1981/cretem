@@ -16,6 +16,7 @@ pgo
 GOCPUPROFILE=web.pprof go run apiserver.go --log.level debug
 ls -lh app.pprof
 go build -pgo=app.pprof -o app-optimized .
+
 cd /home/mxl/cretem/cretem && grep -n "用户创建链路耗时超过200ms" log/iam-apiserver.log | tail
 
 SELECT * FROM mysql.slow_log ORDER BY start_time DESC LIMIT 5;
