@@ -9,7 +9,22 @@ import (
 
 // Encrypt encrypts the plain text with bcrypt.
 func Encrypt(source string) (string, error) {
-	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(source), bcrypt.DefaultCost)
+	return EncryptWithCost(source, 0)
+}
+
+// EncryptWithCost encrypts the plain text with bcrypt using a configurable cost.
+// When cost <= 0 it falls back to the library default, and values outside the
+// supported range are clamped to ensure GenerateFromPassword succeeds.
+func EncryptWithCost(source string, cost int) (string, error) {
+	switch {
+	case cost <= 0:
+		cost = bcrypt.DefaultCost
+	case cost < bcrypt.MinCost:
+		cost = bcrypt.MinCost
+	case cost > bcrypt.MaxCost:
+		cost = bcrypt.MaxCost
+	}
+	hashedBytes, err := bcrypt.GenerateFromPassword([]byte(source), cost)
 	return string(hashedBytes), err
 }
 

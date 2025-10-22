@@ -25,10 +25,13 @@ type Users struct {
 var ensureIndexesOnce sync.Once
 
 func ensureUserCoveringIndexes(db *gorm.DB) {
+	if db == nil {
+		return
+	}
+	if !strings.EqualFold(db.Dialector.Name(), "mysql") {
+		return
+	}
 	ensureIndexesOnce.Do(func() {
-		if db == nil {
-			return
-		}
 		databaseName := db.Migrator().CurrentDatabase()
 		if databaseName == "" {
 			log.Warn("无法获取当前数据库名称，跳过覆盖索引检查")

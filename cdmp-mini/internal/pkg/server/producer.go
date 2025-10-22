@@ -546,9 +546,14 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 	}
 
 	now := time.Now()
+	key := strings.TrimSpace(user.Name)
+	if key == "" {
+		key = strconv.FormatUint(user.ID, 10)
+	}
+
 	msg := &sarama.ProducerMessage{
 		Topic: topic,
-		Key:   sarama.StringEncoder(strconv.FormatUint(user.ID, 10)),
+		Key:   sarama.StringEncoder(key),
 		Value: sarama.ByteEncoder(userData),
 		Headers: []sarama.RecordHeader{
 			{Key: []byte(HeaderOperation), Value: []byte(operation)},

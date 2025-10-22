@@ -65,6 +65,10 @@ func (c *ClusterAwareUserStore) GetByPhone(ctx context.Context, phone string, op
 	return c.readStore.GetByPhone(ctx, phone, opt)
 }
 
+func (c *ClusterAwareUserStore) PreflightConflicts(ctx context.Context, username, email, phone string, opt *options.Options) (map[string]*v1.User, error) {
+	return c.readStore.PreflightConflicts(ctx, username, email, phone, opt)
+}
+
 func (c *ClusterAwareUserStore) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) error {
 
 	return c.writeStore.Create(ctx, user, opts, opt) // 写操作用写库

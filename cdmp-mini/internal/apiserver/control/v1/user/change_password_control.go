@@ -167,7 +167,11 @@ func (u *UserController) ChangePassword(c *gin.Context) {
 			return errCompare
 		}
 
-		user.Password, _ = auth.Encrypt(r.NewPassword)
+		hashCost := 0
+		if u.options != nil && u.options.ServerRunOptions != nil {
+			hashCost = u.options.ServerRunOptions.PasswordHashCost
+		}
+		user.Password, _ = auth.EncryptWithCost(r.NewPassword, hashCost)
 		token := c.GetHeader("Authorization")
 		claims, err := jwtvalidator.ValidateToken(token, u.options.JwtOptions.Key)
 		if err != nil {

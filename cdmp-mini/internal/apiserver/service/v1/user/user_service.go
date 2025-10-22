@@ -53,7 +53,6 @@ import (
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
-	"golang.org/x/sync/errgroup"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -678,26 +677,98 @@ func (u *UserService) newDBContext(parent context.Context, timeout time.Duration
 	return context.WithTimeout(base, timeout)
 }
 
-func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User) error {
+func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User) (map[string]*v1.User, error) {
 	u.ensureContactCacheReady()
 	u.normalizeUserContacts(user)
-	g, groupCtx := errgroup.WithContext(ctx)
+
 	email := user.Email
 	phone := user.Phone
-	owner := user.Name
+	if email == "" && phone == "" {
+		return map[string]*v1.User{}, nil
+	}
+
+	store := u.userStoreReadOnly()
+	if store == nil {
+		return nil, errors.WithCode(code.ErrDatabase, "用户存储未就绪")
+	}
+
+	var (
+		preflight     map[string]*v1.User
+		preflightErr  error
+		retryAttempts = u.Options.RedisOptions.MaxRetries
+	)
+
+	if retryAttempts <= 0 {
+		retryAttempts = 1
+	}
+
+	if email != "" || phone != "" {
+		result, err := util.RetryWithBackoff(retryAttempts, isRetryableError, func() (interface{}, error) {
+			dbCtx, cancel := u.newDBContext(ctx, u.contactLookupTimeout())
+			defer cancel()
+			return store.PreflightConflicts(dbCtx, user.Name, email, phone, u.Options)
+		})
+		if err != nil {
+			preflightErr = err
+		} else if result != nil {
+			if typed, ok := result.(map[string]*v1.User); ok {
+				preflight = typed
+			}
+		}
+	}
+
+	if preflightErr != nil {
+		return nil, preflightErr
+	}
+	if preflight == nil {
+		preflight = make(map[string]*v1.User)
+	}
+
 	if email != "" {
 		emailCopy := email
-		g.Go(func() error {
-			return u.ensureEmailUnique(groupCtx, emailCopy, owner)
-		})
+		if err := u.ensureContactUnique(ctx,
+			u.generateEmailCacheKey(emailCopy),
+			user.Name,
+			"邮箱",
+			emailCopy,
+			"email",
+			func(lookupCtx context.Context) (*v1.User, error) {
+				if err := lookupCtx.Err(); err != nil {
+					return nil, err
+				}
+				if existing := preflight["email"]; existing != nil {
+					return existing, nil
+				}
+				return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在")
+			},
+		); err != nil {
+			return nil, err
+		}
 	}
+
 	if phone != "" {
 		phoneCopy := phone
-		g.Go(func() error {
-			return u.ensurePhoneUnique(groupCtx, phoneCopy, owner)
-		})
+		if err := u.ensureContactUnique(ctx,
+			u.generatePhoneCacheKey(phoneCopy),
+			user.Name,
+			"手机号",
+			phoneCopy,
+			"phone",
+			func(lookupCtx context.Context) (*v1.User, error) {
+				if err := lookupCtx.Err(); err != nil {
+					return nil, err
+				}
+				if existing := preflight["phone"]; existing != nil {
+					return existing, nil
+				}
+				return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在")
+			},
+		); err != nil {
+			return nil, err
+		}
 	}
-	return g.Wait()
+
+	return preflight, nil
 }
 
 func (u *UserService) ensureEmailUnique(ctx context.Context, email, owner string) (err error) {
@@ -752,6 +823,24 @@ func (u *UserService) ensureContactUnique(
 ) (err error) {
 	if cacheKey == "" {
 		return nil
+	}
+
+	if u.Redis == nil {
+		dbStart := time.Now()
+		existing, lookupErr := lookup(ctx)
+		u.recordUserCreateStep(ctx, "ensure_contact_lookup", fieldKey, allowedOwner, time.Since(dbStart), lookupErr)
+		if lookupErr != nil {
+			if errors.IsCode(lookupErr, code.ErrUserNotFound) {
+				return nil
+			}
+			err = lookupErr
+			return err
+		}
+		if existing == nil || strings.EqualFold(existing.Name, allowedOwner) {
+			return nil
+		}
+		err = errors.WithCode(code.ErrValidation, "%s已被占用: %s", fieldLabel, fieldValue)
+		return err
 	}
 
 	start := time.Now()

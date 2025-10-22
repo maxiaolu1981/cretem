@@ -1,2 +1,4 @@
-*.txt
-*.log
+log/
+log/
+../log/
+../*.log

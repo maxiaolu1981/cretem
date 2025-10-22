@@ -191,8 +191,8 @@ func NewMySQLOptions() *MySQLOptions {
 
 		// Galera配置
 		WSREPSyncWait: true, // 等待集群同步
-		InitialDelay:  50 * time.Millisecond,
-		MaxDelay:      500 * time.Millisecond,
+		InitialDelay:  200 * time.Millisecond,
+		MaxDelay:      1500 * time.Millisecond,
 		BackoffFactor: 2.0,
 		Jitter:        true,
 	}

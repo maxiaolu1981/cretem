@@ -1,7 +1,7 @@
 import argparse
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 
 STATUS_TEXT = {
@@ -22,7 +22,7 @@ STATUS_TEXT = {
 }
 
 
-def extract_log_info(line: str) -> Dict[str, Any] | None:
+def extract_log_info(line: str) -> Optional[Dict[str, Any]]:
     if "trace/trace.go" not in line:
         return None
 
@@ -143,9 +143,15 @@ def main() -> None:
     parser.add_argument("-u", "--username", help="按用户名过滤")
     parser.add_argument("-t", "--trace", help="按 trace_id 过滤")
     parser.add_argument("-n", type=int, default=0, help="输出记录数量，0 表示全部")
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=0,
+        help="按总耗时倒序输出前 N 条记录（隐式启用排序）",
+    )
     args = parser.parse_args()
 
-    if not args.username and not args.trace:
+    if not args.username and not args.trace and args.top <= 0:
         parser.error("必须指定 --username 或 --trace 中的至少一个过滤条件")
 
     matches: List[Dict[str, Any]] = []
@@ -165,9 +171,15 @@ def main() -> None:
         print(f"未找到符合条件的记录（{target}）")
         return
 
-    matches.sort(key=lambda item: item["timestamp"], reverse=True)
-    if args.n > 0:
-        matches = matches[: args.n]
+    if args.top > 0:
+        matches.sort(key=lambda item: float(item["total_dur"] or 0.0), reverse=True)
+        limit = args.top if args.n == 0 else min(args.top, args.n)
+        if limit > 0:
+            matches = matches[:limit]
+    else:
+        matches.sort(key=lambda item: item["timestamp"], reverse=True)
+        if args.n > 0:
+            matches = matches[: args.n]
 
     for entry in matches:
         method = entry["http_method"]

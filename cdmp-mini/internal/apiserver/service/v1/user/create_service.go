@@ -2,7 +2,6 @@ package user
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -46,7 +45,11 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 	// 对密码进行加密，避免在控制层重复执行
 	passwordStart := time.Now()
 	if user.Password != "" {
-		hashed, hashErr := auth.Encrypt(user.Password)
+		hashCost := 0
+		if u != nil && u.Options != nil && u.Options.ServerRunOptions != nil {
+			hashCost = u.Options.ServerRunOptions.PasswordHashCost
+		}
+		hashed, hashErr := auth.EncryptWithCost(user.Password, hashCost)
 		u.recordUserCreateStep(ctx, "encrypt_password", "password", user.Name, time.Since(passwordStart), hashErr)
 		if hashErr != nil {
 			log.Errorf("用户密码加密失败: username=%s, err=%v", user.Name, hashErr)
@@ -59,11 +62,7 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 
 	u.ensureContactCacheReady()
 
-	parallelCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
 	var (
-		wg                sync.WaitGroup
 		contactsErr       error
 		existingUser      *v1.User
 		existErr          error
@@ -71,49 +70,52 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		existenceDuration time.Duration
 	)
 
-	wg.Add(2)
-	go func(ctx context.Context) {
-		defer wg.Done()
-		spanCtx, contactSpan := trace.StartSpan(ctx, "user-service", "ensure_contacts_unique")
-		start := time.Now()
-		err := u.ensureContactUniqueness(spanCtx, user)
-		contactsDuration = time.Since(start)
-		contactsErr = err
-		status := "success"
-		codeStr := strconv.Itoa(code.ErrSuccess)
-		if err != nil {
-			cancel()
-			status = "error"
-			if c := errors.GetCode(err); c != 0 {
-				codeStr = strconv.Itoa(c)
-			} else {
-				codeStr = strconv.Itoa(code.ErrUnknown)
-			}
+	contactCtx, contactSpan := trace.StartSpan(ctx, "user-service", "ensure_contacts_unique")
+	contactsStart := time.Now()
+	contactHits, errEnsure := u.ensureContactUniqueness(contactCtx, user)
+	contactsDuration = time.Since(contactsStart)
+	contactsErr = errEnsure
+	contactStatus := "success"
+	contactCode := strconv.Itoa(code.ErrSuccess)
+	if contactsErr != nil {
+		contactStatus = "error"
+		if c := errors.GetCode(contactsErr); c != 0 {
+			contactCode = strconv.Itoa(c)
+		} else {
+			contactCode = strconv.Itoa(code.ErrUnknown)
 		}
-		trace.EndSpan(contactSpan, status, codeStr, map[string]interface{}{
-			"username":    user.Name,
-			"duration_ms": contactsDuration.Milliseconds(),
-		})
-	}(parallelCtx)
+	}
+	trace.EndSpan(contactSpan, contactStatus, contactCode, map[string]interface{}{
+		"username":    user.Name,
+		"duration_ms": contactsDuration.Milliseconds(),
+	})
 
-	go func(ctx context.Context) {
-		defer wg.Done()
-		spanCtx, checkSpan := trace.StartSpan(ctx, "user-service", "check_user_exist")
-		start := time.Now()
-		ruser, err := u.checkUserExist(spanCtx, user.Name, false)
-		existenceDuration = time.Since(start)
-		existErr = err
-		if err == nil {
+	if contactsErr != nil {
+		err = contactsErr
+		u.recordUserCreateStep(ctx, "ensure_contacts_unique", "all", user.Name, contactsDuration, contactsErr)
+		return err
+	}
+
+	if contactHits != nil {
+		if existing := contactHits["username"]; existing != nil {
+			existingUser = existing
+		}
+	}
+
+	if existingUser == nil {
+		checkCtx, checkSpan := trace.StartSpan(ctx, "user-service", "check_user_exist")
+		existenceStart := time.Now()
+		ruser, errCheck := u.checkUserExist(checkCtx, user.Name, false)
+		existenceDuration = time.Since(existenceStart)
+		existErr = errCheck
+		if errCheck == nil {
 			existingUser = ruser
-			if ruser != nil && ruser.Name != RATE_LIMIT_PREVENTION {
-				cancel()
-			}
 		}
 		status := "success"
 		codeStr := strconv.Itoa(code.ErrSuccess)
-		if err != nil {
+		if errCheck != nil {
 			status = "error"
-			if c := errors.GetCode(err); c != 0 {
+			if c := errors.GetCode(errCheck); c != 0 {
 				codeStr = strconv.Itoa(c)
 			} else {
 				codeStr = strconv.Itoa(code.ErrUnknown)
@@ -123,25 +125,13 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 			"username":    user.Name,
 			"duration_ms": existenceDuration.Milliseconds(),
 		})
-	}(parallelCtx)
-
-	wg.Wait()
-
-	u.recordUserCreateStep(ctx, "ensure_contacts_unique", "all", user.Name, contactsDuration, contactsErr)
-	u.recordUserCreateStep(ctx, "check_user_exist", "username", user.Name, existenceDuration, existErr)
-
-	if contactsErr != nil {
-		if errors.Is(contactsErr, context.Canceled) || errors.Is(contactsErr, context.DeadlineExceeded) {
-			if existingUser != nil && existingUser.Name != RATE_LIMIT_PREVENTION {
-				log.Warnf("唯一性检查因并行取消提前退出", "username", user.Name)
-				contactsErr = nil
-			}
-		}
+	} else {
+		u.recordUserCreateStep(ctx, "check_user_exist", "username", user.Name, 0, nil)
 	}
 
-	if contactsErr != nil {
-		err = contactsErr
-		return err
+	u.recordUserCreateStep(ctx, "ensure_contacts_unique", "all", user.Name, contactsDuration, contactsErr)
+	if existingUser == nil {
+		u.recordUserCreateStep(ctx, "check_user_exist", "username", user.Name, existenceDuration, existErr)
 	}
 	if existErr != nil {
 		log.Warnf("查询用户%s checkUserExist方法返回错误, 可能是系统繁忙, 将忽略是否存在的检查, 放行该用户: %v", user.Name, existErr)

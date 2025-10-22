@@ -76,6 +76,7 @@ import (
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation/field"
 	"github.com/spf13/pflag"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -123,6 +124,7 @@ type ServerRunOptions struct {
 	TimeoutThreshold time.Duration `json:"timeout-threshold" mapstructure:"timeout-threshold"`
 	// 新增：Kafka 生产者失败消息的降级目录
 	ProducerFallbackDir string `json:"producer-fallback-dir" mapstructure:"producer-fallback-dir"`
+	PasswordHashCost    int    `json:"password-hash-cost" mapstructure:"password-hash-cost"`
 }
 
 func NewServerRunOptions() *ServerRunOptions {
@@ -160,6 +162,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		ContactLookupTimeout:     DefaultContactLookupTimeout,
 		ContactRefreshTimeout:    DefaultContactRefreshTimeout,
 		ProducerFallbackDir:      "/var/log/iam/producer",
+		PasswordHashCost:         6,
 	}
 }
 
@@ -277,6 +280,16 @@ func (s *ServerRunOptions) Complete() {
 	if s.ContactRefreshTimeout <= 0 {
 		s.ContactRefreshTimeout = DefaultContactRefreshTimeout
 	}
+
+	if s.PasswordHashCost <= 0 {
+		s.PasswordHashCost = bcrypt.DefaultCost
+	}
+	if s.PasswordHashCost < bcrypt.MinCost {
+		s.PasswordHashCost = bcrypt.MinCost
+	}
+	if s.PasswordHashCost > bcrypt.MaxCost {
+		s.PasswordHashCost = bcrypt.MaxCost
+	}
 }
 
 func (s *ServerRunOptions) Validate() []error {
@@ -379,6 +392,14 @@ func (s *ServerRunOptions) Validate() []error {
 		))
 	}
 
+	if s.PasswordHashCost < bcrypt.MinCost || s.PasswordHashCost > bcrypt.MaxCost {
+		errs = append(errs, field.Invalid(
+			path.Child("passwordHashCost"),
+			s.PasswordHashCost,
+			"bcrypt成本因子超出允许范围",
+		))
+	}
+
 	agg := errs.ToAggregate()
 	if agg == nil {
 		return nil // 无错误时返回空切片，而非nil
@@ -436,4 +457,5 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 		"管理API的简单访问令牌（默认为空，仅允许本地访问）")
 	fs.BoolVar(&s.FastDebugStartup, "server.fast-debug-startup", s.FastDebugStartup, "调试模式下是否跳过耗时的依赖等待，加速本地调试启动")
 	fs.StringVar(&s.ProducerFallbackDir, "server.producer-fallback-dir", s.ProducerFallbackDir, "Directory to store failed Kafka producer messages as a fallback.")
+	fs.IntVar(&s.PasswordHashCost, "server.password-hash-cost", s.PasswordHashCost, "设置bcrypt密码哈希成本（范围 4-31，默认10，压测可适当降低）")
 }

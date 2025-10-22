@@ -53,11 +53,10 @@ func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm
 			GroupID: groupID,
 
 			// 优化配置
-			MinBytes: 1 * 1024 * 1024, // 降低最小字节数，立即消费
-			//MinBytes:      10e3,
-			MaxBytes:      10e6,                   // 10MB
-			MaxWait:       time.Millisecond * 100, // 增加到100ms
-			QueueCapacity: 100,                    // 降低队列容量，避免消息堆积在内存
+			MinBytes:      32 * 1024, // 32KB，兼顾延迟与批量度
+			MaxBytes:      10e6,      // 10MB
+			MaxWait:       time.Millisecond * 100,
+			QueueCapacity: 512, // 放大队列容量以喂饱 worker 池
 
 			CommitInterval: 0,
 			StartOffset:    kafka.FirstOffset,
@@ -103,14 +102,20 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 	trace.AddRequestTag(ctx, "group", c.groupID)
 	defer trace.EndSpan(span, "success", "", map[string]interface{}{})
 
-	// job 用于在 fetcher 与 worker 之间传递消息，并携带一个 done 通道用于返回处理结果
+	// job 用于在 fetcher 与 worker 之间传递消息
 	type job struct {
 		msg      kafka.Message
-		done     chan error
 		workerID int
 	}
 
+	type ackResult struct {
+		message  kafka.Message
+		workerID int
+		err      error
+	}
+
 	jobs := make(chan *job, 2048) // 提升通道容量，支持高并发
+	acks := make(chan ackResult, 2048)
 	readyOnce := sync.Once{}
 	signalReady := func() {
 		if ready != nil {
@@ -191,11 +196,59 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 				// 在本地记录指标（worker 负责记录处理耗时/成功/失败）
 				c.recordConsumerMetrics(operation, messageKey, processStart, err, j.workerID)
 
-				// 将处理结果返回给 fetcher，由 fetcher 负责提交偏移
-				j.done <- err
+				ack := ackResult{message: j.msg, workerID: j.workerID, err: err}
+				select {
+				case acks <- ack:
+				case <-ctx.Done():
+					return
+				}
 			}
 		}(i)
 	}
+
+	var commitWg sync.WaitGroup
+	commitWg.Add(1)
+	go func() {
+		defer commitWg.Done()
+		type partitionState struct {
+			nextOffset int64
+		}
+		pending := make(map[int]map[int64]ackResult)
+		states := make(map[int]*partitionState)
+		for ack := range acks {
+			if ack.err != nil {
+				log.Warnf("Fetcher: message processing failed (worker=%d partition=%d offset=%d): %v", ack.workerID, ack.message.Partition, ack.message.Offset, ack.err)
+				continue
+			}
+			partition := ack.message.Partition
+			state, exists := states[partition]
+			if !exists {
+				state = &partitionState{nextOffset: ack.message.Offset}
+				states[partition] = state
+			}
+			if ack.message.Offset < state.nextOffset {
+				// 已经提交过的偏移，忽略重复确认
+				continue
+			}
+			if _, ok := pending[partition]; !ok {
+				pending[partition] = make(map[int64]ackResult)
+			}
+			pending[partition][ack.message.Offset] = ack
+			for {
+				expected := state.nextOffset
+				ready, ok := pending[partition][expected]
+				if !ok {
+					break
+				}
+				if err := c.commitWithRetry(ctx, ready.message, ready.workerID); err != nil {
+					log.Errorf("Fetcher: 提交偏移失败 partition=%d offset=%d err=%v", partition, ready.message.Offset, err)
+					break
+				}
+				delete(pending[partition], expected)
+				state.nextOffset = expected + 1
+			}
+		}
+	}()
 
 	// fetcher: 负责从 Kafka 拉取消息，并在 worker 处理完成后提交偏移量
 	fetchLoopDone := make(chan struct{})
@@ -210,6 +263,7 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 
 		// 单独的批处理队列 (用于批量DB写) — 由一个轻量 goroutine 管理定时刷新
 		batchCh := make(chan batchItem, 4096) // 批量通道容量提升
+		defer close(batchCh)
 
 		// 批量缓冲与提交 goroutine
 		go func() {
@@ -284,9 +338,6 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 			}
 		}()
 
-		// ====== 消费速率统计相关变量 ======
-		var consumeCount int64 = 0
-
 		for {
 			select {
 			case <-ctx.Done():
@@ -299,7 +350,7 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 			lag := stats.Lag
 			if lag == 0 {
 				select {
-				case <-time.After(100 * time.Millisecond):
+				case <-time.After(5 * time.Millisecond):
 				case <-ctx.Done():
 					return
 				}
@@ -339,7 +390,7 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 			}
 
 			// dispatch to worker
-			j := &job{msg: msg, done: make(chan error, 1), workerID: nextWorker}
+			j := &job{msg: msg, workerID: nextWorker}
 			// ...existing code... // 移除队列长度监控，确保无限流
 			select {
 			case jobs <- j:
@@ -365,24 +416,8 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 			}
 
 			// round-robin
-			nextWorker = (nextWorker + 1) % workerCount
+			nextWorker = (nextWorker + 1) % actualWorkerCount
 
-			// 等待 worker 完成处理
-			procErr := <-j.done
-			if procErr != nil {
-				log.Warnf("Fetcher: message processing failed (worker=%d): %v", j.workerID, procErr)
-				// 处理失败，不提交偏移量（与之前行为一致），继续下一个消息
-				continue
-			}
-
-			// 处理成功后提交偏移
-			if err := c.commitWithRetry(ctx, msg, j.workerID); err != nil {
-				log.Errorf("Fetcher: 提交偏移失败: %v", err)
-				// 提交失败则不阻塞 fetcher，继续下一条（commitWithRetry 内部已做重试）
-			}
-
-			// 消费速率统计：每处理一条消息计数+1
-			consumeCount++
 		}
 	}()
 
@@ -393,6 +428,8 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 	<-fetchLoopDone
 	close(jobs)
 	workerWg.Wait()
+	close(acks)
+	commitWg.Wait()
 }
 
 // 消息调度 - 已弃用

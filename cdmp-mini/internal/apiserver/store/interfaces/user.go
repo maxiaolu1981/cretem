@@ -17,6 +17,7 @@ type UserStore interface {
 	Get(ctx context.Context, username string, opts metav1.GetOptions, opt *options.Options) (*v1.User, error)
 	GetByEmail(ctx context.Context, email string, opt *options.Options) (*v1.User, error)
 	GetByPhone(ctx context.Context, phone string, opt *options.Options) (*v1.User, error)
+	PreflightConflicts(ctx context.Context, username, email, phone string, opt *options.Options) (map[string]*v1.User, error)
 	List(ctx context.Context, username string, opts metav1.ListOptions, opt *options.Options) (*v1.UserList, error)
 	ListAllUsernames(ctx context.Context) ([]string, error)
 	ListAll(ctx context.Context, username string) (*v1.UserList, error)
