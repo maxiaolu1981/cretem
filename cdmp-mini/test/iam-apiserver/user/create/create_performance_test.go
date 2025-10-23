@@ -1486,8 +1486,8 @@ func TestCreatePerformance(t *testing.T) {
 	scenarios := []performanceScenario{
 		//baselineSerialScenario(),
 		//baselineConcurrentScenario(),
-		//baselineSustainedScenario(),
-		stressSpikeScenario(),
+		baselineSustainedScenario(),
+		//stressSpikeScenario(),
 		//	stressRampScenario(),
 		//	stressDestructiveScenario(),
 		//	specializedDBPoolScenario(),

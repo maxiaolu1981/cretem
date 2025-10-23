@@ -155,13 +155,13 @@ func NewMySQLOptions() *MySQLOptions {
 		Database:      "iam",
 
 		// 连接池优化
-		MaxIdleConnections: 200,              // 增加到200个空闲连接
-		MaxOpenConnections: 380,              // 增加到380个最大连接
-		ConnMaxLifetime:    30 * time.Minute, // 缩短到30分钟，促进连接轮换
-		ConnMaxIdleTime:    10 * time.Minute, // 空闲1分钟释放
-		ReadTimeout:        3 * time.Second,  // 读超时
-		WriteTimeout:       3 * time.Second,  // 写超时
-		DialTimeout:        2 * time.Second,  // 连接建立超时
+		MaxIdleConnections: 200,             // 增加到200个空闲连接
+		MaxOpenConnections: 500,             // 增加到500个最大连接
+		ConnMaxLifetime:    5 * time.Minute, // 缩短到5分钟，促进连接轮换
+		ConnMaxIdleTime:    2 * time.Minute, // 空闲2分钟释放
+		ReadTimeout:        3 * time.Second, // 读超时
+		WriteTimeout:       3 * time.Second, // 写超时
+		DialTimeout:        2 * time.Second, // 连接建立超时
 
 		// 性能监控
 		LogLevel:           1,                      // 开启慢查询日志

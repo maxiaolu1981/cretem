@@ -1228,7 +1228,7 @@ func (c *UserConsumer) setUserCache(ctx context.Context, user *v1.User, previous
 	c.clearNegativeCache(ctx, user.Name)
 
 	cacheKey := usercache.UserKey(user.Name)
-	data, err := json.Marshal(user)
+	data, err := usercache.Marshal(user)
 	if err != nil {
 		operationErr = err
 		return err

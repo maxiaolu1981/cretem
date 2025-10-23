@@ -77,9 +77,25 @@ func (u *Users) executeSingleGet(ctx context.Context, username string) (*v1.User
 	//start := time.Now()
 	user := &v1.User{}
 	// 先查询用户是否存在（不管状态）
+	columns := []string{
+		"id",
+		"instanceID",
+		"name",
+		"status",
+		"nickname",
+		"email",
+		"phone",
+		"isAdmin",
+		"password",
+		"loginedAt",
+		"createdAt",
+		"updatedAt",
+		"extendShadow",
+	}
 	err := u.db.WithContext(ctx).
+		Select(columns).
 		Where("name = ?", username).
-		First(user).Error
+		Take(user).Error
 
 	// 记录数据库查询指标
 	//metrics.RecordDatabaseQuery("get", "user", float64(duration), nil)

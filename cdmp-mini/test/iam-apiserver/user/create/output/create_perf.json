@@ -1,39 +1,39 @@
 [
   {
-    "scenario": "stress/stress_spike",
-    "requests": 4096,
+    "scenario": "baseline/baseline_sustained",
+    "requests": 4785,
     "success_rate": 1,
     "error_rate": 0,
-    "duration_ms": 6532,
-    "qps": 627.0497623903696,
+    "duration_ms": 32764,
+    "qps": 146.04384968576795,
     "error_count": 0,
-    "success_count": 4096,
+    "success_count": 4785,
     "latency": {
-      "min_ms": 43.005124,
-      "max_ms": 1576.889287,
-      "avg_ms": 337.859572,
-      "p50_ms": 295.083381,
-      "p90_ms": 607.085441,
-      "p95_ms": 681.152785,
-      "p99_ms": 851.510284
+      "min_ms": 9.564567,
+      "max_ms": 1217.010779,
+      "avg_ms": 202.407789,
+      "p50_ms": 144.059619,
+      "p90_ms": 422.21636,
+      "p95_ms": 518.847507,
+      "p99_ms": 704.035633
     },
     "counters": {
       "cache_checks": 0,
       "cache_hits": 0,
       "degraded": 0,
-      "peak_concurrency": 256,
+      "peak_concurrency": 32,
       "stages": 1
     },
     "notes": [
-      "峰值流量测试 - 短时间内突发高并发",
-      "Load pattern=spike",
-      "TPS 627.05 below aspiration 800.00",
-      "突发负载集中在单阶段",
-      "username distribution: len_12=1365, len_28=1365, len_45=1366",
-      "password distribution: complex=2048, simple=2048",
-      "email distribution: corp.internal=1365, custom-domain.test=1366, example.com=1365",
-      "phone distribution: domestic=2048, international=2048",
-      "TPS=627.05"
+      "持续负载测试 - 长时间运行检测内存泄漏",
+      "Load pattern=uniform",
+      "持续负载周期约30s，用于观察内存与资源走势",
+      "取消ThinkTime，关注高并发持续压力下的稳定性",
+      "username distribution: len_12=1595, len_28=1595, len_45=1595",
+      "password distribution: complex=2393, simple=2392",
+      "email distribution: corp.internal=1595, custom-domain.test=1595, example.com=1595",
+      "phone distribution: domestic=2392, international=2393",
+      "TPS=146.04"
     ]
   }
 ]

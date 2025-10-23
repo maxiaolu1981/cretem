@@ -83,6 +83,17 @@ type contextKey string
 
 const forceCacheRefreshKey contextKey = "user.forceCacheRefresh"
 
+// pendingMarkerPayload uses a concrete struct so JSON encoding avoids map-based reflection overhead.
+type pendingMarkerPayload struct {
+	Status          string `json:"status"`
+	Username        string `json:"username"`
+	Timestamp       string `json:"timestamp"`
+	RequestID       string `json:"request_id,omitempty"`
+	Operator        string `json:"operator,omitempty"`
+	ClientIP        string `json:"client_ip,omitempty"`
+	LegacyRequestID string `json:"legacy_request_id,omitempty"`
+}
+
 // WithForceCacheRefresh 标记当前请求需要绕过负缓存/黑名单哨兵。
 func WithForceCacheRefresh(ctx context.Context) context.Context {
 	if ctx == nil {
@@ -184,33 +195,28 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 		return nil, false, err
 	}
 
-	// 初始化完整的 User 对象
-	user := v1.User{
-		ObjectMeta: metav1.ObjectMeta{},
-	}
-
+	var result *v1.User
 	switch data {
 	case RATE_LIMIT_PREVENTION:
-		user.ObjectMeta.Name = RATE_LIMIT_PREVENTION
-		user.Status = -1
+		result = &v1.User{ObjectMeta: metav1.ObjectMeta{Name: RATE_LIMIT_PREVENTION}, Status: -1}
 		cacheHit = true
 	case BLACKLIST_SENTINEL:
-		user.ObjectMeta.Name = BLACKLIST_SENTINEL
-		user.Status = -2
+		result = &v1.User{ObjectMeta: metav1.ObjectMeta{Name: BLACKLIST_SENTINEL}, Status: -2}
 		cacheHit = true
 	default:
-		if err := json.Unmarshal([]byte(data), &user); err != nil {
-			operationErr = err
+		decoded, decodeErr := usercache.Unmarshal([]byte(data))
+		if decodeErr != nil {
+			operationErr = decodeErr
 			return nil, false, errors.WithCode(code.ErrDecodingFailed, "数据解码失败")
 		}
+		if decoded == nil {
+			return nil, true, errors.New("无效的用户数据")
+		}
+		result = decoded
 		cacheHit = true
 	}
 
-	// 确保返回的对象是有效的
-	if user.Name == "" {
-		return nil, cacheHit, errors.New("无效的用户数据")
-	}
-	return &user, cacheHit, nil
+	return result, cacheHit, nil
 }
 
 // getUserFromDBAndSetCache 带缓存的用户查询核心逻辑
@@ -247,10 +253,10 @@ func (u *UserService) setUserCache(ctx context.Context, username string, user *v
 	var operationErr error
 
 	defer func() {
-		metrics.RecordRedisOperation("set", float64(time.Since(startTime).Seconds()), operationErr)
+		metrics.RecordRedisOperation("set", time.Since(startTime).Seconds(), operationErr)
 	}()
 
-	data, err := json.Marshal(user)
+	data, err := usercache.Marshal(user)
 	if err != nil {
 		operationErr = err
 		log.L(ctx).Errorf("用户数据序列化失败", "error", err.Error())
@@ -415,26 +421,26 @@ func (u *UserService) pendingCreateTTL() time.Duration {
 
 func (u *UserService) pendingCreatePayload(ctx context.Context, username string) string {
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
-	payload := map[string]any{
-		"status":    "pending",
-		"username":  username,
-		"timestamp": timestamp,
+	payload := pendingMarkerPayload{
+		Status:    "pending",
+		Username:  username,
+		Timestamp: timestamp,
 	}
 	if traceCtx := trace.FromContext(ctx); traceCtx != nil {
 		if requestID := traceCtx.RequestContext.RequestID; requestID != "" {
-			payload["request_id"] = requestID
+			payload.RequestID = requestID
 		}
 		if operator := traceCtx.RequestContext.Operator; operator != "" {
-			payload["operator"] = operator
+			payload.Operator = operator
 		}
 		if clientIP := traceCtx.RequestContext.ClientIP; clientIP != "" {
-			payload["client_ip"] = clientIP
+			payload.ClientIP = clientIP
 		}
 	}
 	if legacyID := ctx.Value("requestID"); legacyID != nil {
-		payload["legacy_request_id"] = fmt.Sprint(legacyID)
+		payload.LegacyRequestID = fmt.Sprint(legacyID)
 	}
-	data, err := json.Marshal(payload)
+	data, err := json.Marshal(&payload)
 	if err != nil {
 		log.Warnw("构造用户创建幂等标记payload失败，降级为时间戳", "username", username, "error", err)
 		return timestamp

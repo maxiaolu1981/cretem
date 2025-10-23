@@ -251,3 +251,54 @@ func (p *UserProducer) handleErrors() {
 所以创建继续走“缓存优先+必要时回源”，删除在找不到的时候会多查一遍数据库（因为 forceRefresh=true 触发强制刷新），避免被负缓存或黑名单挡住。
 
 GPT-5-Codex (Preview) •
+可以的，GOCPUPROFILE 生成的 CPU profile 正是定位当前性能瓶颈最直接的抓手之一。建议按下面的节奏操作：
+
+先用真实的压测或重现步骤跑 ./bin/iam-apiserver，设置 GOCPUPROFILE=/path/to/web.pprof，让它实际处理一段时间的流量后用 Ctrl+C 正常退出，确认 profile 文件写出。
+用 go tool pprof ./bin/iam-apiserver /path/to/web.pprof 进入交互界面；先看 top/top10 输出，确定最耗 CPU 的函数、包，是否集中在 Redis 访问、JSON 序列化、锁竞争等热点。
+根据热点进一步用 list 函数名 或 web/dot（需要 graphviz）查看调用关系，确认耗时是否集中在你怀疑的幂等校验、pending marker 逻辑或其他新改动附近。
+如果热点落在调度或 runtime，说明可能是 goroutine 饥饿/锁竞争；若落在 I/O 包装，提示 CPU 忙在数据拷贝或 gzip、加密等开销，可结合 trace/metrics 交叉验证。
+Profile 只代表那个采样窗口的 CPU 使用，要保证采样时确实处于性能问题复现状态；如果问题主要是等待外部资源（例如 Redis 慢），CPU profile 里可能表现为大量 idle，这时需要同时结合已加的 Redis 指标、慢日志分析。
+如需要我帮忙解读 profile 里的具体函数或生成可视化报表，把 web.pprof 路径告诉我即可。下一步建议先跑一次 profile，把 go tool pprof 的 top 结果贴出来，我们再一起看。
+Go 1.25 已经移除了对 GOCPUPROFILE 环境变量的支持，所以无论是跑 iam-apiserver 还是 go test，都不会再自动生成 web.pprof（我也用一个最小 demo 验证过，GOCPUPROFILE=/path go run . 同样不会写文件；grep 了当前 GOROOT/src/runtime，已经找不到任何 GOCPUPROFILE 的处理逻辑）。这也是你 Ctrl+C 后始终拿不到 profile 的根本原因。
+
+直接改用内置的 pprof 接口即可得到同样的 CPU profile，步骤如下：
+
+正常启动 ./cdmp-mini/bin/iam-apiserver --log.level debug（不需要再设置 GOCPUPROFILE）。
+复现压测（go test -v -run TestCreatePerformance -timeout 1000m 目前会因为连不上 192.168.10.8:8088 很快失败，得先把压测目标的服务地址打通或改成本机）。
+在服务仍然运行时，用 go tool pprof -proto <http://127.0.0.1:8088/debug/pprof/profile?seconds=60> > cdmp-mini/web.pprof 拉取 60 秒的 CPU profile；这个命令会直接把 pprof 的二进制数据落盘，文件就可以通过 go tool pprof ./cdmp-mini/bin/iam-apiserver cdmp-mini/web.pprof 继续分析，top, list, web 等操作都能用。
+如果你更习惯 curl，也可以 curl -o cdmp-mini/web.pprof "<http://127.0.0.1:8088/debug/pprof/profile?seconds=60"，效果相同。>
+因为压测命令目前无法连到 192.168.10.8:8088，建议先处理测试环境连通性，再跑压测并同时收集 profile。接下来可选的动作：
+
+恢复或改写压测目标地址，让 TestCreatePerformance 能跑完整链路。
+跑完压测后，用上述 go tool pprof 命令拉取 web.pprof，然后查看 top/list 等热点函数。
+结合你已经加的 Redis 指标和 trace，把 CPU hotspot 与慢点对齐验证。
+有其它 profiling 需求（堆、阻塞、goroutine 等）也可以用 /debug/pprof/heap、block、goroutine 同样方式抓取。
+
+GPT-5-Codex (Preview) • 1x
+
+Summarizing heap profile suggestions
+内存剖析要点
+
+reflect.New、database/sql.convertAssignRows 占比最高，说明当前 sql.Rows.Scan 过程中频繁走反射。优先把数据访问层改成返回精简字段并直接扫描到强类型结构体，例如在 cdmp-mini/internal/apiserver/store/mysql/user/mysql.go（假设持久层在此）里把 SELECT *改成只取 id,name,email,phone 等真正需要的列，同时用 Scan(&u.ID, &u.Name, …)，避免 map[string]any 或 []byte → interface{} 的二次转换。
+对历史字段很大的表，确认缓存中是否写入完整 JSON。可在 user_service.go 的 setUserCache 或 usercache 包里裁剪缓存模型，仅保留接口需要的字段，并评估是否需要压缩或拆分。
+encoding/json.Unmarshal 占比 7%+，主要来自 Redis/消息消费场景。若对象结构稳定，可以引入预分配 []byte 池或使用 jsoniter.ConfigFastest 等兼容库，在 pkg/trace、usercache 相关逻辑中替换标准库，减少 decodeState 分配。
+Redis 栈 (Set、withConn、NewStatusCmd) 表示频繁构造命令对象。现已降低 pending marker 的 JSON 反射成本，但仍建议检查 storage/redis_cluster.go 的 SetKey 是否能重用 []byte 或使用 SetArgs，并确认是否存在重复写入。
+github.com/go-playground/universal-translator.(*translator).Add 出现在热点，意味着每次请求都在初始化国际化翻译器。确认 validator 初始化是否放在 init/单例中，避免在 UserConsumer 或 Handler 里重复构造。
+后续建议执行：
+
+优化 SQL 查询与扫描路径，复测 create 压测并重新采集 heap profile。
+审核缓存/消息载荷，确保只存必要字段。
+若替换 JSON 库，针对关键路径写基准测试确认改动收益。
+改动思路
+
+收紧 MySQL 查询：在 user_store.go 的 executeSingleGet 里显式列出所需字段，只取 id、name、email 等最小列集合。这样 database/sql 不再搬运整行大对象，可显著压低 convertAssignRows 和 reflect.New 的分配热点。
+精简缓存载荷：新增 payload.go 提供 Payload 结构体及 Marshal/Unmarshal，user_service.go、consumer.go、retry_consumer.go 都改用这套助手，把 Redis 中的用户缓存从完整 v1.User 缩成轻量 JSON。既减少 marshal/unmarshal 的反射开销，也降低 Redis 存储体积。
+统一序列化路径：批量替换缓存写入点的 json.Marshal(user)→usercache.Marshal(user)，并用同一套 usercache.Unmarshal 读取，避免多处分散维护，减小回归风险。
+调优原理
+
+减少反射热点：pprof 中 reflect.New、encoding/json.Unmarshal 占比高，核心原因是频繁处理 map/空接口。通过结构体序列化和裁剪字段，能让编译期就确定布局，显著降低反射分配。
+削减数据复制：MySQL 查询改成精确列，阻止 convertAssignRows 为无用列生成临时切片或字符串；Redis 缓存只写关键字段，减少网络和内存传输量。
+统一缓存格式：所有消费者持续写入同一种精简格式，避免不同路径写入大对象造成单点回退。
+验证
+
+go test ./internal/apiserver/service/v1/user 已通过。建议结合新配置再跑一次 create 压测，关注 reflect.New、database/sql 的堆占用是否回落，并对比 create_perf.json 的尾延时线形。

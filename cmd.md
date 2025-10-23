@@ -83,3 +83,7 @@ cd /home/mxl/cretem/cretem/log && python3 - <<'PY'
 > PY
 SET GLOBAL slow_query_log = 'ON';
 SET GLOBAL long_query_time = 0.05;  -- 单位秒，按需要调整
+
+go test -v -run TestCreatePerformance -timeout 1000m ./...
+pgrep -f iam-apiserver
+find . -maxdepth 2 -name 'web.pprof'

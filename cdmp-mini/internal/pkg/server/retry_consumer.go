@@ -578,10 +578,10 @@ func (rc *RetryConsumer) setUserCache(ctx context.Context, user *v1.User, previo
 	startTime := time.Now()
 	var operationErr error
 	defer func() {
-		metrics.RecordRedisOperation("set", float64(time.Since(startTime).Seconds()), operationErr)
+		metrics.RecordRedisOperation("set", time.Since(startTime).Seconds(), operationErr)
 	}()
 	cacheKey := usercache.UserKey(user.Name)
-	data, err := json.Marshal(user)
+	data, err := usercache.Marshal(user)
 	if err != nil {
 		operationErr = err
 		log.L(ctx).Errorw("用户数据序列化失败", "username", user.Name, "error", err)
