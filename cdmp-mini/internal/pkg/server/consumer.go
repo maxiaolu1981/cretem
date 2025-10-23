@@ -3,7 +3,7 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	stderrs "errors"
 	"fmt"
 	"strconv"
@@ -13,9 +13,11 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/go-sql-driver/mysql"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 
+	"github.com/jmoiron/sqlx"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
@@ -32,6 +34,7 @@ import (
 type UserConsumer struct {
 	reader     *kafka.Reader
 	db         *gorm.DB
+	sqlxDB     *sqlx.DB
 	redis      *storage.RedisCluster
 	producer   *UserProducer
 	topic      string
@@ -43,7 +46,25 @@ type UserConsumer struct {
 	isMaster bool
 }
 
+type deleteMessage struct {
+	Username  string `json:"username"`
+	DeletedAt string `json:"deleted_at"`
+}
+
 const cacheNullSentinel = "rate_limit_prevention"
+
+var (
+	userMessagePool = sync.Pool{
+		New: func() interface{} {
+			return &v1.User{}
+		},
+	}
+	deleteMessagePool = sync.Pool{
+		New: func() interface{} {
+			return &deleteMessage{}
+		},
+	}
+)
 
 func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
 	consumer := &UserConsumer{
@@ -74,9 +95,29 @@ func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm
 		// 新增：实例ID赋值
 		instanceID: parseInstanceID(opts.InstanceID),
 	}
+	if sqlCore, err := db.DB(); err != nil {
+		log.Errorf("initialize sqlx db failed: %v", err)
+	} else {
+		consumer.sqlxDB = sqlx.NewDb(sqlCore, "mysql").Unsafe()
+	}
 	//go consumer.startLagMonitor(context.Background())
 	return consumer
 
+}
+
+func (c *UserConsumer) ensureSQLX() (*sqlx.DB, error) {
+	if c.sqlxDB != nil {
+		return c.sqlxDB, nil
+	}
+	if c.db == nil {
+		return nil, fmt.Errorf("gorm db not initialized")
+	}
+	sqlCore, err := c.db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("acquire sql core failed: %w", err)
+	}
+	c.sqlxDB = sqlx.NewDb(sqlCore, "mysql").Unsafe()
+	return c.sqlxDB, nil
 }
 
 // parseInstanceID 支持 string->int 转换，若失败则用 hash 兜底
@@ -365,7 +406,7 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 				if fetchErr == nil {
 					break
 				}
-				if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
+				if stderrs.Is(fetchErr, context.Canceled) || stderrs.Is(fetchErr, context.DeadlineExceeded) {
 					log.Warnf("Fetcher: 上下文已取消，停止获取消息")
 					return
 				}
@@ -491,8 +532,13 @@ func (c *UserConsumer) processMessage(ctx context.Context, msg kafka.Message) er
 }
 
 func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Message) error {
-	var user v1.User
-	if err := json.Unmarshal(msg.Value, &user); err != nil {
+	user := userMessagePool.Get().(*v1.User)
+	defer func() {
+		*user = v1.User{}
+		userMessagePool.Put(user)
+	}()
+
+	if err := jsonCodec.Unmarshal(msg.Value, user); err != nil {
 		return err
 	}
 	if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
@@ -500,7 +546,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	}
 	user.Email = usercache.NormalizeEmail(user.Email)
 	user.Phone = usercache.NormalizePhone(user.Phone)
-	ensureUserInstanceID(&user)
+	ensureUserInstanceID(user)
 
 	pendingStart := time.Now()
 	markerCtx, markerSpan := trace.StartSpan(ctx, "kafka-consumer", "pending_marker_verify")
@@ -561,7 +607,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	persistStart := time.Now()
 	persistCtx, persistSpan := trace.StartSpan(ctx, "kafka-consumer", "persist_user")
 	trace.AddRequestTag(persistCtx, "username", user.Name)
-	created, err := c.createUserInDB(persistCtx, &user)
+	created, err := c.createUserInDB(persistCtx, user)
 	persistDuration := time.Since(persistStart)
 	persistStatus := "success"
 	persistCode := strconv.Itoa(code.ErrSuccess)
@@ -584,7 +630,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 	trace.AddRequestTag(ctx, "create_db_inserted", created)
 
 	if created {
-		if err := c.setUserCache(ctx, &user, nil); err != nil {
+		if err := c.setUserCache(ctx, user, nil); err != nil {
 			log.Warnf("用户创建成功但缓存设置失败: username=%s, error=%v", user.Name, err)
 		}
 	} else {
@@ -630,13 +676,14 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 
 // 删除
 func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Message) error {
+	deleteRequest := deleteMessagePool.Get().(*deleteMessage)
+	defer func() {
+		deleteRequest.Username = ""
+		deleteRequest.DeletedAt = ""
+		deleteMessagePool.Put(deleteRequest)
+	}()
 
-	var deleteRequest struct {
-		Username  string `json:"username"`
-		DeletedAt string `json:"deleted_at"`
-	}
-
-	if err := json.Unmarshal(msg.Value, &deleteRequest); err != nil {
+	if err := jsonCodec.Unmarshal(msg.Value, deleteRequest); err != nil {
 		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
 	}
 
@@ -651,17 +698,13 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 		}
 	}
 	if deleteRequest.Username != "" {
-		var existing v1.User
-		if err := c.db.WithContext(ctx).
-			Where("name = ?", deleteRequest.Username).
-			First(&existing).Error; err != nil {
-			if err != gorm.ErrRecordNotFound {
-				return c.sendToRetry(ctx, msg, "查询用户失败: "+err.Error())
-			}
-		} else {
-			userID = existing.ID
-			existingCopy := existing
-			existingSnapshot = &existingCopy
+		snapshot, err := c.loadUserSnapshot(ctx, deleteRequest.Username)
+		if err != nil {
+			return c.sendToRetry(ctx, msg, "查询用户失败: "+err.Error())
+		}
+		if snapshot != nil {
+			userID = snapshot.ID
+			existingSnapshot = snapshot
 		}
 	}
 
@@ -685,8 +728,13 @@ func (c *UserConsumer) processDeleteOperation(ctx context.Context, msg kafka.Mes
 }
 
 func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Message) error {
-	var user v1.User
-	if err := json.Unmarshal(msg.Value, &user); err != nil {
+	user := userMessagePool.Get().(*v1.User)
+	defer func() {
+		*user = v1.User{}
+		userMessagePool.Put(user)
+	}()
+
+	if err := jsonCodec.Unmarshal(msg.Value, user); err != nil {
 		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
 	}
 	if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
@@ -695,27 +743,26 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 	user.Email = usercache.NormalizeEmail(user.Email)
 	user.Phone = usercache.NormalizePhone(user.Phone)
 
-	var existingSnapshot *v1.User
-	var existing v1.User
-	if err := c.db.WithContext(ctx).
-		Where("name = ?", user.Name).
-		First(&existing).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
+	existingSnapshot, err := c.loadUserSnapshot(ctx, user.Name)
+	if err != nil {
+		if stderrs.Is(err, sql.ErrNoRows) || stderrs.Is(err, gorm.ErrRecordNotFound) {
 			return c.sendToDeadLetter(ctx, msg, "UPDATE_TARGET_NOT_FOUND: "+user.Name)
 		}
 		return c.sendToRetry(ctx, msg, "查询用户失败: "+err.Error())
 	}
-	existingCopy := existing
-	existingSnapshot = &existingCopy
+	if existingSnapshot == nil {
+		return c.sendToDeadLetter(ctx, msg, "UPDATE_TARGET_NOT_FOUND: "+user.Name)
+	}
+	existing := *existingSnapshot
 	if strings.TrimSpace(user.InstanceID) == "" {
 		user.InstanceID = existing.InstanceID
 	}
 
-	if err := c.updateUserInDB(ctx, &user); err != nil {
+	if err := c.updateUserInDB(ctx, user); err != nil {
 		return c.sendToRetry(ctx, msg, "更新用户失败: "+err.Error())
 	}
 
-	if err := c.setUserCache(ctx, &user, existingSnapshot); err != nil {
+	if err := c.setUserCache(ctx, user, existingSnapshot); err != nil {
 		log.Warnf("用户更新成功但缓存刷新失败: username=%s err=%v", user.Name, err)
 	}
 
@@ -730,20 +777,44 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) (bool,
 	user.CreatedAt = now
 	user.UpdatedAt = now
 
-	// 注意：这里直接使用 c.db，在集群模式下这是主库连接
-	// 在单机模式下这是唯一数据库连接
-	builder := c.db.WithContext(ctx)
-	if strings.TrimSpace(user.Phone) == "" {
-		builder = builder.Omit("phone")
+	if strings.TrimSpace(user.ExtendShadow) == "" {
+		user.ExtendShadow = user.Extend.String()
 	}
-	if err := builder.Create(user).Error; err != nil {
 
+	db, err := c.ensureSQLX()
+	if err != nil {
+		return false, fmt.Errorf("获取数据库连接失败: %w", err)
+	}
+
+	var phoneValue interface{}
+	if trimmed := strings.TrimSpace(user.Phone); trimmed != "" {
+		phoneValue = trimmed
+	}
+
+	res, err := db.ExecContext(ctx,
+		"INSERT INTO `user` (instanceID, name, nickname, password, email, phone, status, isAdmin, extendShadow, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		user.InstanceID,
+		user.Name,
+		user.Nickname,
+		user.Password,
+		user.Email,
+		phoneValue,
+		user.Status,
+		user.IsAdmin,
+		user.ExtendShadow,
+		now,
+		now,
+	)
+	if err != nil {
 		if isDuplicateKeyDBError(err) {
 			log.Warnf("忽略重复用户插入: username=%s err=%v", user.Name, err)
 			return false, nil
 		}
-		//	metrics.DatabaseQueryErrors.WithLabelValues("create", "users", getErrorType(err)).Inc()
 		return false, fmt.Errorf("数据创建失败: %w", err)
+	}
+
+	if insertedID, idErr := res.LastInsertId(); idErr == nil && insertedID > 0 {
+		user.ID = uint64(insertedID)
 	}
 
 	return true, nil
@@ -755,18 +826,63 @@ func (c *UserConsumer) loadUserSnapshot(ctx context.Context, username string) (*
 	if trimmed == "" {
 		return nil, nil
 	}
-	var existing v1.User
-	err := c.db.WithContext(ctx).
-		Where("name = ?", trimmed).
-		First(&existing).Error
+	db, err := c.ensureSQLX()
 	if err != nil {
-		if stderrs.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("获取数据库连接失败: %w", err)
+	}
+
+	var row struct {
+		ID           uint64         `db:"id"`
+		InstanceID   string         `db:"instanceID"`
+		Name         string         `db:"name"`
+		Nickname     string         `db:"nickname"`
+		Password     string         `db:"password"`
+		Email        sql.NullString `db:"email"`
+		Phone        sql.NullString `db:"phone"`
+		Status       int            `db:"status"`
+		IsAdmin      int            `db:"isAdmin"`
+		ExtendShadow sql.NullString `db:"extendShadow"`
+		CreatedAt    time.Time      `db:"createdAt"`
+		UpdatedAt    time.Time      `db:"updatedAt"`
+	}
+
+	const query = "SELECT id, instanceID, name, nickname, password, email, phone, status, isAdmin, extendShadow, createdAt, updatedAt FROM `user` WHERE name = ? LIMIT 1"
+	if err := db.Unsafe().GetContext(ctx, &row, query, trimmed); err != nil {
+		if err == sql.ErrNoRows {
 			return nil, nil
 		}
 		return nil, err
 	}
+
+	existing := v1.User{}
+	existing.ID = row.ID
+	existing.InstanceID = row.InstanceID
+	existing.Name = row.Name
+	existing.Nickname = row.Nickname
+	existing.Password = row.Password
+	if row.Email.Valid {
+		existing.Email = row.Email.String
+	}
+	if row.Phone.Valid {
+		existing.Phone = row.Phone.String
+	}
+	existing.Status = row.Status
+	existing.IsAdmin = row.IsAdmin
+	existing.CreatedAt = row.CreatedAt
+	existing.UpdatedAt = row.UpdatedAt
+	if row.ExtendShadow.Valid {
+		existing.ExtendShadow = row.ExtendShadow.String
+		ext := make(metav1.Extend)
+		if err := jsonCodec.Unmarshal([]byte(row.ExtendShadow.String), &ext); err != nil {
+			log.Debugf("extendShadow 解码失败: %v", err)
+		} else {
+			existing.Extend = ext
+		}
+	}
+
 	existing.Email = usercache.NormalizeEmail(existing.Email)
 	existing.Phone = usercache.NormalizePhone(existing.Phone)
+
 	existingCopy := existing
 	return &existingCopy, nil
 }
@@ -920,14 +1036,23 @@ func ensureUserInstanceID(user *v1.User) {
 }
 
 func (c *UserConsumer) deleteUserFromDB(ctx context.Context, username string) error {
-	result := c.db.WithContext(ctx).
-		Where("name = ? ", username).
-		Delete(&v1.User{})
-	if result.Error != nil {
-		return result.Error
+	db, err := c.ensureSQLX()
+	if err != nil {
+		return fmt.Errorf("获取数据库连接失败: %w", err)
 	}
-	// 关键：检查实际影响行数
-	if result.RowsAffected == 0 {
+
+	res, execErr := db.ExecContext(ctx,
+		"DELETE FROM `user` WHERE name = ?",
+		username,
+	)
+	if execErr != nil {
+		return execErr
+	}
+	affected, affErr := res.RowsAffected()
+	if affErr != nil {
+		return affErr
+	}
+	if affected == 0 {
 		return errors.WithCode(code.ErrUserNotFound, "用户没有发现")
 	}
 	return nil
@@ -938,15 +1063,28 @@ func (c *UserConsumer) updateUserInDB(ctx context.Context, user *v1.User) error 
 	user.Email = usercache.NormalizeEmail(user.Email)
 	user.Phone = usercache.NormalizePhone(user.Phone)
 
-	if err := c.db.WithContext(ctx).Model(&v1.User{}).
-		Where("name = ?", user.Name).
-		Updates(map[string]interface{}{
-			"email":     user.Email,
-			"password":  user.Password,
-			"status":    user.Status,
-			"updatedAt": user.UpdatedAt,
-		}).Error; err != nil {
-		return fmt.Errorf("数据库更新失败: %v", err)
+	if strings.TrimSpace(user.ExtendShadow) == "" {
+		user.ExtendShadow = user.Extend.String()
+	}
+
+	db, err := c.ensureSQLX()
+	if err != nil {
+		return fmt.Errorf("获取数据库连接失败: %w", err)
+	}
+
+	_, execErr := db.ExecContext(ctx,
+		"UPDATE `user` SET email = ?, password = ?, status = ?, updatedAt = ?, extendShadow = ?, nickname = ?, phone = ? WHERE name = ?",
+		user.Email,
+		user.Password,
+		user.Status,
+		user.UpdatedAt,
+		user.ExtendShadow,
+		user.Nickname,
+		user.Phone,
+		user.Name,
+	)
+	if execErr != nil {
+		return fmt.Errorf("数据库更新失败: %w", execErr)
 	}
 	return nil
 }
@@ -1298,6 +1436,20 @@ func (c *UserConsumer) purgeUserState(ctx context.Context, username string, user
 
 }
 
+func buildPlaceholders(count int) string {
+	if count <= 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteByte('?')
+	}
+	return sb.String()
+}
+
 func (c *UserConsumer) evictContactCaches(ctx context.Context, previous *v1.User, current *v1.User) {
 	if previous == nil {
 		return
@@ -1325,15 +1477,18 @@ func (c *UserConsumer) writeContactCaches(ctx context.Context, user *v1.User) {
 	if user == nil {
 		return
 	}
+	var items []storage.KeyValueTTL
 	if key := usercache.EmailKey(user.Email); key != "" {
-		if err := c.redis.SetKey(ctx, key, user.Name, 24*time.Hour); err != nil {
-			log.Warnf("邮箱缓存写入失败: username=%s key=%s err=%v", user.Name, key, err)
-		}
+		items = append(items, storage.KeyValueTTL{Key: key, Value: user.Name, TTL: 24 * time.Hour})
 	}
 	if key := usercache.PhoneKey(user.Phone); key != "" {
-		if err := c.redis.SetKey(ctx, key, user.Name, 24*time.Hour); err != nil {
-			log.Warnf("手机号缓存写入失败: username=%s key=%s err=%v", user.Name, key, err)
-		}
+		items = append(items, storage.KeyValueTTL{Key: key, Value: user.Name, TTL: 24 * time.Hour})
+	}
+	if len(items) == 0 {
+		return
+	}
+	if err := c.redis.BatchSet(ctx, items); err != nil {
+		log.Warnf("批量写入联系缓存失败: username=%s err=%v", user.Name, err)
 	}
 }
 
@@ -1402,7 +1557,7 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 	)
 	for _, m := range msgs {
 		var u v1.User
-		if err := json.Unmarshal(m.Value, &u); err != nil {
+		if err := jsonCodec.Unmarshal(m.Value, &u); err != nil {
 			log.Errorf("批量创建: 反序列化失败: %v", err)
 			if c.producer != nil {
 				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
@@ -1424,14 +1579,6 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 		ensureUserInstanceID(&u)
 		users = append(users, u)
 		validMsgs = append(validMsgs, m)
-	}
-
-	usernames := make([]string, 0, len(msgs))
-	for _, m := range msgs {
-		var u v1.User
-		if err := json.Unmarshal(m.Value, &u); err == nil {
-			usernames = append(usernames, u.Name)
-		}
 	}
 
 	if len(users) == 0 {
@@ -1492,61 +1639,89 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 	var usernames []string
 	cleanupTargets := make(map[string]uint64)
 	snapshots := make(map[string]*v1.User)
+	var opErr error
 	for _, m := range msgs {
-		var deleteRequest struct {
-			Username  string `json:"username"`
-			DeletedAt string `json:"deleted_at"`
-		}
-		if err := json.Unmarshal(m.Value, &deleteRequest); err != nil {
+		deleteRequest := deleteMessagePool.Get().(*deleteMessage)
+		if err := jsonCodec.Unmarshal(m.Value, deleteRequest); err != nil {
 			log.Errorf("批量删除: 反序列化失败: %v", err)
 			if c.producer != nil {
 				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
 			}
+			deleteRequest.Username = ""
+			deleteRequest.DeletedAt = ""
+			deleteMessagePool.Put(deleteRequest)
 			continue
 		}
 		usernames = append(usernames, deleteRequest.Username)
+		deleteRequest.Username = ""
+		deleteRequest.DeletedAt = ""
+		deleteMessagePool.Put(deleteRequest)
 	}
 	if len(usernames) == 0 {
 		return
 	}
-	type userIdentifier struct {
-		ID    uint64
-		Name  string `gorm:"column:name"`
-		Email string `gorm:"column:email"`
-		Phone string `gorm:"column:phone"`
-	}
-	var identifiers []userIdentifier
-	if err := c.db.WithContext(ctx).
-		Model(&v1.User{}).
-		Select("id", "name", "email", "phone").
-		Where("name IN ?", usernames).
-		Find(&identifiers).Error; err != nil {
-		log.Warnf("批量删除前查询用户ID失败: %v", err)
-	} else {
-		for _, item := range identifiers {
-			cleanupTargets[item.Name] = item.ID
-			snapshots[item.Name] = &v1.User{
-				Email: item.Email,
-				Phone: item.Phone,
-			}
-		}
-	}
-	var opErr error
-	if err := c.db.WithContext(ctx).Where("name IN ?", usernames).Delete(&v1.User{}).Error; err != nil {
-		opErr = err
-		log.Errorf("批量删除用户失败: %v", err)
+	db, err := c.ensureSQLX()
+	if err != nil {
+		log.Errorf("批量删除获取数据库连接失败: %v", err)
 		metrics.BusinessFailures.WithLabelValues("consumer", "batch_delete", getErrorType(err)).Inc()
-		for _, m := range msgs {
-			if c.producer != nil {
-				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_DELETE_DB_ERROR: "+err.Error())
+		return
+	}
+
+	if len(usernames) > 0 {
+		placeholder := buildPlaceholders(len(usernames))
+		args := make([]interface{}, len(usernames))
+		for i := range usernames {
+			args[i] = usernames[i]
+		}
+
+		query := fmt.Sprintf("SELECT id, name, email, phone FROM `user` WHERE name IN (%s)", placeholder)
+		rows, queryErr := db.QueryContext(ctx, query, args...)
+		if queryErr != nil {
+			log.Warnf("批量删除前查询用户ID失败: %v", queryErr)
+		} else {
+			defer rows.Close()
+			for rows.Next() {
+				var (
+					id    uint64
+					name  string
+					email sql.NullString
+					phone sql.NullString
+				)
+				if scanErr := rows.Scan(&id, &name, &email, &phone); scanErr != nil {
+					log.Warnf("批量删除扫描行失败: %v", scanErr)
+					continue
+				}
+				cleanupTargets[name] = id
+				snapshots[name] = &v1.User{
+					Email: email.String,
+					Phone: phone.String,
+				}
 			}
 		}
-	} else {
-		metrics.BusinessSuccess.WithLabelValues("consumer", "batch_delete", "success").Inc()
 
-		// 批量删除缓存
-		for _, username := range usernames {
-			c.purgeUserState(ctx, username, cleanupTargets[username], snapshots[username])
+		deleteSQL := fmt.Sprintf("DELETE FROM `user` WHERE name IN (%s)", placeholder)
+		res, execErr := db.ExecContext(ctx, deleteSQL, args...)
+		if execErr != nil {
+			opErr = execErr
+			log.Errorf("批量删除用户失败: %v", execErr)
+			metrics.BusinessFailures.WithLabelValues("consumer", "batch_delete", getErrorType(execErr)).Inc()
+			for _, m := range msgs {
+				if c.producer != nil {
+					_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_DELETE_DB_ERROR: "+execErr.Error())
+				}
+			}
+		} else {
+			metrics.BusinessSuccess.WithLabelValues("consumer", "batch_delete", "success").Inc()
+			affected, affErr := res.RowsAffected()
+			if affErr != nil {
+				log.Warnf("批量删除获取影响行数失败: %v", affErr)
+			}
+			if affected == 0 {
+				log.Warnf("批量删除未影响任何行")
+			}
+			for _, username := range usernames {
+				c.purgeUserState(ctx, username, cleanupTargets[username], snapshots[username])
+			}
 		}
 	}
 	duration := time.Since(start).Seconds()
@@ -1587,11 +1762,19 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 	metrics.BusinessOperationsTotal.WithLabelValues("consumer", "batch_update", "kafka").Inc()
 	metrics.BusinessInProgress.WithLabelValues("consumer", "batch_update").Inc()
 	defer metrics.BusinessInProgress.WithLabelValues("consumer", "batch_update").Dec()
+	db, err := c.ensureSQLX()
+	if err != nil {
+		log.Errorf("批量更新获取数据库连接失败: %v", err)
+		return
+	}
+
 	var opErr error
 	var updatedCount int
+	updateSQL := "UPDATE `user` SET email = ?, password = ?, status = ?, updatedAt = ?, extendShadow = ?, nickname = ?, phone = ? WHERE name = ?"
+
 	for _, m := range msgs {
 		var u v1.User
-		if err := json.Unmarshal(m.Value, &u); err != nil {
+		if err := jsonCodec.Unmarshal(m.Value, &u); err != nil {
 			log.Errorf("批量更新: 反序列化失败: %v", err)
 			if c.producer != nil {
 				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
@@ -1605,20 +1788,16 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 			}
 			continue
 		}
+
 		u.Email = usercache.NormalizeEmail(u.Email)
 		u.Phone = usercache.NormalizePhone(u.Phone)
 		u.UpdatedAt = time.Now()
-		var existing v1.User
-		if err := c.db.WithContext(ctx).
-			Where("name = ?", u.Name).
-			First(&existing).Error; err != nil {
-			if err == gorm.ErrRecordNotFound {
-				log.Warnf("批量更新目标不存在: %s", u.Name)
-				if c.producer != nil {
-					_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UPDATE_TARGET_NOT_FOUND: "+u.Name)
-				}
-				continue
-			}
+		if strings.TrimSpace(u.ExtendShadow) == "" {
+			u.ExtendShadow = u.Extend.String()
+		}
+
+		existingSnapshot, err := c.loadUserSnapshot(ctx, u.Name)
+		if err != nil {
 			opErr = err
 			log.Errorf("批量更新前查询失败: %v, 用户: %s", err, u.Name)
 			metrics.BusinessFailures.WithLabelValues("consumer", "batch_update", getErrorType(err)).Inc()
@@ -1627,26 +1806,41 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 			}
 			continue
 		}
-		existingCopy := existing
-		if err := c.db.WithContext(ctx).Model(&v1.User{}).
-			Where("name = ?", u.Name).
-			Updates(map[string]interface{}{
-				"email":     u.Email,
-				"password":  u.Password,
-				"status":    u.Status,
-				"updatedAt": u.UpdatedAt,
-			}).Error; err != nil {
-			opErr = err
-			log.Errorf("批量更新失败: %v, 用户: %s", err, u.Name)
-			metrics.BusinessFailures.WithLabelValues("consumer", "batch_update", getErrorType(err)).Inc()
+		if existingSnapshot == nil {
+			log.Warnf("批量更新目标不存在: %s", u.Name)
 			if c.producer != nil {
-				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_UPDATE_DB_ERROR: "+err.Error())
+				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UPDATE_TARGET_NOT_FOUND: "+u.Name)
 			}
 			continue
 		}
+
+		var phoneValue interface{}
+		if trimmed := strings.TrimSpace(u.Phone); trimmed != "" {
+			phoneValue = trimmed
+		}
+
+		if _, execErr := db.ExecContext(ctx, updateSQL,
+			u.Email,
+			u.Password,
+			u.Status,
+			u.UpdatedAt,
+			u.ExtendShadow,
+			u.Nickname,
+			phoneValue,
+			u.Name,
+		); execErr != nil {
+			opErr = execErr
+			log.Errorf("批量更新失败: %v, 用户: %s", execErr, u.Name)
+			metrics.BusinessFailures.WithLabelValues("consumer", "batch_update", getErrorType(execErr)).Inc()
+			if c.producer != nil {
+				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_UPDATE_DB_ERROR: "+execErr.Error())
+			}
+			continue
+		}
+
 		updatedCount++
 		metrics.BusinessSuccess.WithLabelValues("consumer", "batch_update", "success").Inc()
-		_ = c.setUserCache(ctx, &u, &existingCopy)
+		_ = c.setUserCache(ctx, &u, existingSnapshot)
 	}
 	duration := time.Since(start).Seconds()
 	metrics.BusinessProcessingTime.WithLabelValues("consumer", "batch_update").Observe(duration)

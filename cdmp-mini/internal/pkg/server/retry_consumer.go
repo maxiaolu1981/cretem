@@ -3,7 +3,7 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"database/sql"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/jmoiron/sqlx"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
@@ -20,6 +22,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
+	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/segmentio/kafka-go"
 	"gorm.io/gorm"
 )
@@ -27,6 +30,7 @@ import (
 type RetryConsumer struct {
 	reader       *kafka.Reader
 	db           *gorm.DB
+	sqlxDB       *sqlx.DB
 	redis        *storage.RedisCluster
 	producer     *UserProducer
 	maxRetries   int
@@ -34,7 +38,7 @@ type RetryConsumer struct {
 }
 
 func NewRetryConsumer(db *gorm.DB, redis *storage.RedisCluster, producer *UserProducer, kafkaOptions *options.KafkaOptions, topic, groupid string) *RetryConsumer {
-	return &RetryConsumer{
+	rc := &RetryConsumer{
 		reader: kafka.NewReader(kafka.ReaderConfig{
 			Brokers:        kafkaOptions.Brokers,
 			Topic:          topic,
@@ -50,6 +54,83 @@ func NewRetryConsumer(db *gorm.DB, redis *storage.RedisCluster, producer *UserPr
 		maxRetries:   kafkaOptions.MaxRetries,
 		kafkaOptions: kafkaOptions,
 	}
+	if core, err := db.DB(); err != nil {
+		log.Errorf("retry consumer sqlx init failed: %v", err)
+	} else {
+		rc.sqlxDB = sqlx.NewDb(core, "mysql").Unsafe()
+	}
+	return rc
+}
+
+func (rc *RetryConsumer) ensureSQLX() (*sqlx.DB, error) {
+	if rc.sqlxDB != nil {
+		return rc.sqlxDB, nil
+	}
+	if rc.db == nil {
+		return nil, fmt.Errorf("gorm db not initialized")
+	}
+	core, err := rc.db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("acquire sql db failed: %w", err)
+	}
+	rc.sqlxDB = sqlx.NewDb(core, "mysql").Unsafe()
+	return rc.sqlxDB, nil
+}
+
+func (rc *RetryConsumer) loadUserSnapshot(ctx context.Context, username string) (*v1.User, error) {
+	trimmed := strings.TrimSpace(username)
+	if trimmed == "" {
+		return nil, nil
+	}
+	db, err := rc.ensureSQLX()
+	if err != nil {
+		return nil, err
+	}
+	const query = "SELECT id, instanceID, name, nickname, password, email, phone, status, isAdmin, extendShadow, createdAt, updatedAt FROM `user` WHERE name = ? LIMIT 1"
+	row := db.QueryRowContext(ctx, query, trimmed)
+	var (
+		id         uint64
+		instanceID string
+		name       string
+		nickname   string
+		password   string
+		emailRaw   sql.RawBytes
+		phoneRaw   sql.RawBytes
+		status     int
+		isAdmin    int
+		extendRaw  sql.RawBytes
+		createdAt  time.Time
+		updatedAt  time.Time
+	)
+	if err := row.Scan(&id, &instanceID, &name, &nickname, &password, &emailRaw, &phoneRaw, &status, &isAdmin, &extendRaw, &createdAt, &updatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	user := &v1.User{
+		ObjectMeta: metav1.ObjectMeta{
+			ID:         id,
+			InstanceID: instanceID,
+			Name:       name,
+			CreatedAt:  createdAt,
+			UpdatedAt:  updatedAt,
+		},
+		Nickname: nickname,
+		Password: password,
+		Status:   status,
+		IsAdmin:  isAdmin,
+	}
+	if emailRaw != nil {
+		user.Email = usercache.NormalizeEmail(string(emailRaw))
+	}
+	if phoneRaw != nil {
+		user.Phone = usercache.NormalizePhone(string(phoneRaw))
+	}
+	if extendRaw != nil {
+		user.ExtendShadow = string(extendRaw)
+	}
+	return user, nil
 }
 
 func (rc *RetryConsumer) Close() error {
@@ -216,8 +297,13 @@ func (rc *RetryConsumer) parseRetryHeaders(headers []kafka.Header) (int, time.Ti
 
 func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Message) error {
 	log.Debugf("开始处理重试创建消息: key=%s, headers=%+v", string(msg.Key), msg.Headers)
-	var user v1.User
-	if err := json.Unmarshal(msg.Value, &user); err != nil {
+	user := userMessagePool.Get().(*v1.User)
+	defer func() {
+		*user = v1.User{}
+		userMessagePool.Put(user)
+	}()
+
+	if err := jsonCodec.Unmarshal(msg.Value, user); err != nil {
 		log.Errorf("重试消息解析失败: %v, 原始消息: %s", err, string(msg.Value))
 		return rc.producer.SendToDeadLetterTopic(ctx, msg, "POISON_MESSAGE_IN_RETRY: "+err.Error())
 	}
@@ -243,18 +329,23 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 		}
 	}
 
-	if err := rc.createUserInDB(ctx, &user); err != nil {
+	if err := rc.createUserInDB(ctx, user); err != nil {
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "检查用户存在性失败: "+err.Error())
 	}
 
-	rc.setUserCache(ctx, &user, nil)
+	rc.setUserCache(ctx, user, nil)
 
 	return nil
 }
 
 func (rc *RetryConsumer) processRetryUpdate(ctx context.Context, msg kafka.Message) error {
-	var user v1.User
-	if err := json.Unmarshal(msg.Value, &user); err != nil {
+	user := userMessagePool.Get().(*v1.User)
+	defer func() {
+		*user = v1.User{}
+		userMessagePool.Put(user)
+	}()
+
+	if err := jsonCodec.Unmarshal(msg.Value, user); err != nil {
 		return rc.producer.SendToDeadLetterTopic(ctx, msg, "POISON_MESSAGE_IN_RETRY: "+err.Error())
 	}
 	user.Email = usercache.NormalizeEmail(user.Email)
@@ -271,24 +362,21 @@ func (rc *RetryConsumer) processRetryUpdate(ctx context.Context, msg kafka.Messa
 		time.Sleep(time.Until(nextRetryTime))
 	}
 
-	var existingSnapshot *v1.User
-	var existing v1.User
-	if err := rc.db.WithContext(ctx).
-		Where("name = ?", user.Name).
-		First(&existing).Error; err != nil {
-		if err == gorm.ErrRecordNotFound {
-			return rc.producer.SendToDeadLetterTopic(ctx, msg, "RETRY_UPDATE_TARGET_NOT_FOUND: "+user.Name)
-		}
+	existingSnapshot, err := rc.loadUserSnapshot(ctx, user.Name)
+	if err != nil {
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "查询用户失败: "+err.Error())
 	}
-	existingCopy := existing
+	if existingSnapshot == nil {
+		return rc.producer.SendToDeadLetterTopic(ctx, msg, "RETRY_UPDATE_TARGET_NOT_FOUND: "+user.Name)
+	}
+	existingCopy := *existingSnapshot
 	existingSnapshot = &existingCopy
 
-	if err := rc.updateUserInDB(ctx, &user); err != nil {
+	if err := rc.updateUserInDB(ctx, user); err != nil {
 		return rc.handleProcessingError(ctx, msg, currentRetryCount, "错误信息: "+err.Error())
 	}
 
-	rc.setUserCache(ctx, &user, existingSnapshot)
+	rc.setUserCache(ctx, user, existingSnapshot)
 
 	return nil
 }
@@ -296,12 +384,14 @@ func (rc *RetryConsumer) processRetryUpdate(ctx context.Context, msg kafka.Messa
 // internal/pkg/server/retry_consumer.go
 // 修改 processRetryDelete 方法
 func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Message) error {
-	var deleteRequest struct {
-		Username  string `json:"username"`
-		DeletedAt string `json:"deleted_at"`
-	}
+	deleteRequest := deleteMessagePool.Get().(*deleteMessage)
+	defer func() {
+		deleteRequest.Username = ""
+		deleteRequest.DeletedAt = ""
+		deleteMessagePool.Put(deleteRequest)
+	}()
 
-	if err := json.Unmarshal(msg.Value, &deleteRequest); err != nil {
+	if err := jsonCodec.Unmarshal(msg.Value, deleteRequest); err != nil {
 		return rc.producer.SendToDeadLetterTopic(ctx, msg, "POISON_MESSAGE_IN_RETRY: "+err.Error())
 	}
 
@@ -318,17 +408,13 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 	)
 	retryCount := currentRetryCount
 	if deleteRequest.Username != "" {
-		var existing v1.User
-		if err := rc.db.WithContext(ctx).
-			Where("name = ?", deleteRequest.Username).
-			First(&existing).Error; err != nil {
-			if err != gorm.ErrRecordNotFound {
-				return rc.handleProcessingError(ctx, msg, currentRetryCount, "查询用户失败: "+err.Error())
-			}
-		} else {
+		existing, err := rc.loadUserSnapshot(ctx, deleteRequest.Username)
+		if err != nil {
+			return rc.handleProcessingError(ctx, msg, currentRetryCount, "查询用户失败: "+err.Error())
+		}
+		if existing != nil {
 			userID = existing.ID
-			existingCopy := existing
-			existingSnapshot = &existingCopy
+			existingSnapshot = existing
 		}
 	}
 
@@ -551,27 +637,64 @@ func (rc *RetryConsumer) createUserInDB(ctx context.Context, user *v1.User) erro
 	now := time.Now()
 	user.CreatedAt = now
 	user.UpdatedAt = now
-	return rc.db.WithContext(ctx).Create(user).Error
+	db, err := rc.ensureSQLX()
+	if err != nil {
+		return err
+	}
+	var phoneValue interface{}
+	if trimmed := strings.TrimSpace(user.Phone); trimmed != "" {
+		phoneValue = trimmed
+	}
+	_, execErr := db.ExecContext(ctx,
+		"INSERT INTO `user` (instanceID, name, nickname, password, email, phone, status, isAdmin, extendShadow, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+		user.InstanceID,
+		user.Name,
+		user.Nickname,
+		user.Password,
+		user.Email,
+		phoneValue,
+		user.Status,
+		user.IsAdmin,
+		user.ExtendShadow,
+		now,
+		now,
+	)
+	return execErr
 }
 
 func (rc *RetryConsumer) updateUserInDB(ctx context.Context, user *v1.User) error {
 	user.UpdatedAt = time.Now()
 	user.Email = usercache.NormalizeEmail(user.Email)
 	user.Phone = usercache.NormalizePhone(user.Phone)
-	return rc.db.WithContext(ctx).Model(&v1.User{}).
-		Where("name = ?", user.Name).
-		Updates(map[string]interface{}{
-			"email":      user.Email,
-			"password":   user.Password,
-			"status":     user.Status,
-			"updated_at": user.UpdatedAt,
-		}).Error
+	db, err := rc.ensureSQLX()
+	if err != nil {
+		return err
+	}
+	var phoneValue interface{}
+	if trimmed := strings.TrimSpace(user.Phone); trimmed != "" {
+		phoneValue = trimmed
+	}
+	_, execErr := db.ExecContext(ctx,
+		"UPDATE `user` SET email = ?, password = ?, status = ?, updatedAt = ?, extendShadow = ?, nickname = ?, phone = ? WHERE name = ?",
+		user.Email,
+		user.Password,
+		user.Status,
+		user.UpdatedAt,
+		user.ExtendShadow,
+		user.Nickname,
+		phoneValue,
+		user.Name,
+	)
+	return execErr
 }
 
 func (rc *RetryConsumer) deleteUserFromDB(ctx context.Context, username string) error {
-	return rc.db.WithContext(ctx).
-		Where("name = ? and status = 1", username).
-		Delete(&v1.User{}).Error
+	db, err := rc.ensureSQLX()
+	if err != nil {
+		return err
+	}
+	_, execErr := db.ExecContext(ctx, "DELETE FROM `user` WHERE name = ?", username)
+	return execErr
 }
 
 func (rc *RetryConsumer) setUserCache(ctx context.Context, user *v1.User, previous *v1.User) error {
@@ -656,15 +779,18 @@ func (rc *RetryConsumer) writeContactCaches(ctx context.Context, user *v1.User) 
 	if user == nil {
 		return
 	}
+	var items []storage.KeyValueTTL
 	if key := usercache.EmailKey(user.Email); key != "" {
-		if err := rc.redis.SetKey(ctx, key, user.Name, 24*time.Hour); err != nil {
-			log.Warnf("重试消费者邮箱缓存写入失败: username=%s key=%s err=%v", user.Name, key, err)
-		}
+		items = append(items, storage.KeyValueTTL{Key: key, Value: user.Name, TTL: 24 * time.Hour})
 	}
 	if key := usercache.PhoneKey(user.Phone); key != "" {
-		if err := rc.redis.SetKey(ctx, key, user.Name, 24*time.Hour); err != nil {
-			log.Warnf("重试消费者手机号缓存写入失败: username=%s key=%s err=%v", user.Name, key, err)
-		}
+		items = append(items, storage.KeyValueTTL{Key: key, Value: user.Name, TTL: 24 * time.Hour})
+	}
+	if len(items) == 0 {
+		return
+	}
+	if err := rc.redis.BatchSet(ctx, items); err != nil {
+		log.Warnf("重试消费者批量写入联系缓存失败: username=%s err=%v", user.Name, err)
 	}
 }
 

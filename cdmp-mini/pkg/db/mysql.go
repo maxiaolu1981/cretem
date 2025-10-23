@@ -213,7 +213,7 @@ func (m *DBManager) Close() error {
 
 // 构建DSN
 func buildDSN(host string, port int, opts *Options) string {
-	return fmt.Sprintf(`%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=%t&loc=%s&timeout=%s&readTimeout=%s&writeTimeout=%s&tx_isolation='READ-COMMITTED'`,
+	return fmt.Sprintf(`%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=%t&loc=%s&timeout=%s&readTimeout=%s&writeTimeout=%s&tx_isolation='READ-COMMITTED'&interpolateParams=true&clientFoundRows=true`,
 		opts.Username,
 		opts.Password,
 		host,
@@ -278,7 +278,7 @@ func New(opts *Options) (*gorm.DB, error) {
 	setDefaultOptions(opts)
 
 	// 构建DSN
-	dsn := fmt.Sprintf(`%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=%t&loc=%s&timeout=%s&readTimeout=%s&writeTimeout=%s&tx_isolation=READ-COMMITTED`,
+	dsn := fmt.Sprintf(`%s:%s@tcp(%s)/%s?charset=utf8mb4&parseTime=%t&loc=%s&timeout=%s&readTimeout=%s&writeTimeout=%s&tx_isolation=READ-COMMITTED&interpolateParams=true&clientFoundRows=true`,
 		opts.Username,
 		opts.Password,
 		opts.Host,

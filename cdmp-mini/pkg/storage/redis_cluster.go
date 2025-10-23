@@ -124,6 +124,13 @@ type RedisCluster struct {
 	IsCache   bool
 }
 
+// KeyValueTTL bundles key/value/ttl for pipeline writes.
+type KeyValueTTL struct {
+	Key   string
+	Value string
+	TTL   time.Duration
+}
+
 func clusterConnectionIsOpen(cluster RedisCluster) bool {
 
 	c := singleton(cluster.IsCache)
@@ -560,6 +567,34 @@ func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, time
 		return err
 	}
 	//log.Debugf("存储成功:key=%v", r.fixKey(keyName))
+	return nil
+}
+
+// BatchSet writes multiple items using pipelining to reduce per-call overhead.
+func (r *RedisCluster) BatchSet(ctx context.Context, items []KeyValueTTL) error {
+	if len(items) == 0 {
+		return nil
+	}
+	if err := r.Up(); err != nil {
+		return err
+	}
+	client := r.singleton()
+	if client == nil {
+		return ErrRedisIsDown
+	}
+	_, err := client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, item := range items {
+			if item.Key == "" {
+				continue
+			}
+			pipe.Set(ctx, r.fixKey(item.Key), item.Value, item.TTL)
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, redis.Nil) {
+		log.Errorf("redis pipeline set failed: %v", err)
+		return err
+	}
 	return nil
 }
 

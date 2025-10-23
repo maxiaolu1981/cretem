@@ -87,3 +87,4 @@ SET GLOBAL long_query_time = 0.05;  -- 单位秒，按需要调整
 go test -v -run TestCreatePerformance -timeout 1000m ./...
 pgrep -f iam-apiserver
 find . -maxdepth 2 -name 'web.pprof'
+pprof -alloc_space <http://localhost:8088/debug/pprof/heap>

@@ -3,7 +3,6 @@ package server
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	stderrors "errors"
 	"fmt"
 	"os"
@@ -384,7 +383,7 @@ func (p *UserProducer) SendUserDeleteMessage(ctx context.Context, username strin
 		"deleted_at": time.Now().Format(time.RFC3339),
 	}
 
-	data, err := json.Marshal(deleteData)
+	data, err := jsonCodec.Marshal(deleteData)
 	if err != nil {
 		trace.EndSpan(span, "error", strconv.Itoa(code.ErrEncodingJSON), map[string]interface{}{
 			"username": username,
@@ -478,7 +477,7 @@ func (p *UserProducer) writeToFallbackFile(msg *sarama.ProducerMessage) {
 	}
 
 	// 序列化为 JSON
-	jsonData, err := json.Marshal(entry)
+	jsonData, err := jsonCodec.Marshal(entry)
 	if err != nil {
 		log.Errorf("Failed to marshal fallback message to JSON: %v", err)
 		return
@@ -538,7 +537,7 @@ func (p *UserProducer) sendUserMessage(ctx context.Context, user *v1.User, opera
 		})
 	}()
 
-	userData, err := json.Marshal(user)
+	userData, err := jsonCodec.Marshal(user)
 	if err != nil {
 		errSend = err
 		log.Errorf("Failed to marshal user %s for topic %s, operation %s: %v", user.Name, topic, operation, err)
@@ -779,7 +778,7 @@ func (p *UserProducer) processFallbackFile(logger log.Logger, filePath string, r
 
 		line := scanner.Bytes()
 		var entry fallbackMessage
-		if err := json.Unmarshal(line, &entry); err != nil {
+		if err := jsonCodec.Unmarshal(line, &entry); err != nil {
 			logger.Errorf("Invalid fallback entry in %s: %v", filePath, err)
 			continue
 		}
@@ -792,7 +791,7 @@ func (p *UserProducer) processFallbackFile(logger log.Logger, filePath string, r
 
 		if err := p.publishFallbackEntry(entry); err != nil {
 			entry.Attempts++
-			reEncoded, marshalErr := json.Marshal(entry)
+			reEncoded, marshalErr := jsonCodec.Marshal(entry)
 			if marshalErr != nil {
 				logger.Errorf("Failed to re-marshal fallback entry: %v", marshalErr)
 				continue

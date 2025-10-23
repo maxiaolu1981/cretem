@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	stdErrors "errors"
 	"fmt"
 	"math"
@@ -11,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	jsoniter "github.com/json-iterator/go"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
@@ -1811,7 +1812,7 @@ func getUserIDString(value interface{}) string {
 		return strconv.Itoa(int(v))
 	case int64:
 		return strconv.FormatInt(v, 10)
-	case json.Number:
+	case jsoniter.Number:
 		return v.String()
 	default:
 		return fmt.Sprintf("%v", v)
@@ -1941,7 +1942,7 @@ func extractSessionID(tokenString string) (string, error) {
 	}
 
 	var claims map[string]interface{}
-	if err := json.Unmarshal(payload, &claims); err != nil {
+	if err := jsonCodec.Unmarshal(payload, &claims); err != nil {
 		return "", fmt.Errorf("JSON解析失败: %v", err)
 	}
 
