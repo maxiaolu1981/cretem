@@ -302,3 +302,40 @@ github.com/go-playground/universal-translator.(*translator).Add 出现在热点�
 验证
 
 go test ./internal/apiserver/service/v1/user 已通过。建议结合新配置再跑一次 create 压测，关注 reflect.New、database/sql 的堆占用是否回落，并对比 create_perf.json 的尾延时线形。
+清点所有 SQL 读取路径
+用 grep 'StructScan\\|Get\\|Select'、list_code_usages 等工具找出仍旧采用 sqlx 自动映射的地方，例如：
+
+scanUserWithStatus、list 相关函数；
+retry consumer 里是否有未改的查询；
+任何 sqlx helper（NamedQuery、Select）都得改成 QueryContext + scanUserFromScanner 或专用 buffer。统一替换掉 sql.NullString、sqlx.In 返回的 QueryxContext 也要手动 Scan。
+引入批量行 buffer
+既然已经有 userRowBufferPool，扩展它支持不同字段组合（比如仅 id/name），避免在 batchDelete 里再自己定义 sql.RawBytes，统一走 buffer + 手动转换。这样可减少分配并复用对象池。
+
+Kafka 消费 JSON 解码降本
+
+复用对象池：現在 jsonCodec.Unmarshal 仍然反射创建 map/struct。可以自己实现 Unmarshal 到预分配的 v1.User（sync.Pool 已有但在批量操作中未充分利用）。
+或者切换到 jsoniter 的 Stream/Iterator 以避免反射；已经有 jsonCodec 包裹的话，确认是不是 encoding/json，若是可换到 jsoniter.ConfigFastest.
+Redis 请求合并/条件写
+writeContactCache、setUserCache 每个用户都会走 BatchSet/Set。在批量流程中：
+
+先比较快照，只有字段变更时才写 Redis；
+将多条命令聚合后执行 pipeline，或放进专用队列异步写，以降低热点。
+Profile 验证
+按每个优化点逐步执行 go test -run TestCreatePerformance 的局部场景，并配合 pprof -alloc_objects/-inuse_space 抓取对比。重点观察 StartConsuming 调用栈是否仍出现 convertAssignRows。
+
+如照上述步骤把剩余的自动映射路径清除，reflect.New 与 convertAssignRows 应下降到个位数比例，从而提升整体 QPS/尾延迟。可以先列出 StructScan 等现存调用点，我可以帮你逐个改成零分配扫描实现
+------
+
+-----
+已汇总会话历史记录- 当前火焰图显示 `Users.List` 单次分页仍然申请 ~1GB，主要来自 `itemsStorage := make([]v1.User, 0, ol.Limit)` 批量预分配；如果请求没有传 `limit`，`ol.Limit` 会退化成 `math.MaxInt`，直接撑爆内存。建议立即在入口（例如 controller/service 或 `gormutil.Unpointer` 返回后）兜底限制分页：`if ol.Limit <= 0 || ol.Limit > 1000 { ol.Limit = 1000 }`，同时对外文档/请求校验加约束。
+
+- `dbscan.rawToString` 排名第三，占 ~10%；原因是每行扫描时都会把 `RawBytes` 拷贝成 `string`。可以考虑：  
+  1. 对 List 场景仅保留需要的字段（密码等敏感字段已去）；  
+  2. 若某些字段后续不用，延迟拷贝或返回 `[]byte` 在业务层按需转换。  
+  3. 更激进的话，用 `string(b)` 时配合 `unsafe` 深拷 + 生命周期管理减少中间分配，但要权衡安全性。
+- Redis 相关堆占比（`SetKey`, `cmdable.Set`, `withConn`) 表明登录/缓存写操作量大且每次构造 `[]interface{}`，可以尝试：  
+  1. 批量写已经在使用 pipeline，再评估是否可减少 `Set` 频度（例如命中时延长 TTL，而不是每次刷新）；  
+  2. 复用 `[]interface{}`（sync.Pool）；  
+  3. 检查 `fixKey` 的字符串拼接是否可缓存前缀。
+- Kafka 消费侧 (`StartConsuming.func5`) 也在 top10，检查 worker 里是否反复 `json.Unmarshal`/重新分配，确认是否能使用复用缓冲（比如 `msg.Value` 反序列化后放回 pool）。
+- 总结：先修分页上限，重复打运行压测观察 `Users.List` 是否回落；接着针对 `rawToString` 优化字符串复制，最后排查 Redis 频繁 `Set` 是否可降压。可提供更细步骤如需。

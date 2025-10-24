@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"runtime"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/dbscan"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
@@ -19,7 +21,26 @@ import (
 
 type Users struct {
 	db          *gorm.DB
+	sqlCore     *sql.DB
 	policyStore interfaces.PolicyStore
+}
+
+func (u *Users) ensureSQLCore() (*sql.DB, error) {
+	if u == nil {
+		return nil, fmt.Errorf("user store not initialized")
+	}
+	if u.sqlCore != nil {
+		return u.sqlCore, nil
+	}
+	if u.db == nil {
+		return nil, fmt.Errorf("gorm db not initialized")
+	}
+	core, err := u.db.DB()
+	if err != nil {
+		return nil, err
+	}
+	u.sqlCore = core
+	return core, nil
 }
 
 var ensureIndexesOnce sync.Once
@@ -66,50 +87,50 @@ func ensureUserCoveringIndexes(db *gorm.DB) {
 
 func NewUsers(db *gorm.DB, policyStore interfaces.PolicyStore) *Users {
 	ensureUserCoveringIndexes(db)
+	var sqlCore *sql.DB
+	if db != nil {
+		if core, err := db.DB(); err != nil {
+			log.Warnf("初始化用户存储SQL连接失败: %v", err)
+		} else {
+			sqlCore = core
+		}
+	}
 	return &Users{
 		db:          db,
+		sqlCore:     sqlCore,
 		policyStore: policyStore,
 	}
 }
 
 // executeSingleGet 执行单次查询
 func (u *Users) executeSingleGet(ctx context.Context, username string) (*v1.User, error) {
-	//start := time.Now()
-	user := &v1.User{}
-	// 先查询用户是否存在（不管状态）
-	columns := []string{
-		"id",
-		"instanceID",
-		"name",
-		"status",
-		"nickname",
-		"email",
-		"phone",
-		"isAdmin",
-		"password",
-		"loginedAt",
-		"createdAt",
-		"updatedAt",
-		"extendShadow",
+	if u == nil {
+		return nil, errors.WithCode(code.ErrDatabase, "用户存储未初始化")
 	}
-	err := u.db.WithContext(ctx).
-		Select(columns).
-		Where("name = ?", username).
-		Take(user).Error
 
-	// 记录数据库查询指标
-	//metrics.RecordDatabaseQuery("get", "user", float64(duration), nil)
-
+	sqlCore, err := u.ensureSQLCore()
 	if err != nil {
-		// 检查是否是 gorm.ErrRecordNotFound
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			err := errors.WithCode(code.ErrUserNotFound, "用户没有发现")
-			return nil, err
-		}
+		return nil, errors.WithCode(code.ErrDatabase, "获取数据库连接失败: %v", err)
+	}
+
+	query := "SELECT id, instanceID, name, nickname, password, email, phone, status, isAdmin, createdAt, updatedAt FROM `user` WHERE name = ? LIMIT 1"
+	rows, err := sqlCore.QueryContext(ctx, query, username)
+	if err != nil {
 		return nil, err
 	}
-	// 检查用户状态
-	if user.Status == 0 { // status = 0 表示失效
+	defer rows.Close()
+	if !rows.Next() {
+		if rows.Err() != nil {
+			return nil, rows.Err()
+		}
+		return nil, gorm.ErrRecordNotFound
+	}
+	user, scanErr := dbscan.ScanUserAuth(rows)
+	if scanErr != nil {
+		return nil, scanErr
+	}
+
+	if user.Status == 0 {
 		return nil, errors.WithCode(code.ErrUserDisabled, "用户已失效")
 	}
 	return user, nil

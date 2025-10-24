@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
@@ -10,7 +11,6 @@ import (
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
-	"gorm.io/gorm"
 )
 
 // GetByEmail locates a user record by email address.
@@ -20,18 +20,21 @@ func (u *Users) GetByEmail(ctx context.Context, email string, _ *options.Options
 		return nil, errors.WithCode(code.ErrInvalidParameter, "邮箱不能为空")
 	}
 
-	user := &v1.User{}
-	err := u.db.WithContext(ctx).
-		Select("name").
-		Where("email = ?", normalized).
-		Take(user).Error
+	sqlCore, err := u.ensureSQLCore()
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.WithCode(code.ErrDatabase, "获取数据库连接失败: %v", err)
+	}
+
+	row := sqlCore.QueryRowContext(ctx, "SELECT name FROM `user` WHERE email = ? LIMIT 1", normalized)
+	var name string
+	if err := row.Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
 			return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在")
 		}
-		return nil, err
+		return nil, errors.WithCode(code.ErrDatabase, "查询邮箱失败: %v", err)
 	}
-	return user, nil
+
+	return &v1.User{ObjectMeta: metav1.ObjectMeta{Name: name}}, nil
 }
 
 // GetByPhone locates a user record by phone number.
@@ -41,18 +44,19 @@ func (u *Users) GetByPhone(ctx context.Context, phone string, _ *options.Options
 		return nil, errors.WithCode(code.ErrInvalidParameter, "手机号不能为空")
 	}
 
-	user := &v1.User{}
-	err := u.db.WithContext(ctx).
-		Select("name").
-		Where("phone = ?", normalized).
-		Take(user).Error
+	sqlCore, err := u.ensureSQLCore()
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, errors.WithCode(code.ErrDatabase, "获取数据库连接失败: %v", err)
+	}
+	row := sqlCore.QueryRowContext(ctx, "SELECT name FROM `user` WHERE phone = ? LIMIT 1", normalized)
+	var name string
+	if err := row.Scan(&name); err != nil {
+		if err == sql.ErrNoRows {
 			return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在")
 		}
-		return nil, err
+		return nil, errors.WithCode(code.ErrDatabase, "查询手机号失败: %v", err)
 	}
-	return user, nil
+	return &v1.User{ObjectMeta: metav1.ObjectMeta{Name: name}}, nil
 }
 
 // PreflightConflicts detects existing records matching username/email/phone in a single round-trip.
@@ -94,16 +98,23 @@ func (u *Users) PreflightConflicts(ctx context.Context, username, email, phone s
 		Status int32
 	}
 
-	rows := make([]conflictRow, 0, len(queries))
-	if err := u.db.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return map[string]*v1.User{}, nil
-		}
-		return nil, errors.WithCode(code.ErrDatabase, "预检查查询失败: %v", err)
+	sqlCore, err := u.ensureSQLCore()
+	if err != nil {
+		return nil, errors.WithCode(code.ErrDatabase, "获取数据库连接失败: %v", err)
 	}
 
-	result := make(map[string]*v1.User, len(rows))
-	for _, row := range rows {
+	rows, err := sqlCore.QueryContext(ctx, sql, args...)
+	if err != nil {
+		return nil, errors.WithCode(code.ErrDatabase, "预检查查询失败: %v", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]*v1.User, len(queries))
+	for rows.Next() {
+		var row conflictRow
+		if scanErr := rows.Scan(&row.Scope, &row.Name, &row.Email, &row.Phone, &row.Status); scanErr != nil {
+			return nil, errors.WithCode(code.ErrDatabase, "预检查扫描失败: %v", scanErr)
+		}
 		if row.Scope == "" {
 			continue
 		}
@@ -116,6 +127,9 @@ func (u *Users) PreflightConflicts(ctx context.Context, username, email, phone s
 			Phone:      row.Phone,
 			Status:     int(row.Status),
 		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.WithCode(code.ErrDatabase, "预检查遍历失败: %v", err)
 	}
 	return result, nil
 }

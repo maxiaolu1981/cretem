@@ -14,6 +14,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/dbscan"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
@@ -22,7 +23,6 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
-	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/segmentio/kafka-go"
 	"gorm.io/gorm"
 )
@@ -86,51 +86,26 @@ func (rc *RetryConsumer) loadUserSnapshot(ctx context.Context, username string) 
 	if err != nil {
 		return nil, err
 	}
-	const query = "SELECT id, instanceID, name, nickname, password, email, phone, status, isAdmin, extendShadow, createdAt, updatedAt FROM `user` WHERE name = ? LIMIT 1"
-	row := db.QueryRowContext(ctx, query, trimmed)
-	var (
-		id         uint64
-		instanceID string
-		name       string
-		nickname   string
-		password   string
-		emailRaw   sql.RawBytes
-		phoneRaw   sql.RawBytes
-		status     int
-		isAdmin    int
-		extendRaw  sql.RawBytes
-		createdAt  time.Time
-		updatedAt  time.Time
-	)
-	if err := row.Scan(&id, &instanceID, &name, &nickname, &password, &emailRaw, &phoneRaw, &status, &isAdmin, &extendRaw, &createdAt, &updatedAt); err != nil {
+	const query = "SELECT id, instanceID, name, nickname, password, email, phone, status, isAdmin, createdAt, updatedAt FROM `user` WHERE name = ? LIMIT 1"
+	rows, err := db.QueryContext(ctx, query, trimmed)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, nil
+	}
+	var record v1.User
+	if _, err := dbscan.ScanUserAuthInto(rows, &record); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-	user := &v1.User{
-		ObjectMeta: metav1.ObjectMeta{
-			ID:         id,
-			InstanceID: instanceID,
-			Name:       name,
-			CreatedAt:  createdAt,
-			UpdatedAt:  updatedAt,
-		},
-		Nickname: nickname,
-		Password: password,
-		Status:   status,
-		IsAdmin:  isAdmin,
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
-	if emailRaw != nil {
-		user.Email = usercache.NormalizeEmail(string(emailRaw))
-	}
-	if phoneRaw != nil {
-		user.Phone = usercache.NormalizePhone(string(phoneRaw))
-	}
-	if extendRaw != nil {
-		user.ExtendShadow = string(extendRaw)
-	}
-	return user, nil
+	return &record, nil
 }
 
 func (rc *RetryConsumer) Close() error {
@@ -289,7 +264,7 @@ func (rc *RetryConsumer) parseRetryHeaders(headers []kafka.Header) (int, time.Ti
 	// 如果没有找到下次重试时间，设置一个默认值
 	if nextRetryTime.IsZero() {
 		nextRetryTime = time.Now().Add(10 * time.Second)
-		log.Warnf("未找到下次重试时间，使用默认值: %v", nextRetryTime)
+		log.Debugf("未找到下次重试时间，使用默认值: %v", nextRetryTime)
 	}
 
 	return currentRetryCount, nextRetryTime, lastError
@@ -303,7 +278,7 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 		userMessagePool.Put(user)
 	}()
 
-	if err := jsonCodec.Unmarshal(msg.Value, user); err != nil {
+	if err := decodeUserMessage(msg.Value, user); err != nil {
 		log.Errorf("重试消息解析失败: %v, 原始消息: %s", err, string(msg.Value))
 		return rc.producer.SendToDeadLetterTopic(ctx, msg, "POISON_MESSAGE_IN_RETRY: "+err.Error())
 	}
@@ -345,7 +320,7 @@ func (rc *RetryConsumer) processRetryUpdate(ctx context.Context, msg kafka.Messa
 		userMessagePool.Put(user)
 	}()
 
-	if err := jsonCodec.Unmarshal(msg.Value, user); err != nil {
+	if err := decodeUserMessage(msg.Value, user); err != nil {
 		return rc.producer.SendToDeadLetterTopic(ctx, msg, "POISON_MESSAGE_IN_RETRY: "+err.Error())
 	}
 	user.Email = usercache.NormalizeEmail(user.Email)
@@ -698,25 +673,66 @@ func (rc *RetryConsumer) deleteUserFromDB(ctx context.Context, username string) 
 }
 
 func (rc *RetryConsumer) setUserCache(ctx context.Context, user *v1.User, previous *v1.User) error {
-	startTime := time.Now()
-	var operationErr error
+	var (
+		startTime    time.Time
+		operationErr error
+		wroteCache   bool
+	)
 	defer func() {
-		metrics.RecordRedisOperation("set", time.Since(startTime).Seconds(), operationErr)
+		if wroteCache {
+			metrics.RecordRedisOperation("set", time.Since(startTime).Seconds(), operationErr)
+		}
 	}()
-	cacheKey := usercache.UserKey(user.Name)
-	data, err := usercache.Marshal(user)
-	if err != nil {
-		operationErr = err
-		log.L(ctx).Errorw("用户数据序列化失败", "username", user.Name, "error", err)
-		return operationErr
+
+	needCacheWrite := true
+	if previous != nil && cacheEquivalent(previous, user) {
+		needCacheWrite = false
 	}
-	operationErr = rc.redis.SetKey(ctx, cacheKey, string(data), 24*time.Hour)
+
+	var pipelineItems []storage.KeyValueTTL
+	if needCacheWrite {
+		cacheKey := usercache.UserKey(user.Name)
+		if cacheKey != "" {
+			data, err := usercache.Marshal(user)
+			if err != nil {
+				operationErr = err
+				log.L(ctx).Errorw("用户数据序列化失败", "username", user.Name, "error", err)
+				return operationErr
+			}
+			pipelineItems = append(pipelineItems, storage.KeyValueTTL{Key: cacheKey, Value: string(data), TTL: 24 * time.Hour})
+		}
+	}
+
+	prevEmail := ""
+	prevPhone := ""
 	if previous != nil {
-		rc.evictContactCaches(ctx, previous, user)
+		prevEmail = usercache.NormalizeEmail(previous.Email)
+		prevPhone = usercache.NormalizePhone(previous.Phone)
 	}
-	rc.writeContactCaches(ctx, user)
-	if operationErr != nil {
-		log.L(ctx).Errorw("缓存写入失败", "username", user.Name, "error", operationErr)
+	newEmail := usercache.NormalizeEmail(user.Email)
+	newPhone := usercache.NormalizePhone(user.Phone)
+	contactChanged := previous == nil || prevEmail != newEmail || prevPhone != newPhone
+
+	if contactChanged {
+		if previous != nil {
+			rc.evictContactCaches(ctx, previous, user)
+		}
+		pipelineItems = append(pipelineItems, buildContactCacheItems(user)...)
+	}
+
+	if len(pipelineItems) > 0 {
+		startTime = time.Now()
+		wroteCache = true
+		if len(pipelineItems) == 1 {
+			item := pipelineItems[0]
+			operationErr = rc.redis.SetKey(ctx, item.Key, item.Value, item.TTL)
+		} else {
+			operationErr = rc.redis.BatchSet(ctx, pipelineItems)
+		}
+		if operationErr != nil {
+			log.L(ctx).Errorw("缓存写入失败", "username", user.Name, "error", operationErr)
+			return operationErr
+		}
 	}
 	return operationErr
 }
@@ -779,13 +795,7 @@ func (rc *RetryConsumer) writeContactCaches(ctx context.Context, user *v1.User) 
 	if user == nil {
 		return
 	}
-	var items []storage.KeyValueTTL
-	if key := usercache.EmailKey(user.Email); key != "" {
-		items = append(items, storage.KeyValueTTL{Key: key, Value: user.Name, TTL: 24 * time.Hour})
-	}
-	if key := usercache.PhoneKey(user.Phone); key != "" {
-		items = append(items, storage.KeyValueTTL{Key: key, Value: user.Name, TTL: 24 * time.Hour})
-	}
+	items := buildContactCacheItems(user)
 	if len(items) == 0 {
 		return
 	}

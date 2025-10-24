@@ -2,10 +2,13 @@ package user
 
 import (
 	"context"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/dbscan"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	gormutil "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/util"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -33,34 +36,57 @@ func (u *Users) List(ctx context.Context, username string, opts metav1.ListOptio
 
 	ret := &v1.UserList{}
 	ol := gormutil.Unpointer(opts.Offset, opts.Limit)
+	if ol.Limit <= 0 || ol.Limit > gormutil.DefaultLimit {
+		ol.Limit = gormutil.DefaultLimit
+	}
 
-	// 构建基础查询
-	query := u.db.WithContext(ctx).Model(&v1.User{}).Where("status = 1")
+	sqlCore, err := u.ensureSQLCore()
+	if err != nil {
+		spanStatus = "error"
+		spanCode = strconv.Itoa(code.ErrDatabase)
+		return nil, errors.WithCode(code.ErrDatabase, "获取数据库连接失败: %v", err)
+	}
 
-	// 只有在 selector 不为 nil 时才调用方法
+	whereParts := []string{"status = 1"}
+	args := make([]interface{}, 0, 2)
 	if username != "" {
-		query = query.Where("name = ?", username)
+		whereParts = append(whereParts, "name = ?")
+		args = append(args, username)
+	}
+	whereClause := strings.Join(whereParts, " AND ")
+
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM `user` WHERE %s", whereClause)
+	if err := sqlCore.QueryRowContext(ctx, countQuery, args...).Scan(&ret.TotalCount); err != nil {
+		spanStatus = "error"
+		spanCode = strconv.Itoa(code.ErrDatabase)
+		return nil, errors.WithCode(code.ErrDatabase, "统计用户数量失败: %v", err)
 	}
 
-	// 先获取总数
-	if err := query.Count(&ret.TotalCount).Error; err != nil {
+	listQuery := fmt.Sprintf("SELECT id, instanceID, name, nickname, email, phone, status, isAdmin, createdAt, updatedAt FROM `user` WHERE %s ORDER BY id DESC LIMIT ? OFFSET ?", whereClause)
+	listArgs := append(append([]interface{}{}, args...), ol.Limit, ol.Offset)
+	rows, err := sqlCore.QueryContext(ctx, listQuery, listArgs...)
+	if err != nil {
 		spanStatus = "error"
-		if c := errors.GetCode(err); c != 0 {
-			spanCode = strconv.Itoa(c)
-		}
-		return nil, err
+		spanCode = strconv.Itoa(code.ErrDatabase)
+		return nil, errors.WithCode(code.ErrDatabase, "查询用户列表失败: %v", err)
 	}
-
-	// 再获取分页数据
-	if err := query.Offset(ol.Offset).
-		Limit(ol.Limit).
-		Order("id desc").
-		Find(&ret.Items).Error; err != nil {
-		spanStatus = "error"
-		if c := errors.GetCode(err); c != 0 {
-			spanCode = strconv.Itoa(c)
+	defer rows.Close()
+	itemsStorage := make([]v1.User, 0, ol.Limit)
+	ret.Items = make([]*v1.User, 0, ol.Limit)
+	for rows.Next() {
+		itemsStorage = append(itemsStorage, v1.User{})
+		userPtr := &itemsStorage[len(itemsStorage)-1]
+		if _, scanErr := dbscan.ScanUserLiteInto(rows, userPtr); scanErr != nil {
+			spanStatus = "error"
+			spanCode = strconv.Itoa(code.ErrDatabase)
+			return nil, errors.WithCode(code.ErrDatabase, "扫描用户记录失败: %v", scanErr)
 		}
-		return nil, err
+		ret.Items = append(ret.Items, userPtr)
+	}
+	if err := rows.Err(); err != nil {
+		spanStatus = "error"
+		spanCode = strconv.Itoa(code.ErrDatabase)
+		return nil, errors.WithCode(code.ErrDatabase, "遍历用户列表失败: %v", err)
 	}
 
 	spanDetails["returned_count"] = len(ret.Items)
@@ -68,13 +94,27 @@ func (u *Users) List(ctx context.Context, username string, opts metav1.ListOptio
 }
 
 func (u *Users) ListAllUsernames(ctx context.Context) ([]string, error) {
-	var usernames []string
-	err := u.db.Model(&v1.User{}).
-		Pluck("name", &usernames). // 直接获取字符串数组
-		Error
-
+	sqlCore, err := u.ensureSQLCore()
 	if err != nil {
-		return nil, err
+		return nil, errors.WithCode(code.ErrDatabase, "获取数据库连接失败: %v", err)
+	}
+
+	rows, err := sqlCore.QueryContext(ctx, "SELECT name FROM `user`")
+	if err != nil {
+		return nil, errors.WithCode(code.ErrDatabase, "查询用户名列表失败: %v", err)
+	}
+	defer rows.Close()
+
+	usernames := make([]string, 0, 64)
+	for rows.Next() {
+		var name string
+		if scanErr := rows.Scan(&name); scanErr != nil {
+			return nil, errors.WithCode(code.ErrDatabase, "扫描用户名失败: %v", scanErr)
+		}
+		usernames = append(usernames, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.WithCode(code.ErrDatabase, "遍历用户名失败: %v", err)
 	}
 
 	return usernames, nil
@@ -82,13 +122,38 @@ func (u *Users) ListAllUsernames(ctx context.Context) ([]string, error) {
 
 func (u *Users) ListAll(ctx context.Context, username string) (*v1.UserList, error) {
 	ret := &v1.UserList{}
-	query := u.db.Where("status = 1")
-	if username != "" {
-		query = query.Where("name like ?", "%"+username+"%")
+	sqlCore, err := u.ensureSQLCore()
+	if err != nil {
+		return nil, errors.WithCode(code.ErrDatabase, "获取数据库连接失败: %v", err)
 	}
 
-	d := query.Order("id desc").Find(&ret.Items)
-	ret.TotalCount = int64(len(ret.Items))
+	whereParts := []string{"status = 1"}
+	args := make([]interface{}, 0, 1)
+	if username != "" {
+		whereParts = append(whereParts, "name LIKE ?")
+		args = append(args, "%"+username+"%")
+	}
+	whereClause := strings.Join(whereParts, " AND ")
+	query := fmt.Sprintf("SELECT id, instanceID, name, nickname, email, phone, status, isAdmin, createdAt, updatedAt FROM `user` WHERE %s ORDER BY id DESC", whereClause)
+	rows, err := sqlCore.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, errors.WithCode(code.ErrDatabase, "查询用户列表失败: %v", err)
+	}
+	defer rows.Close()
 
-	return ret, d.Error
+	itemsStorage := make([]v1.User, 0, 64)
+	for rows.Next() {
+		itemsStorage = append(itemsStorage, v1.User{})
+		userPtr := &itemsStorage[len(itemsStorage)-1]
+		if _, scanErr := dbscan.ScanUserLiteInto(rows, userPtr); scanErr != nil {
+			return nil, errors.WithCode(code.ErrDatabase, "扫描用户记录失败: %v", scanErr)
+		}
+		ret.Items = append(ret.Items, userPtr)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errors.WithCode(code.ErrDatabase, "遍历用户记录失败: %v", err)
+	}
+
+	ret.TotalCount = int64(len(ret.Items))
+	return ret, nil
 }

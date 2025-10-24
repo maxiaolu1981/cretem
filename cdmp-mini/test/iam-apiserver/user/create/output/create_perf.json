@@ -1,21 +1,21 @@
 [
   {
     "scenario": "baseline/baseline_sustained",
-    "requests": 5292,
-    "success_rate": 0.9981103552532123,
-    "error_rate": 0.0018896447467876554,
-    "duration_ms": 33013,
-    "qps": 160.29920903669424,
-    "error_count": 10,
-    "success_count": 5282,
+    "requests": 19247,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 32070,
+    "qps": 600.1395463044435,
+    "error_count": 0,
+    "success_count": 19247,
     "latency": {
-      "min_ms": 9.547577,
-      "max_ms": 1576.821085,
-      "avg_ms": 182.839656,
-      "p50_ms": 114.268625,
-      "p90_ms": 414.437853,
-      "p95_ms": 523.917516,
-      "p99_ms": 753.564617
+      "min_ms": 8.39822,
+      "max_ms": 396.093515,
+      "avg_ms": 49.900646,
+      "p50_ms": 45.593994,
+      "p90_ms": 71.124546,
+      "p95_ms": 84.222059,
+      "p99_ms": 135.964706
     },
     "counters": {
       "cache_checks": 0,
@@ -29,11 +29,11 @@
       "Load pattern=uniform",
       "持续负载周期约30s，用于观察内存与资源走势",
       "取消ThinkTime，关注高并发持续压力下的稳定性",
-      "username distribution: len_12=1764, len_28=1764, len_45=1764",
-      "password distribution: complex=2646, simple=2646",
-      "email distribution: corp.internal=1764, custom-domain.test=1764, example.com=1764",
-      "phone distribution: domestic=2646, international=2646",
-      "TPS=160.00"
+      "username distribution: len_12=6415, len_28=6416, len_45=6416",
+      "password distribution: complex=9624, simple=9623",
+      "email distribution: corp.internal=6416, custom-domain.test=6416, example.com=6415",
+      "phone distribution: domestic=9623, international=9624",
+      "TPS=600.14"
     ]
   }
 ]

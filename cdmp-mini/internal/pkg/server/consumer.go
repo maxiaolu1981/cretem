@@ -13,12 +13,12 @@ import (
 
 	"github.com/go-redis/redis/v8"
 	"github.com/go-sql-driver/mysql"
-	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/dbscan"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
@@ -538,7 +538,7 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		userMessagePool.Put(user)
 	}()
 
-	if err := jsonCodec.Unmarshal(msg.Value, user); err != nil {
+	if err := decodeUserMessage(msg.Value, user); err != nil {
 		return err
 	}
 	if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
@@ -734,7 +734,7 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 		userMessagePool.Put(user)
 	}()
 
-	if err := jsonCodec.Unmarshal(msg.Value, user); err != nil {
+	if err := decodeUserMessage(msg.Value, user); err != nil {
 		return c.sendToDeadLetter(ctx, msg, "UNMARSHAL_ERROR: "+err.Error())
 	}
 	if err := validation.ValidateUserFields(user.Name, user.Nickname, user.Password, user.Email, user.Phone); err != nil {
@@ -831,60 +831,26 @@ func (c *UserConsumer) loadUserSnapshot(ctx context.Context, username string) (*
 		return nil, fmt.Errorf("获取数据库连接失败: %w", err)
 	}
 
-	var row struct {
-		ID           uint64         `db:"id"`
-		InstanceID   string         `db:"instanceID"`
-		Name         string         `db:"name"`
-		Nickname     string         `db:"nickname"`
-		Password     string         `db:"password"`
-		Email        sql.NullString `db:"email"`
-		Phone        sql.NullString `db:"phone"`
-		Status       int            `db:"status"`
-		IsAdmin      int            `db:"isAdmin"`
-		ExtendShadow sql.NullString `db:"extendShadow"`
-		CreatedAt    time.Time      `db:"createdAt"`
-		UpdatedAt    time.Time      `db:"updatedAt"`
+	const query = "SELECT id, instanceID, name, nickname, password, email, phone, status, isAdmin, createdAt, updatedAt FROM `user` WHERE name = ? LIMIT 1"
+	rows, err := db.QueryContext(ctx, query, trimmed)
+	if err != nil {
+		return nil, err
 	}
-
-	const query = "SELECT id, instanceID, name, nickname, password, email, phone, status, isAdmin, extendShadow, createdAt, updatedAt FROM `user` WHERE name = ? LIMIT 1"
-	if err := db.Unsafe().GetContext(ctx, &row, query, trimmed); err != nil {
-		if err == sql.ErrNoRows {
+	defer rows.Close()
+	if !rows.Next() {
+		return nil, nil
+	}
+	var record v1.User
+	if _, err := dbscan.ScanUserAuthInto(rows, &record); err != nil {
+		if stderrs.Is(err, sql.ErrNoRows) {
 			return nil, nil
 		}
 		return nil, err
 	}
-
-	existing := v1.User{}
-	existing.ID = row.ID
-	existing.InstanceID = row.InstanceID
-	existing.Name = row.Name
-	existing.Nickname = row.Nickname
-	existing.Password = row.Password
-	if row.Email.Valid {
-		existing.Email = row.Email.String
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
-	if row.Phone.Valid {
-		existing.Phone = row.Phone.String
-	}
-	existing.Status = row.Status
-	existing.IsAdmin = row.IsAdmin
-	existing.CreatedAt = row.CreatedAt
-	existing.UpdatedAt = row.UpdatedAt
-	if row.ExtendShadow.Valid {
-		existing.ExtendShadow = row.ExtendShadow.String
-		ext := make(metav1.Extend)
-		if err := jsonCodec.Unmarshal([]byte(row.ExtendShadow.String), &ext); err != nil {
-			log.Debugf("extendShadow 解码失败: %v", err)
-		} else {
-			existing.Extend = ext
-		}
-	}
-
-	existing.Email = usercache.NormalizeEmail(existing.Email)
-	existing.Phone = usercache.NormalizePhone(existing.Phone)
-
-	existingCopy := existing
-	return &existingCopy, nil
+	return &record, nil
 }
 
 func (c *UserConsumer) loadUserSnapshotWithTrace(ctx context.Context, username, reason string) (*v1.User, error) {
@@ -1357,25 +1323,68 @@ func isRecoverableError(errStr string) bool {
 }
 
 func (c *UserConsumer) setUserCache(ctx context.Context, user *v1.User, previous *v1.User) error {
-	startTime := time.Now()
-	var operationErr error
+	var (
+		startTime    time.Time
+		operationErr error
+		wroteCache   bool
+	)
 	defer func() {
-		metrics.RecordRedisOperation("set", time.Since(startTime).Seconds(), operationErr)
+		if wroteCache {
+			metrics.RecordRedisOperation("set", time.Since(startTime).Seconds(), operationErr)
+		}
 	}()
 
 	c.clearNegativeCache(ctx, user.Name)
 
-	cacheKey := usercache.UserKey(user.Name)
-	data, err := usercache.Marshal(user)
-	if err != nil {
-		operationErr = err
-		return err
+	needCacheWrite := true
+	if previous != nil && cacheEquivalent(previous, user) {
+		needCacheWrite = false
 	}
-	operationErr = c.redis.SetKey(ctx, cacheKey, string(data), 24*time.Hour)
+
+	var pipelineItems []storage.KeyValueTTL
+	if needCacheWrite {
+		cacheKey := usercache.UserKey(user.Name)
+		if cacheKey != "" {
+			data, err := usercache.Marshal(user)
+			if err != nil {
+				operationErr = err
+				return err
+			}
+			pipelineItems = append(pipelineItems, storage.KeyValueTTL{Key: cacheKey, Value: string(data), TTL: 24 * time.Hour})
+		}
+	}
+
+	prevEmail := ""
+	prevPhone := ""
 	if previous != nil {
-		c.evictContactCaches(ctx, previous, user)
+		prevEmail = usercache.NormalizeEmail(previous.Email)
+		prevPhone = usercache.NormalizePhone(previous.Phone)
 	}
-	c.writeContactCaches(ctx, user)
+	newEmail := usercache.NormalizeEmail(user.Email)
+	newPhone := usercache.NormalizePhone(user.Phone)
+	contactChanged := previous == nil || prevEmail != newEmail || prevPhone != newPhone
+
+	if contactChanged {
+		if previous != nil {
+			c.evictContactCaches(ctx, previous, user)
+		}
+		pipelineItems = append(pipelineItems, buildContactCacheItems(user)...)
+	}
+
+	if len(pipelineItems) > 0 {
+		startTime = time.Now()
+		wroteCache = true
+		if len(pipelineItems) == 1 {
+			item := pipelineItems[0]
+			operationErr = c.redis.SetKey(ctx, item.Key, item.Value, item.TTL)
+		} else {
+			operationErr = c.redis.BatchSet(ctx, pipelineItems)
+		}
+		if operationErr != nil {
+			return operationErr
+		}
+	}
+
 	return operationErr
 }
 
@@ -1389,6 +1398,31 @@ func (c *UserConsumer) deleteUserCache(ctx context.Context, username string) err
 	}
 
 	return nil
+}
+
+func cacheEquivalent(a, b *v1.User) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if a.ObjectMeta.ID != b.ObjectMeta.ID || a.ObjectMeta.InstanceID != b.ObjectMeta.InstanceID || a.ObjectMeta.Name != b.ObjectMeta.Name {
+		return false
+	}
+	if !a.ObjectMeta.CreatedAt.Equal(b.ObjectMeta.CreatedAt) || !a.ObjectMeta.UpdatedAt.Equal(b.ObjectMeta.UpdatedAt) {
+		return false
+	}
+	if a.Nickname != b.Nickname || a.Password != b.Password || a.Status != b.Status || a.IsAdmin != b.IsAdmin {
+		return false
+	}
+	if usercache.NormalizeEmail(a.Email) != usercache.NormalizeEmail(b.Email) {
+		return false
+	}
+	if usercache.NormalizePhone(a.Phone) != usercache.NormalizePhone(b.Phone) {
+		return false
+	}
+	if strings.TrimSpace(a.ExtendShadow) != strings.TrimSpace(b.ExtendShadow) {
+		return false
+	}
+	return true
 }
 
 func (c *UserConsumer) clearNegativeCache(ctx context.Context, username string) {
@@ -1477,13 +1511,7 @@ func (c *UserConsumer) writeContactCaches(ctx context.Context, user *v1.User) {
 	if user == nil {
 		return
 	}
-	var items []storage.KeyValueTTL
-	if key := usercache.EmailKey(user.Email); key != "" {
-		items = append(items, storage.KeyValueTTL{Key: key, Value: user.Name, TTL: 24 * time.Hour})
-	}
-	if key := usercache.PhoneKey(user.Phone); key != "" {
-		items = append(items, storage.KeyValueTTL{Key: key, Value: user.Name, TTL: 24 * time.Hour})
-	}
+	items := buildContactCacheItems(user)
 	if len(items) == 0 {
 		return
 	}
@@ -1557,7 +1585,7 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 	)
 	for _, m := range msgs {
 		var u v1.User
-		if err := jsonCodec.Unmarshal(m.Value, &u); err != nil {
+		if err := decodeUserMessage(m.Value, &u); err != nil {
 			log.Errorf("批量创建: 反序列化失败: %v", err)
 			if c.producer != nil {
 				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
@@ -1639,6 +1667,7 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 	var usernames []string
 	cleanupTargets := make(map[string]uint64)
 	snapshots := make(map[string]*v1.User)
+	snapshotStorage := make([]v1.User, 0, len(usernames))
 	var opErr error
 	for _, m := range msgs {
 		deleteRequest := deleteMessagePool.Get().(*deleteMessage)
@@ -1681,21 +1710,22 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 		} else {
 			defer rows.Close()
 			for rows.Next() {
-				var (
-					id    uint64
-					name  string
-					email sql.NullString
-					phone sql.NullString
-				)
-				if scanErr := rows.Scan(&id, &name, &email, &phone); scanErr != nil {
+				id, name, email, phone, scanErr := dbscan.ScanUserContact(rows)
+				if scanErr != nil {
 					log.Warnf("批量删除扫描行失败: %v", scanErr)
 					continue
 				}
 				cleanupTargets[name] = id
-				snapshots[name] = &v1.User{
-					Email: email.String,
-					Phone: phone.String,
+				if email != "" || phone != "" {
+					snapshotStorage = append(snapshotStorage, v1.User{})
+					snapshot := &snapshotStorage[len(snapshotStorage)-1]
+					snapshot.Email = email
+					snapshot.Phone = phone
+					snapshots[name] = snapshot
 				}
+			}
+			if err := rows.Err(); err != nil {
+				log.Warnf("批量删除Rows错误: %v", err)
 			}
 		}
 
@@ -1768,17 +1798,34 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 		return
 	}
 
-	var opErr error
-	var updatedCount int
-	updateSQL := "UPDATE `user` SET email = ?, password = ?, status = ?, updatedAt = ?, extendShadow = ?, nickname = ?, phone = ? WHERE name = ?"
-
+	// 收集所有 username 并保持消息顺序
+	type updateIntent struct {
+		username string
+		msg      kafka.Message
+		user     *v1.User
+	}
+	intents := make([]updateIntent, 0, len(msgs))
+	defer func() {
+		for i := range intents {
+			if intents[i].user != nil {
+				*intents[i].user = v1.User{}
+				userMessagePool.Put(intents[i].user)
+				intents[i].user = nil
+			}
+		}
+	}()
+	uniqueNames := make(map[string]struct{}, len(msgs))
+	usernames := make([]string, 0, len(msgs))
 	for _, m := range msgs {
-		var u v1.User
-		if err := jsonCodec.Unmarshal(m.Value, &u); err != nil {
+		u := userMessagePool.Get().(*v1.User)
+		*u = v1.User{}
+		if err := decodeUserMessage(m.Value, u); err != nil {
 			log.Errorf("批量更新: 反序列化失败: %v", err)
 			if c.producer != nil {
 				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UNMARSHAL_ERROR: "+err.Error())
 			}
+			*u = v1.User{}
+			userMessagePool.Put(u)
 			continue
 		}
 		if err := validation.ValidateUserFields(u.Name, u.Nickname, u.Password, u.Email, u.Phone); err != nil {
@@ -1786,39 +1833,77 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 			if c.producer != nil {
 				_ = c.producer.SendToDeadLetterTopic(ctx, m, err.Error())
 			}
+			*u = v1.User{}
+			userMessagePool.Put(u)
 			continue
 		}
+		intents = append(intents, updateIntent{username: u.Name, msg: m, user: u})
+		if _, ok := uniqueNames[u.Name]; !ok {
+			uniqueNames[u.Name] = struct{}{}
+			usernames = append(usernames, u.Name)
+		}
+	}
+	if len(intents) == 0 {
+		return
+	}
 
+	// 批量查快照
+	placeholder := buildPlaceholders(len(usernames))
+	if placeholder == "" {
+		log.Warn("批量更新快照: 未生成有效的占位符")
+		return
+	}
+	args := make([]interface{}, len(usernames))
+	for i := range usernames {
+		args[i] = usernames[i]
+	}
+	query := fmt.Sprintf("SELECT id, instanceID, name, nickname, password, email, phone, status, isAdmin, createdAt, updatedAt FROM `user` WHERE name IN (%s)", placeholder)
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		log.Errorf("批量更新快照查询失败: %v", err)
+		return
+	}
+	defer rows.Close()
+	snapshotMap := make(map[string]*v1.User, len(usernames))
+	snapshotStorage := make([]v1.User, 0, len(usernames))
+	for rows.Next() {
+		snapshotStorage = append(snapshotStorage, v1.User{})
+		record := &snapshotStorage[len(snapshotStorage)-1]
+		if _, scanErr := dbscan.ScanUserAuthInto(rows, record); scanErr != nil {
+			snapshotStorage = snapshotStorage[:len(snapshotStorage)-1]
+			log.Errorf("批量更新快照Scan失败: %v", scanErr)
+			continue
+		}
+		snapshotMap[record.ObjectMeta.Name] = record
+	}
+	if err := rows.Err(); err != nil {
+		log.Errorf("批量更新快照Rows错误: %v", err)
+	}
+
+	var opErr error
+	var updatedCount int
+	updateSQL := "UPDATE `user` SET email = ?, password = ?, status = ?, updatedAt = ?, extendShadow = ?, nickname = ?, phone = ? WHERE name = ?"
+	for i := range intents {
+		intent := &intents[i]
+		u := intent.user
+		existingSnapshot := snapshotMap[intent.username]
+		if existingSnapshot == nil {
+			log.Warnf("批量更新目标不存在: %s", intent.username)
+			if c.producer != nil {
+				_ = c.producer.SendToDeadLetterTopic(ctx, intent.msg, "BATCH_UPDATE_TARGET_NOT_FOUND: "+intent.username)
+			}
+			continue
+		}
 		u.Email = usercache.NormalizeEmail(u.Email)
 		u.Phone = usercache.NormalizePhone(u.Phone)
 		u.UpdatedAt = time.Now()
 		if strings.TrimSpace(u.ExtendShadow) == "" {
 			u.ExtendShadow = u.Extend.String()
 		}
-
-		existingSnapshot, err := c.loadUserSnapshot(ctx, u.Name)
-		if err != nil {
-			opErr = err
-			log.Errorf("批量更新前查询失败: %v, 用户: %s", err, u.Name)
-			metrics.BusinessFailures.WithLabelValues("consumer", "batch_update", getErrorType(err)).Inc()
-			if c.producer != nil {
-				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_UPDATE_QUERY_ERROR: "+err.Error())
-			}
-			continue
-		}
-		if existingSnapshot == nil {
-			log.Warnf("批量更新目标不存在: %s", u.Name)
-			if c.producer != nil {
-				_ = c.producer.SendToDeadLetterTopic(ctx, m, "BATCH_UPDATE_TARGET_NOT_FOUND: "+u.Name)
-			}
-			continue
-		}
-
 		var phoneValue interface{}
 		if trimmed := strings.TrimSpace(u.Phone); trimmed != "" {
 			phoneValue = trimmed
 		}
-
 		if _, execErr := db.ExecContext(ctx, updateSQL,
 			u.Email,
 			u.Password,
@@ -1833,14 +1918,13 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 			log.Errorf("批量更新失败: %v, 用户: %s", execErr, u.Name)
 			metrics.BusinessFailures.WithLabelValues("consumer", "batch_update", getErrorType(execErr)).Inc()
 			if c.producer != nil {
-				_ = c.producer.sendToRetryTopic(ctx, m, "BATCH_UPDATE_DB_ERROR: "+execErr.Error())
+				_ = c.producer.sendToRetryTopic(ctx, intent.msg, "BATCH_UPDATE_DB_ERROR: "+execErr.Error())
 			}
 			continue
 		}
-
 		updatedCount++
 		metrics.BusinessSuccess.WithLabelValues("consumer", "batch_update", "success").Inc()
-		_ = c.setUserCache(ctx, &u, existingSnapshot)
+		_ = c.setUserCache(ctx, u, existingSnapshot)
 	}
 	duration := time.Since(start).Seconds()
 	metrics.BusinessProcessingTime.WithLabelValues("consumer", "batch_update").Observe(duration)
@@ -1852,5 +1936,4 @@ func (c *UserConsumer) batchUpdateToDB(ctx context.Context, msgs []kafka.Message
 		errorRate := 0.0
 		metrics.BusinessErrorRate.WithLabelValues("consumer", "batch_update").Set(errorRate)
 	}
-
 }
