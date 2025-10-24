@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	authkeys "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/auth/keys"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
@@ -17,6 +16,7 @@ import (
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+	"github.com/redis/go-redis/v9"
 )
 
 func (u *UserService) ChangePassword(ctx context.Context, user *v1.User, claims *jwtvalidator.CustomClaims, opt *options.Options) (err error) {

@@ -1,7 +1,8 @@
 /*
 聚焦分析 checkUserExist 新参数在各业务流程里的用法，我先拆成两步：1) 解释 checkUserExist 的内部机制与 forceRefresh 的作用；2) 对照 create/update/delete/list/changePassword 等调用点说明为何选择不同的布尔值。
 
-checkUserExist 的原理
+	}
+
 缓存优先 + 可选回源：入口在 user_service.go 的 checkUserExist(ctx, username, forceRefresh)。它先通过 tryGetFromCache 查询 Redis（见 get_service.go），命中真实用户就直接返回；命中的是我们自己写入的负缓存 RATE_LIMIT_PREVENTION 时，会根据 forceRefresh 判断是否继续。
 forceRefresh=false：直接把负缓存返回，认为“这个用户不存在”。
 forceRefresh=true：即便命中了负缓存，也会日志提示“命中负缓存, 强制回源校验”，然后继续往数据库查一遍。
@@ -26,7 +27,6 @@ package user
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"strings"
@@ -35,7 +35,7 @@ import (
 	"time"
 
 	"github.com/bytedance/gopkg/util/logger"
-	"github.com/go-redis/redis/v8"
+	jsoniter "github.com/json-iterator/go"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/store/interfaces"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
@@ -46,6 +46,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/util"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
@@ -65,6 +66,8 @@ const (
 	contactWarmupBatchSize  = 1000
 	contactCacheTTL         = 24 * time.Hour
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 type UserService struct {
 	Store    interfaces.Factory
@@ -142,7 +145,6 @@ func (u *UserService) userStoreReadOnly() interfaces.UserStore {
 }
 
 func (u *UserService) recordUserCreateStep(ctx context.Context, step, field, username string, duration time.Duration, stepErr error) {
-	metrics.RecordUserCreateStep(step, field, duration)
 	if duration <= createStepSlowThreshold {
 		return
 	}

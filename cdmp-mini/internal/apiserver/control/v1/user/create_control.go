@@ -6,7 +6,6 @@ package user
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,7 +27,11 @@ import (
 
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+
+	jsoniter "github.com/json-iterator/go"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 func (u *UserController) Create(ctx *gin.Context) {
 	// 从Gin上下文获取中间件设置的信息

@@ -2,19 +2,31 @@ package trace
 
 import (
 	"context"
-	"encoding/json"
+	"math/rand"
 	"net/http"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
 
+	jsoniter "github.com/json-iterator/go"
 	uuid "github.com/satori/go.uuid"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 )
+
+var json = jsoniter.Config{
+	EscapeHTML:                    true,
+	SortMapKeys:                   false,
+	ValidateJsonRawMessage:        true,
+	ObjectFieldMustBeSimpleString: true,
+}.Froze()
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 // Phase represents the lifecycle phase of a trace payload.
 type Phase string
@@ -28,19 +40,22 @@ const (
 
 // Options describes the initialization parameters for a new trace session.
 type Options struct {
-	TraceID      string
-	Service      string
-	Component    string
-	Operation    string
-	Phase        Phase
-	Path         string
-	Method       string
-	ClientIP     string
-	RequestID    string
-	UserAgent    string
-	Host         string
-	AwaitTimeout time.Duration
-	Now          time.Time
+	TraceID         string
+	Service         string
+	Component       string
+	Operation       string
+	Phase           Phase
+	Path            string
+	Method          string
+	ClientIP        string
+	RequestID       string
+	UserAgent       string
+	Host            string
+	AwaitTimeout    time.Duration
+	Now             time.Time
+	DisableLogging  bool
+	LogSampleRate   float64
+	ForceLogOnError bool
 }
 
 // RequestContext captures core request metadata.
@@ -80,6 +95,70 @@ type Span struct {
 	Metrics      []string               `json:"prometheus_metrics,omitempty"`
 }
 
+type spanLogEntry struct {
+	SpanID        string                 `json:"span_id"`
+	ParentID      string                 `json:"parent_id"`
+	Component     string                 `json:"component"`
+	Operation     string                 `json:"operation"`
+	StartTimeMs   int64                  `json:"start_time"`
+	EndTimeMs     int64                  `json:"end_time"`
+	DurationMs    float64                `json:"duration_ms"`
+	Status        string                 `json:"status"`
+	BusinessCode  string                 `json:"business_code,omitempty"`
+	Details       map[string]interface{} `json:"details,omitempty"`
+	PromMetrics   []string               `json:"prometheus_metric,omitempty"`
+}
+
+type performanceSummary struct {
+	APIProcessingMs     float64                `json:"api_processing_ms,omitempty"`
+	KafkaProductionMs   float64                `json:"kafka_production_ms,omitempty"`
+	KafkaConsumptionMs  float64                `json:"kafka_consumption_ms,omitempty"`
+	AdditionalSummaries map[string]interface{} `json:"additional,omitempty"`
+}
+
+type businessMetricsPayload struct {
+	Operation          string                 `json:"operation"`
+	TotalDurationMs    float64                `json:"total_duration_ms"`
+	OverallStatus      string                 `json:"overall_status"`
+	BusinessCode       string                 `json:"business_code"`
+	BusinessMessage    string                 `json:"business_message"`
+	PerformanceSummary performanceSummary     `json:"performance_summary"`
+}
+
+type errorCategorySummary struct {
+	Validation int            `json:"validation"`
+	Database   int            `json:"database"`
+	Kafka      int            `json:"kafka"`
+	Redis      int            `json:"redis"`
+	Business   int            `json:"business"`
+	Others     map[string]int `json:"others,omitempty"`
+}
+
+type errorAnalysisPayload struct {
+	TotalErrors        int                  `json:"total_errors"`
+	DegradedOperations int                  `json:"degraded_operations"`
+	Categories         errorCategorySummary `json:"error_categories"`
+}
+
+type callChainPayload struct {
+	RootOperation string         `json:"root_operation"`
+	StartTimeMs   int64          `json:"start_time"`
+	EndTimeMs     int64          `json:"end_time"`
+	Spans         []spanLogEntry `json:"spans"`
+}
+
+type traceLogPayload struct {
+	TraceID        string                 `json:"trace_id"`
+	Level          string                 `json:"level"`
+	Timestamp      string                 `json:"timestamp"`
+	Service        string                 `json:"service"`
+	Component      string                 `json:"component"`
+	CallChain      callChainPayload        `json:"call_chain"`
+	RequestContext RequestContext          `json:"request_context"`
+	Business       businessMetricsPayload  `json:"business_metrics"`
+	Errors         errorAnalysisPayload    `json:"error_analysis"`
+}
+
 // Trace captures spans and metadata for a single logical request or async flow.
 type Trace struct {
 	ID        string
@@ -94,11 +173,16 @@ type Trace struct {
 	RequestContext  RequestContext
 	BusinessMetrics BusinessMetrics
 
-	level          string
-	status         string
-	businessCode   string
-	businessMsg    string
-	httpStatusCode int
+	level           string
+	status          string
+	businessCode    string
+	businessMsg     string
+	httpStatusCode  int
+	logEnabled      bool
+	logSampleRate   float64
+	forceLogOnError bool
+	logDecisionOnce sync.Once
+	logEmitDecision bool
 
 	mu    sync.Mutex
 	spans []*Span
@@ -140,6 +224,20 @@ func Start(ctx context.Context, opts Options) (context.Context, *Trace) {
 		level:  "INFO",
 		status: "success",
 	}
+
+	sample := opts.LogSampleRate
+	t.logEnabled = !opts.DisableLogging
+	if t.logEnabled {
+		if sample <= 0 {
+			sample = 1
+		} else if sample > 1 {
+			sample = 1
+		}
+	} else {
+		sample = 0
+	}
+	t.logSampleRate = sample
+	t.forceLogOnError = opts.ForceLogOnError
 
 	if opts.AwaitTimeout > 0 {
 		t.asyncDeadline = opts.Now.Add(opts.AwaitTimeout)
@@ -534,6 +632,9 @@ func (t *Trace) ToLogPayload(asyncSpans []*Span) map[string]interface{} {
 
 // Log emits the trace payload using structured logging.
 func (t *Trace) Log(asyncSpans []*Span) {
+	if !t.shouldLog() {
+		return
+	}
 	payload := t.ToLogPayload(asyncSpans)
 	payloadJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -567,6 +668,28 @@ func categorizeError(span *Span, categories map[string]int) {
 			categories[domain]++
 		}
 	}
+}
+
+func (t *Trace) shouldLog() bool {
+	if t.forceLogOnError && t.status == "error" {
+		return true
+	}
+	t.logDecisionOnce.Do(func() {
+		if !t.logEnabled {
+			t.logEmitDecision = false
+			return
+		}
+		if t.logSampleRate >= 1 {
+			t.logEmitDecision = true
+			return
+		}
+		if t.logSampleRate <= 0 {
+			t.logEmitDecision = false
+			return
+		}
+		t.logEmitDecision = rand.Float64() < t.logSampleRate
+	})
+	return t.logEmitDecision
 }
 
 func estimateComponentDuration(spans []*Span, component string) float64 {

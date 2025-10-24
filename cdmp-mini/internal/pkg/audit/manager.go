@@ -2,7 +2,6 @@ package audit
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -12,9 +11,12 @@ import (
 	"sync"
 	"time"
 
+	jsoniter "github.com/json-iterator/go"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 // Event 表示一次受审计的行为。所有字段都是可选的，但建议至少提供 Actor、Action 和 Outcome。
 // Metadata 用于扩展自定义业务字段，例如请求体摘要、资源变更前后的对比信息等。

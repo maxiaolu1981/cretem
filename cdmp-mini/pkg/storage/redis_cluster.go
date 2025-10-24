@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	redis "github.com/go-redis/redis/v8"
+	redis "github.com/redis/go-redis/v9"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
@@ -238,16 +238,16 @@ func NewRedisClusterPool(isCache bool, config *options.RedisOptions) redis.Unive
 
 	var client redis.UniversalClient
 	opts := &RedisOpts{
-		Addrs:        getRedisAddrs(config),
-		MasterName:   config.MasterName,
-		Password:     config.Password,
-		DB:           config.Database,
-		DialTimeout:  timeout,
-		ReadTimeout:  timeout,
-		WriteTimeout: timeout,
-		IdleTimeout:  240 * timeout,
-		PoolSize:     poolSize,
-		TLSConfig:    tlsConfig,
+		Addrs:           getRedisAddrs(config),
+		MasterName:      config.MasterName,
+		Password:        config.Password,
+		DB:              config.Database,
+		DialTimeout:     timeout,
+		ReadTimeout:     timeout,
+		WriteTimeout:    timeout,
+		ConnMaxIdleTime: 240 * timeout,
+		PoolSize:        poolSize,
+		TLSConfig:       tlsConfig,
 	}
 
 	if opts.MasterName != "" {
@@ -307,15 +307,16 @@ func (o *RedisOpts) cluster() *redis.ClusterOptions {
 		MinRetryBackoff: o.MinRetryBackoff,
 		MaxRetryBackoff: o.MaxRetryBackoff,
 
-		DialTimeout:        o.DialTimeout,
-		ReadTimeout:        o.ReadTimeout,
-		WriteTimeout:       o.WriteTimeout,
-		PoolSize:           o.PoolSize,
-		MinIdleConns:       o.MinIdleConns,
-		MaxConnAge:         o.MaxConnAge,
-		PoolTimeout:        o.PoolTimeout,
-		IdleTimeout:        o.IdleTimeout,
-		IdleCheckFrequency: o.IdleCheckFrequency,
+		DialTimeout:     o.DialTimeout,
+		ReadTimeout:     o.ReadTimeout,
+		WriteTimeout:    o.WriteTimeout,
+		PoolSize:        o.PoolSize,
+		MinIdleConns:    o.MinIdleConns,
+		MaxIdleConns:    o.MaxIdleConns,
+		MaxActiveConns:  o.MaxActiveConns,
+		ConnMaxLifetime: o.ConnMaxLifetime,
+		ConnMaxIdleTime: o.ConnMaxIdleTime,
+		PoolTimeout:     o.PoolTimeout,
 
 		TLSConfig: o.TLSConfig,
 	}
@@ -341,12 +342,13 @@ func (o *RedisOpts) simple() *redis.Options {
 		ReadTimeout:  o.ReadTimeout,
 		WriteTimeout: o.WriteTimeout,
 
-		PoolSize:           o.PoolSize,
-		MinIdleConns:       o.MinIdleConns,
-		MaxConnAge:         o.MaxConnAge,
-		PoolTimeout:        o.PoolTimeout,
-		IdleTimeout:        o.IdleTimeout,
-		IdleCheckFrequency: o.IdleCheckFrequency,
+		PoolSize:        o.PoolSize,
+		MinIdleConns:    o.MinIdleConns,
+		MaxIdleConns:    o.MaxIdleConns,
+		MaxActiveConns:  o.MaxActiveConns,
+		ConnMaxLifetime: o.ConnMaxLifetime,
+		ConnMaxIdleTime: o.ConnMaxIdleTime,
+		PoolTimeout:     o.PoolTimeout,
 
 		TLSConfig: o.TLSConfig,
 	}
@@ -374,12 +376,13 @@ func (o *RedisOpts) failover() *redis.FailoverOptions {
 		ReadTimeout:  o.ReadTimeout,
 		WriteTimeout: o.WriteTimeout,
 
-		PoolSize:           o.PoolSize,
-		MinIdleConns:       o.MinIdleConns,
-		MaxConnAge:         o.MaxConnAge,
-		PoolTimeout:        o.PoolTimeout,
-		IdleTimeout:        o.IdleTimeout,
-		IdleCheckFrequency: o.IdleCheckFrequency,
+		PoolSize:        o.PoolSize,
+		MinIdleConns:    o.MinIdleConns,
+		MaxIdleConns:    o.MaxIdleConns,
+		MaxActiveConns:  o.MaxActiveConns,
+		ConnMaxLifetime: o.ConnMaxLifetime,
+		ConnMaxIdleTime: o.ConnMaxIdleTime,
+		PoolTimeout:     o.PoolTimeout,
 
 		TLSConfig: o.TLSConfig,
 	}
@@ -403,6 +406,29 @@ func (r *RedisCluster) GetClient() redis.UniversalClient {
 	}
 	//log.Debugf("RedisCluster.GetClient() 获取客户端成功，类型=%T，IsCache=%v", client, r.IsCache)
 	return client
+}
+
+// withConn borrows a dedicated connection for the duration of fn when supported.
+// For clients that do not expose Conn (e.g. ClusterClient in go-redis v9), it
+// falls back to using the shared client which still satisfies redis.Cmdable.
+func (r *RedisCluster) withConn(ctx context.Context, fn func(redis.Cmdable) error) error {
+	client := r.singleton()
+	if client == nil {
+		return ErrRedisIsDown
+	}
+
+	if connCapable, ok := client.(interface {
+		Conn(context.Context) *redis.Conn
+	}); ok {
+		conn := connCapable.Conn(ctx)
+		if conn == nil {
+			return ErrRedisIsDown
+		}
+		defer conn.Close()
+		return fn(conn)
+	}
+
+	return fn(client)
 }
 
 func (r *RedisCluster) hashKey(in string) string {
@@ -546,7 +572,9 @@ func (r *RedisCluster) SetExp(ctx context.Context, keyName string, timeout time.
 	if err := r.Up(); err != nil {
 		return err
 	}
-	err := r.singleton().Expire(ctx, r.fixKey(keyName), timeout).Err()
+	err := r.withConn(ctx, func(cmd redis.Cmdable) error {
+		return cmd.Expire(ctx, r.fixKey(keyName), timeout).Err()
+	})
 	if err != nil {
 		log.Errorf("Could not EXPIRE key: %s", err.Error())
 	}
@@ -561,12 +589,15 @@ func (r *RedisCluster) SetKey(ctx context.Context, keyName, session string, time
 	if err := r.Up(); err != nil {
 		return err
 	}
-	err := r.singleton().Set(ctx, r.fixKey(keyName), session, timeout).Err()
+	fixedKey := r.fixKey(keyName)
+	err := r.withConn(ctx, func(cmd redis.Cmdable) error {
+		return cmd.Set(ctx, fixedKey, session, timeout).Err()
+	})
 	if err != nil {
 		log.Errorf("Error trying to set value: %s", err.Error())
 		return err
 	}
-	//log.Debugf("存储成功:key=%v", r.fixKey(keyName))
+	//log.Debugf("存储成功:key=%v", fixedKey)
 	return nil
 }
 
@@ -578,21 +609,25 @@ func (r *RedisCluster) BatchSet(ctx context.Context, items []KeyValueTTL) error 
 	if err := r.Up(); err != nil {
 		return err
 	}
-	client := r.singleton()
-	if client == nil {
-		return ErrRedisIsDown
-	}
-	_, err := client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
-		for _, item := range items {
-			if item.Key == "" {
-				continue
+	err := r.withConn(ctx, func(cmd redis.Cmdable) error {
+		_, pipeErr := cmd.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+			for _, item := range items {
+				if item.Key == "" {
+					continue
+				}
+				pipe.Set(ctx, r.fixKey(item.Key), item.Value, item.TTL)
 			}
-			pipe.Set(ctx, r.fixKey(item.Key), item.Value, item.TTL)
+			return nil
+		})
+		if pipeErr != nil && !errors.Is(pipeErr, redis.Nil) {
+			return pipeErr
 		}
 		return nil
 	})
-	if err != nil && !errors.Is(err, redis.Nil) {
-		log.Errorf("redis pipeline set failed: %v", err)
+	if err != nil {
+		if !errors.Is(err, redis.Nil) {
+			log.Errorf("redis pipeline set failed: %v", err)
+		}
 		return err
 	}
 	return nil
@@ -603,7 +638,9 @@ func (r *RedisCluster) SetRawKey(ctx context.Context, keyName, session string, t
 	if err := r.Up(); err != nil {
 		return err
 	}
-	err := r.singleton().Set(ctx, keyName, session, timeout).Err()
+	err := r.withConn(ctx, func(cmd redis.Cmdable) error {
+		return cmd.Set(ctx, keyName, session, timeout).Err()
+	})
 	if err != nil {
 		log.Errorf("Error trying to set value: %s", err.Error())
 		return err
@@ -1261,7 +1298,7 @@ func (r *RedisCluster) SetRollingWindow(
 			element.Member = strconv.Itoa(int(now.UnixNano()))
 		}
 
-		pipe.ZAdd(ctx, keyName, &element)
+		pipe.ZAdd(ctx, keyName, element)
 		pipe.Expire(ctx, keyName, time.Duration(per)*time.Second)
 		return nil
 	}
@@ -1353,7 +1390,7 @@ func (r *RedisCluster) AddToSortedSet(ctx context.Context, keyName, value string
 		return
 	}
 	member := redis.Z{Score: score, Member: value}
-	if err := r.singleton().ZAdd(ctx, fixedKey, &member).Err(); err != nil {
+	if err := r.singleton().ZAdd(ctx, fixedKey, member).Err(); err != nil {
 		log.Error(
 			"ZADD command failed",
 			log.String("keyName", keyName),
@@ -1503,7 +1540,15 @@ func (r *RedisCluster) SetNX(ctx context.Context, keyName string, value interfac
 	}
 
 	fixedKey := r.fixKey(keyName)
-	result, err := r.singleton().SetNX(ctx, fixedKey, value, expiration).Result()
+	var result bool
+	err := r.withConn(ctx, func(cmd redis.Cmdable) error {
+		cmdResult, cmdErr := cmd.SetNX(ctx, fixedKey, value, expiration).Result()
+		if cmdErr != nil {
+			return cmdErr
+		}
+		result = cmdResult
+		return nil
+	})
 	if err != nil {
 		log.Errorf("redis服务出现问题,请马上修改: %s", err.Error())
 		return false, err

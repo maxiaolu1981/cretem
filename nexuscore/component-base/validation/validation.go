@@ -281,6 +281,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync"
 
 	english "github.com/go-playground/locales/en"
 	ut "github.com/go-playground/universal-translator"
@@ -301,58 +302,74 @@ type Validator struct {
 	trans ut.Translator
 }
 
-// NewValidator creates a new Validator.
-func NewValidator(data interface{}) *Validator {
-	result := validator.New()
+var (
+	initOnce        sync.Once
+	defaultValidate *validator.Validate
+	defaultTrans    ut.Translator
+)
 
-	// independent validators
-	result.RegisterValidation("dir", validateDir)                 // nolint: errcheck // no need
-	result.RegisterValidation("file", validateFile)               // nolint: errcheck // no need
-	result.RegisterValidation("description", validateDescription) // nolint: errcheck // no need
-	result.RegisterValidation("name", validateName)               // nolint: errcheck // no need
+// ensureDefaultValidator lazily builds the shared validator and translator instance.
+func ensureDefaultValidator() {
+	initOnce.Do(func() {
+		result := validator.New()
 
-	// default translations
-	eng := english.New()
-	uni := ut.New(eng, eng)
-	trans, _ := uni.GetTranslator("en")
-	err := en.RegisterDefaultTranslations(result, trans)
-	if err != nil {
-		panic(err)
-	}
+		// independent validators
+		_ = result.RegisterValidation("dir", validateDir)
+		_ = result.RegisterValidation("file", validateFile)
+		_ = result.RegisterValidation("description", validateDescription)
+		_ = result.RegisterValidation("name", validateName)
 
-	// additional translations
-	translations := []struct {
-		tag         string
-		translation string
-	}{
-		{
-			tag:         "dir",
-			translation: "{0} must point to an existing directory, but found '{1}'",
-		},
-		{
-			tag:         "file",
-			translation: "{0} must point to an existing file, but found '{1}'",
-		},
-		{
-			tag:         "description",
-			translation: fmt.Sprintf("must be less than %d", maxDescriptionLength),
-		},
-		{
-			tag:         "name",
-			translation: "is not a invalid name",
-		},
-	}
-	for _, t := range translations {
-		err = result.RegisterTranslation(t.tag, trans, registrationFunc(t.tag, t.translation), translateFunc)
-		if err != nil {
+		eng := english.New()
+		uni := ut.New(eng, eng)
+		trans, found := uni.GetTranslator("en")
+		if !found {
+			panic("validator translation 'en' not found")
+		}
+
+		if err := en.RegisterDefaultTranslations(result, trans); err != nil {
 			panic(err)
 		}
-	}
+
+		translations := []struct {
+			tag         string
+			translation string
+		}{
+			{
+				tag:         "dir",
+				translation: "{0} must point to an existing directory, but found '{1}'",
+			},
+			{
+				tag:         "file",
+				translation: "{0} must point to an existing file, but found '{1}'",
+			},
+			{
+				tag:         "description",
+				translation: fmt.Sprintf("must be less than %d", maxDescriptionLength),
+			},
+			{
+				tag:         "name",
+				translation: "is not a invalid name",
+			},
+		}
+		for _, t := range translations {
+			if err := result.RegisterTranslation(t.tag, trans, registrationFunc(t.tag, t.translation), translateFunc); err != nil {
+				panic(err)
+			}
+		}
+
+		defaultValidate = result
+		defaultTrans = trans
+	})
+}
+
+// NewValidator creates a new Validator.
+func NewValidator(data interface{}) *Validator {
+	ensureDefaultValidator()
 
 	return &Validator{
-		val:   result,
+		val:   defaultValidate,
 		data:  data,
-		trans: trans,
+		trans: defaultTrans,
 	}
 }
 

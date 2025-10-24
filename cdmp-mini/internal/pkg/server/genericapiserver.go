@@ -18,7 +18,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/audit"
 
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 	"github.com/segmentio/kafka-go"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"

@@ -339,3 +339,24 @@ Profile 验证
   3. 检查 `fixKey` 的字符串拼接是否可缓存前缀。
 - Kafka 消费侧 (`StartConsuming.func5`) 也在 top10，检查 worker 里是否反复 `json.Unmarshal`/重新分配，确认是否能使用复用缓冲（比如 `msg.Value` 反序列化后放回 pool）。
 - 总结：先修分页上限，重复打运行压测观察 `Users.List` 是否回落；接着针对 `rawToString` 优化字符串复制，最后排查 Redis 频繁 `Set` 是否可降压。可提供更细步骤如需。
+
+---------------
+
+1. Redis 连接池 withConn/channel/goroutine 分配高
+问题根因：go-redis v8 的 withConn 每次操作都创建 channel 和 goroutine，短连接/高并发下分配压力大。
+优化建议：
+（A）升级 go-redis 至 v9+，新版本已优化连接复用和 withConn 实现，极大减少 channel/goroutine 分配。
+（B）如暂不升级，可用 BatchSet/pipeline 合并写入，减少单次 Set 调用频率。
+（C）业务侧缓存热点 key，避免高频写入同一 key。
+（D）如有大量小 key，可考虑 hash 结构批量写入，减少命令数。
+
+--------------
+
+2. JSON 序列化分配高
+
+问题根因：encoding/json.Marshal 分配大，mapEncoder.encode/MarshalSpans/ToLogPayload 等热点。
+优化建议：
+（A）将 encoding/json 替换为 json-iterator/go（jsoniter），drop-in 替换，性能提升显著，分配减少。
+（B）如日志/trace 只做内部分析，可用 fastjson、easyjson 等生成代码的序列化工具，进一步减少分配。
+（C）如日志内容有大 map，可考虑只序列化必要字段，或用 sync.Pool 复用 encodeState。
+（D）trace.ToLogPayload 可加采样/开关，减少不必要的序列化。

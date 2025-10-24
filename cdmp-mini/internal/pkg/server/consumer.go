@@ -11,10 +11,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/go-sql-driver/mysql"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/util/idutil"
 	"github.com/maxiaolu1981/cretem/nexuscore/component-base/validation"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/jmoiron/sqlx"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"

@@ -15,7 +15,7 @@ import (
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 
 	gojwt "github.com/golang-jwt/jwt/v4"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"

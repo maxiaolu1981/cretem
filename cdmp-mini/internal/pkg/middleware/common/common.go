@@ -1,17 +1,19 @@
 package common
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	jsoniter "github.com/json-iterator/go"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	gindump "github.com/tpkeeper/gin-dump"
 )
+
+var json = jsoniter.ConfigCompatibleWithStandardLibrary
 
 const (
 	HeaderCORSOrigin              = "Access-Control-Allow-Origin"

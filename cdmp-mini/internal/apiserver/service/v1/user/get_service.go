@@ -8,11 +8,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-redis/redis/v8"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/apiserver/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/metrics"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
+	"github.com/redis/go-redis/v9"
 
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"

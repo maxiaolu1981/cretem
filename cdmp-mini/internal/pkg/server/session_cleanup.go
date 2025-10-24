@@ -4,7 +4,7 @@ import (
 	"context"
 	"strconv"
 
-	"github.com/go-redis/redis/v8"
+	"github.com/redis/go-redis/v9"
 
 	authkeys "github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/auth/keys"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"

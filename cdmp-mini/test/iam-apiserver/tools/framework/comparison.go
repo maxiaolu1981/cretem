@@ -1,7 +1,6 @@
 package framework
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +9,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	jsoniter "github.com/json-iterator/go"
 )
 
 type CaseDiffStatus string
@@ -269,7 +270,7 @@ func loadCaseResults(path string) ([]CaseResult, error) {
 		return nil, err
 	}
 	var results []CaseResult
-	if err := json.Unmarshal(data, &results); err != nil {
+	if err := jsoniter.Unmarshal(data, &results); err != nil {
 		return nil, err
 	}
 	return results, nil
@@ -281,7 +282,7 @@ func loadPerfResults(path string) ([]PerformancePoint, error) {
 		return nil, err
 	}
 	var results []PerformancePoint
-	if err := json.Unmarshal(data, &results); err != nil {
+	if err := jsoniter.Unmarshal(data, &results); err != nil {
 		return nil, err
 	}
 	return results, nil
