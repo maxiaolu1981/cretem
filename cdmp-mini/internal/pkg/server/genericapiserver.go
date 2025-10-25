@@ -63,6 +63,7 @@ type GenericAPIServer struct {
 	loginUpdateWG     sync.WaitGroup
 	credentialCache   *credentialCache
 	loginInFlight     atomic.Int64
+	datastore         *mysql.Datastore
 }
 
 func (g *GenericAPIServer) isDebugMode() bool {
@@ -271,6 +272,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 
 	// ========== 新增：增强版集群状态检查和初始化 ==========
 	if datastore, ok := storeIns.(*mysql.Datastore); ok {
+		g.datastore = datastore
 		if datastore.IsClusterMode() {
 			log.Infof("🚀 检测到Galera集群模式，正在初始化集群连接...")
 
@@ -789,6 +791,9 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 			createGroupID, db, g.redis) // ✅ 相同的组ID
 		createConsumers[i].SetProducer(userProducer)
 		createConsumers[i].SetInstanceID(i)
+		if g.datastore != nil {
+			createConsumers[i].SetPoolStatsProvider(g.datastore.PoolStats)
+		}
 		if g.options.ServerRunOptions.EnableRateLimiter {
 			//	go createConsumers[i].startLagMonitor(context.Background())
 		}
@@ -797,6 +802,9 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 			updateGroupID, db, g.redis) // ✅ 相同的组ID
 		updateConsumers[i].SetProducer(userProducer)
 		updateConsumers[i].SetInstanceID(i)
+		if g.datastore != nil {
+			updateConsumers[i].SetPoolStatsProvider(g.datastore.PoolStats)
+		}
 		if g.options.ServerRunOptions.EnableRateLimiter {
 			//	go updateConsumers[i].startLagMonitor(context.Background())
 		}
@@ -805,6 +813,9 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 			deleteGroupID, db, g.redis) // ✅ 相同的组ID
 		deleteConsumers[i].SetProducer(userProducer)
 		deleteConsumers[i].SetInstanceID(i)
+		if g.datastore != nil {
+			deleteConsumers[i].SetPoolStatsProvider(g.datastore.PoolStats)
+		}
 		if g.options.ServerRunOptions.EnableRateLimiter {
 			//	go deleteConsumers[i].startLagMonitor(context.Background())
 		}
@@ -814,6 +825,9 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	retryGroupId := ConsumerGroupPrefix + "-retry"
 	for i := 0; i < kafkaOpts.RetryWorkerCount; i++ {
 		retryConsumers[i] = NewRetryConsumer(db, g.redis, userProducer, kafkaOpts, UserRetryTopic, retryGroupId)
+		if g.datastore != nil {
+			retryConsumers[i].SetPoolStatsProvider(g.datastore.PoolStats)
+		}
 	}
 	// 3. 赋值到服务器实例
 	g.producer = userProducer

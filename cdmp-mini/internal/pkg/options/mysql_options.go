@@ -153,8 +153,8 @@ func NewMySQLOptions() *MySQLOptions {
 		Port:               3306,
 		Password:           "iam59!z$",
 		Database:           "iam",
-		MaxOpenConnections: 256,             // 增加到500个最大连接
-		MaxIdleConnections: 128,             // 增加到200个空闲连接
+		MaxOpenConnections: 64,              // 增加到500个最大连接
+		MaxIdleConnections: 32,              // 增加到200个空闲连接
 		ConnMaxLifetime:    3 * time.Minute, // 缩短到5分钟，促进连接轮换
 		ConnMaxIdleTime:    2 * time.Minute, // 空闲2分钟释放
 		ReadTimeout:        3 * time.Second, // 读超时

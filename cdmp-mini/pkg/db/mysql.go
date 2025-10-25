@@ -2,6 +2,7 @@ package db
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"sync"
 	"time"
@@ -108,8 +109,8 @@ func NewDBManager(opts *Options) (*DBManager, error) {
 
 // 获取读连接（负载均衡）
 func (m *DBManager) GetReadDB() *gorm.DB {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if !m.healthy || len(m.replicaDBs) == 0 {
 		return m.primaryDB
@@ -164,6 +165,46 @@ func (m *DBManager) checkConnections() {
 	}
 
 	m.healthy = primaryHealthy || len(healthyReplicas) > 0
+}
+
+// PoolStats 返回当前主库与副本库的连接池统计数据，帮助调用方在压测时观测连接池利用率。
+type PoolStats struct {
+	Role  string
+	Index int
+	Stats sql.DBStats
+}
+
+// GetPoolStats 快照当前各个数据库连接池（主库+副本）的统计信息。
+func (m *DBManager) GetPoolStats() []PoolStats {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	stats := make([]PoolStats, 0, 1+len(m.replicaDBs))
+
+	if m.primaryDB != nil {
+		if sqlDB, err := m.primaryDB.DB(); err == nil {
+			stats = append(stats, PoolStats{
+				Role:  "primary",
+				Index: -1,
+				Stats: sqlDB.Stats(),
+			})
+		}
+	}
+
+	for i, replica := range m.replicaDBs {
+		if replica == nil {
+			continue
+		}
+		if sqlDB, err := replica.DB(); err == nil {
+			stats = append(stats, PoolStats{
+				Role:  "replica",
+				Index: i,
+				Stats: sqlDB.Stats(),
+			})
+		}
+	}
+
+	return stats
 }
 
 // 检查数据库连接是否健康

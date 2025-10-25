@@ -78,6 +78,13 @@ var (
 	// DatabaseQueryErrors      *prometheus.CounterVec
 	// DatabaseConnectionsInUse *prometheus.GaugeVec
 	// DatabaseConnectionsWait  *prometheus.CounterVec
+
+	DatabasePoolOpenConnections     *prometheus.GaugeVec
+	DatabasePoolInUse               *prometheus.GaugeVec
+	DatabasePoolIdle                *prometheus.GaugeVec
+	DatabasePoolWaitCount           *prometheus.GaugeVec
+	DatabasePoolWaitDurationSeconds *prometheus.GaugeVec
+	DatabasePoolMaxOpenConnections  *prometheus.GaugeVec
 )
 
 // Redis操作指标
@@ -476,6 +483,54 @@ func init() {
 	// 	},
 	// 	[]string{"operation", "table"},
 	// )
+
+	DatabasePoolOpenConnections = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "database_pool_open_connections",
+			Help: "Number of open connections held by the database connection pool",
+		},
+		[]string{"component", "role", "index"},
+	)
+
+	DatabasePoolInUse = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "database_pool_in_use_connections",
+			Help: "Number of active (in use) connections in the database connection pool",
+		},
+		[]string{"component", "role", "index"},
+	)
+
+	DatabasePoolIdle = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "database_pool_idle_connections",
+			Help: "Number of idle connections in the database connection pool",
+		},
+		[]string{"component", "role", "index"},
+	)
+
+	DatabasePoolWaitCount = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "database_pool_wait_count",
+			Help: "Total number of waits for a database connection",
+		},
+		[]string{"component", "role", "index"},
+	)
+
+	DatabasePoolWaitDurationSeconds = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "database_pool_wait_duration_seconds",
+			Help: "Total time blocked waiting for a database connection (seconds)",
+		},
+		[]string{"component", "role", "index"},
+	)
+
+	DatabasePoolMaxOpenConnections = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "database_pool_max_open_connections",
+			Help: "Maximum number of open connections allowed in the pool",
+		},
+		[]string{"component", "role", "index"},
+	)
 
 	// DatabaseQueryErrors = prometheus.NewCounterVec(
 	// 	prometheus.CounterOpts{
@@ -910,6 +965,12 @@ func init() {
 		// DatabaseQueryErrors,
 		// DatabaseConnectionsInUse,
 		// DatabaseConnectionsWait,
+		DatabasePoolOpenConnections,
+		DatabasePoolInUse,
+		DatabasePoolIdle,
+		DatabasePoolWaitCount,
+		DatabasePoolWaitDurationSeconds,
+		DatabasePoolMaxOpenConnections,
 
 		// Redis指标
 		RedisOperations,

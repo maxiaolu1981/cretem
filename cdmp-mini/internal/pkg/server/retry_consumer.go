@@ -20,6 +20,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
 
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -28,13 +29,15 @@ import (
 )
 
 type RetryConsumer struct {
-	reader       *kafka.Reader
-	db           *gorm.DB
-	sqlxDB       *sqlx.DB
-	redis        *storage.RedisCluster
-	producer     *UserProducer
-	maxRetries   int
-	kafkaOptions *options.KafkaOptions
+	reader        *kafka.Reader
+	db            *gorm.DB
+	sqlxDB        *sqlx.DB
+	redis         *storage.RedisCluster
+	producer      *UserProducer
+	maxRetries    int
+	kafkaOptions  *options.KafkaOptions
+	poolReporter  poolStatsReporter
+	poolComponent string
 }
 
 func NewRetryConsumer(db *gorm.DB, redis *storage.RedisCluster, producer *UserProducer, kafkaOptions *options.KafkaOptions, topic, groupid string) *RetryConsumer {
@@ -48,11 +51,12 @@ func NewRetryConsumer(db *gorm.DB, redis *storage.RedisCluster, producer *UserPr
 			CommitInterval: 2 * time.Second,
 			StartOffset:    kafka.FirstOffset,
 		}),
-		db:           db,
-		redis:        redis,
-		producer:     producer,
-		maxRetries:   kafkaOptions.MaxRetries,
-		kafkaOptions: kafkaOptions,
+		db:            db,
+		redis:         redis,
+		producer:      producer,
+		maxRetries:    kafkaOptions.MaxRetries,
+		kafkaOptions:  kafkaOptions,
+		poolComponent: groupid,
 	}
 	if core, err := db.DB(); err != nil {
 		log.Errorf("retry consumer sqlx init failed: %v", err)
@@ -113,6 +117,10 @@ func (rc *RetryConsumer) Close() error {
 		return rc.reader.Close()
 	}
 	return nil
+}
+
+func (rc *RetryConsumer) SetPoolStatsProvider(provider func() []db.PoolStats) {
+	rc.poolReporter.provider = provider
 }
 
 func (rc *RetryConsumer) StartConsuming(ctx context.Context, workerCount int, ready *sync.WaitGroup) {
@@ -215,6 +223,11 @@ func (rc *RetryConsumer) commitWithRetry(ctx context.Context, msg kafka.Message,
 }
 
 func (rc *RetryConsumer) processRetryMessage(ctx context.Context, msg kafka.Message) error {
+	component := rc.poolComponent
+	if component == "" && rc.reader != nil {
+		component = rc.reader.Config().GroupID
+	}
+	rc.poolReporter.report(ctx, component)
 	operation := rc.getOperationFromHeaders(msg.Headers)
 
 	switch operation {

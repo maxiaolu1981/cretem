@@ -179,6 +179,25 @@ func (ds *Datastore) ClusterStatus() db.ClusterStatus {
 	}
 }
 
+// PoolStats 返回当前数据库连接池统计，用于性能测试或监控时观测连接池是否耗尽。
+func (ds *Datastore) PoolStats() []db.PoolStats {
+	if ds.UseCluster && ds.DBManager != nil {
+		return ds.DBManager.GetPoolStats()
+	}
+
+	if ds.DB != nil {
+		if sqlDB, err := ds.DB.DB(); err == nil {
+			return []db.PoolStats{{
+				Role:  "primary",
+				Index: -1,
+				Stats: sqlDB.Stats(),
+			}}
+		}
+	}
+
+	return nil
+}
+
 // 判断是否使用集群模式
 func shouldUseCluster(opts *moptions.MySQLOptions) bool {
 	// 如果配置了副本节点且启用了负载均衡，则使用集群模式

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-sql-driver/mysql"
@@ -23,6 +24,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/options"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/db"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/log"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/pkg/storage"
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
@@ -43,7 +45,9 @@ type UserConsumer struct {
 	opts       *options.KafkaOptions
 	// 移除本地保护状态，全部走redis全局key
 	// 主控选举相关
-	isMaster bool
+	isMaster      bool
+	poolReporter  poolStatsReporter
+	poolComponent string
 }
 
 type deleteMessage struct {
@@ -71,6 +75,69 @@ var (
 	}
 )
 
+const poolStatsReportInterval = 5 * time.Second
+
+type poolStatsReporter struct {
+	provider   func() []db.PoolStats
+	lastReport atomic.Int64
+}
+
+func (r *poolStatsReporter) report(ctx context.Context, component string) {
+	if r == nil || r.provider == nil {
+		return
+	}
+	if component = strings.TrimSpace(component); component == "" {
+		component = "consumer"
+	}
+	now := time.Now().UnixNano()
+	last := r.lastReport.Load()
+	if last != 0 && now-last < poolStatsReportInterval.Nanoseconds() {
+		return
+	}
+	if !r.lastReport.CompareAndSwap(last, now) {
+		return
+	}
+	stats := r.provider()
+	if len(stats) == 0 || metrics.DatabasePoolOpenConnections == nil {
+		return
+	}
+	pools := make(map[string]map[string]interface{}, len(stats))
+	for _, stat := range stats {
+		indexLabel := strconv.Itoa(stat.Index)
+		metrics.DatabasePoolOpenConnections.WithLabelValues(component, stat.Role, indexLabel).Set(float64(stat.Stats.OpenConnections))
+		metrics.DatabasePoolInUse.WithLabelValues(component, stat.Role, indexLabel).Set(float64(stat.Stats.InUse))
+		metrics.DatabasePoolIdle.WithLabelValues(component, stat.Role, indexLabel).Set(float64(stat.Stats.Idle))
+		metrics.DatabasePoolWaitCount.WithLabelValues(component, stat.Role, indexLabel).Set(float64(stat.Stats.WaitCount))
+		metrics.DatabasePoolWaitDurationSeconds.WithLabelValues(component, stat.Role, indexLabel).Set(stat.Stats.WaitDuration.Seconds())
+		metrics.DatabasePoolMaxOpenConnections.WithLabelValues(component, stat.Role, indexLabel).Set(float64(stat.Stats.MaxOpenConnections))
+		traceKey := stat.Role
+		if stat.Index >= 0 {
+			traceKey = fmt.Sprintf("%s_%d", stat.Role, stat.Index)
+		}
+		pools[traceKey] = map[string]interface{}{
+			"open":         stat.Stats.OpenConnections,
+			"in_use":       stat.Stats.InUse,
+			"idle":         stat.Stats.Idle,
+			"wait_count":   stat.Stats.WaitCount,
+			"wait_seconds": stat.Stats.WaitDuration.Seconds(),
+			"max_open":     stat.Stats.MaxOpenConnections,
+		}
+	}
+	trace.AddRequestTag(ctx, fmt.Sprintf("db_pool_%s", sanitizeTraceKey(component)), map[string]interface{}{
+		"component": component,
+		"pools":     pools,
+	})
+}
+
+func sanitizeTraceKey(component string) string {
+	replacer := strings.NewReplacer(" ", "_", "/", "_", ":", "_", ".", "_")
+	trimmed := strings.TrimSpace(component)
+	if trimmed == "" {
+		return "consumer"
+	}
+	return replacer.Replace(trimmed)
+}
+
 func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm.DB, redis *storage.RedisCluster) *UserConsumer {
 	consumer := &UserConsumer{
 		reader: kafka.NewReader(kafka.ReaderConfig{
@@ -92,11 +159,12 @@ func NewUserConsumer(opts *options.KafkaOptions, topic, groupID string, db *gorm
 			ReadBackoffMin: time.Millisecond * 100,
 			ReadBackoffMax: time.Millisecond * 1000,
 		}),
-		db:      db,
-		redis:   redis,
-		topic:   topic,
-		groupID: groupID,
-		opts:    opts,
+		db:            db,
+		redis:         redis,
+		topic:         topic,
+		groupID:       groupID,
+		opts:          opts,
+		poolComponent: groupID,
 		// 新增：实例ID赋值
 		instanceID: parseInstanceID(opts.InstanceID),
 	}
@@ -1219,8 +1287,13 @@ func (c *UserConsumer) updateUserInDB(ctx context.Context, user *v1.User) error 
 func (c *UserConsumer) processMessageWithRetry(ctx context.Context, msg kafka.Message, maxRetries int) error {
 
 	var lastErr error
+	component := c.poolComponent
+	if component == "" {
+		component = c.groupID
+	}
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		c.poolReporter.report(ctx, component)
 
 		err := c.processMessage(ctx, msg)
 		if err == nil {
@@ -1930,6 +2003,10 @@ func (c *UserConsumer) batchDeleteFromDB(ctx context.Context, msgs []kafka.Messa
 // 唯一新增的方法
 func (c *UserConsumer) SetInstanceID(id int) {
 	c.instanceID = id
+}
+
+func (c *UserConsumer) SetPoolStatsProvider(provider func() []db.PoolStats) {
+	c.poolReporter.provider = provider
 }
 
 func (c *UserConsumer) SetProducer(producer *UserProducer) {
