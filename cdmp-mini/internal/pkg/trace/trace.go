@@ -96,17 +96,17 @@ type Span struct {
 }
 
 type spanLogEntry struct {
-	SpanID        string                 `json:"span_id"`
-	ParentID      string                 `json:"parent_id"`
-	Component     string                 `json:"component"`
-	Operation     string                 `json:"operation"`
-	StartTimeMs   int64                  `json:"start_time"`
-	EndTimeMs     int64                  `json:"end_time"`
-	DurationMs    float64                `json:"duration_ms"`
-	Status        string                 `json:"status"`
-	BusinessCode  string                 `json:"business_code,omitempty"`
-	Details       map[string]interface{} `json:"details,omitempty"`
-	PromMetrics   []string               `json:"prometheus_metric,omitempty"`
+	SpanID       string                 `json:"span_id"`
+	ParentID     string                 `json:"parent_id"`
+	Component    string                 `json:"component"`
+	Operation    string                 `json:"operation"`
+	StartTimeMs  int64                  `json:"start_time"`
+	EndTimeMs    int64                  `json:"end_time"`
+	DurationMs   float64                `json:"duration_ms"`
+	Status       string                 `json:"status"`
+	BusinessCode string                 `json:"business_code,omitempty"`
+	Details      map[string]interface{} `json:"details,omitempty"`
+	PromMetrics  []string               `json:"prometheus_metric,omitempty"`
 }
 
 type performanceSummary struct {
@@ -117,12 +117,12 @@ type performanceSummary struct {
 }
 
 type businessMetricsPayload struct {
-	Operation          string                 `json:"operation"`
-	TotalDurationMs    float64                `json:"total_duration_ms"`
-	OverallStatus      string                 `json:"overall_status"`
-	BusinessCode       string                 `json:"business_code"`
-	BusinessMessage    string                 `json:"business_message"`
-	PerformanceSummary performanceSummary     `json:"performance_summary"`
+	Operation          string             `json:"operation"`
+	TotalDurationMs    float64            `json:"total_duration_ms"`
+	OverallStatus      string             `json:"overall_status"`
+	BusinessCode       string             `json:"business_code"`
+	BusinessMessage    string             `json:"business_message"`
+	PerformanceSummary performanceSummary `json:"performance_summary"`
 }
 
 type errorCategorySummary struct {
@@ -153,10 +153,10 @@ type traceLogPayload struct {
 	Timestamp      string                 `json:"timestamp"`
 	Service        string                 `json:"service"`
 	Component      string                 `json:"component"`
-	CallChain      callChainPayload        `json:"call_chain"`
-	RequestContext RequestContext          `json:"request_context"`
-	Business       businessMetricsPayload  `json:"business_metrics"`
-	Errors         errorAnalysisPayload    `json:"error_analysis"`
+	CallChain      callChainPayload       `json:"call_chain"`
+	RequestContext RequestContext         `json:"request_context"`
+	Business       businessMetricsPayload `json:"business_metrics"`
+	Errors         errorAnalysisPayload   `json:"error_analysis"`
 }
 
 // Trace captures spans and metadata for a single logical request or async flow.
@@ -521,7 +521,7 @@ func (t *Trace) MarshalSpans() []*Span {
 }
 
 // ToLogPayload builds the final log message payload.
-func (t *Trace) ToLogPayload(asyncSpans []*Span) map[string]interface{} {
+func (t *Trace) ToLogPayload(asyncSpans []*Span) traceLogPayload {
 	spans := t.MarshalSpans()
 	if len(asyncSpans) > 0 {
 		spans = append(spans, asyncSpans...)
@@ -530,7 +530,7 @@ func (t *Trace) ToLogPayload(asyncSpans []*Span) map[string]interface{} {
 		})
 	}
 
-	spanPayload := make([]map[string]interface{}, 0, len(spans))
+	spanPayload := make([]spanLogEntry, 0, len(spans))
 	errorCategories := map[string]int{
 		"validation": 0,
 		"database":   0,
@@ -557,24 +557,24 @@ func (t *Trace) ToLogPayload(asyncSpans []*Span) map[string]interface{} {
 	}
 
 	for _, span := range spans {
-		entry := map[string]interface{}{
-			"span_id":     span.ID,
-			"parent_id":   span.ParentID,
-			"component":   span.Component,
-			"operation":   span.Operation,
-			"start_time":  span.StartTime.UnixNano() / int64(time.Millisecond),
-			"end_time":    span.EndTime.UnixNano() / int64(time.Millisecond),
-			"duration_ms": span.DurationMs,
-			"status":      span.Status,
+		entry := spanLogEntry{
+			SpanID:      span.ID,
+			ParentID:    span.ParentID,
+			Component:   span.Component,
+			Operation:   span.Operation,
+			StartTimeMs: span.StartTime.UnixNano() / int64(time.Millisecond),
+			EndTimeMs:   span.EndTime.UnixNano() / int64(time.Millisecond),
+			DurationMs:  span.DurationMs,
+			Status:      span.Status,
 		}
 		if span.BusinessCode != "" {
-			entry["business_code"] = span.BusinessCode
+			entry.BusinessCode = span.BusinessCode
 		}
 		if len(span.Metrics) > 0 {
-			entry["prometheus_metric"] = span.Metrics
+			entry.PromMetrics = append(entry.PromMetrics, span.Metrics...)
 		}
 		if len(span.Details) > 0 {
-			entry["details"] = span.Details
+			entry.Details = span.Details
 			categorizeError(span, errorCategories)
 		}
 		spanPayload = append(spanPayload, entry)
@@ -594,40 +594,61 @@ func (t *Trace) ToLogPayload(asyncSpans []*Span) map[string]interface{} {
 		level = "WARN"
 	}
 
-	performance := make(map[string]interface{})
-	performance["api_processing_ms"] = estimateComponentDuration(spans, "user-controller") + estimateComponentDuration(spans, "user-service")
-	performance["kafka_production_ms"] = estimateComponentDuration(spans, "kafka-producer")
-	performance["kafka_consumption_ms"] = estimateComponentDuration(spans, "kafka-consumer")
-
-	payload := map[string]interface{}{
-		"trace_id":  t.ID,
-		"level":     level,
-		"timestamp": t.End.UTC().Format(time.RFC3339Nano),
-		"service":   t.Service,
-		"component": t.Component,
-		"call_chain": map[string]interface{}{
-			"root_operation": t.Operation,
-			"start_time":     t.Start.UnixNano() / int64(time.Millisecond),
-			"end_time":       t.End.UnixNano() / int64(time.Millisecond),
-			"spans":          spanPayload,
-		},
-		"request_context": t.RequestContext,
-		"business_metrics": map[string]interface{}{
-			"operation":           t.BusinessMetrics.Operation,
-			"total_duration_ms":   t.BusinessMetrics.TotalDurationMs,
-			"overall_status":      t.BusinessMetrics.OverallStatus,
-			"business_code":       t.BusinessMetrics.BusinessCode,
-			"business_message":    t.BusinessMetrics.BusinessMessage,
-			"performance_summary": performance,
-		},
-		"error_analysis": map[string]interface{}{
-			"total_errors":        errors,
-			"degraded_operations": degraded,
-			"error_categories":    errorCategories,
-		},
+	performance := performanceSummary{
+		APIProcessingMs:    estimateComponentDuration(spans, "user-controller") + estimateComponentDuration(spans, "user-service"),
+		KafkaProductionMs:  estimateComponentDuration(spans, "kafka-producer"),
+		KafkaConsumptionMs: estimateComponentDuration(spans, "kafka-consumer"),
+	}
+	if len(t.BusinessMetrics.Summary) > 0 {
+		performance.AdditionalSummaries = t.BusinessMetrics.Summary
 	}
 
-	return payload
+	errorSummary := errorCategorySummary{
+		Validation: errorCategories["validation"],
+		Database:   errorCategories["database"],
+		Kafka:      errorCategories["kafka"],
+		Redis:      errorCategories["redis"],
+		Business:   errorCategories["business"],
+	}
+	for key, value := range errorCategories {
+		switch key {
+		case "validation", "database", "kafka", "redis", "business":
+			continue
+		default:
+			if errorSummary.Others == nil {
+				errorSummary.Others = make(map[string]int)
+			}
+			errorSummary.Others[key] = value
+		}
+	}
+
+	return traceLogPayload{
+		TraceID:   t.ID,
+		Level:     level,
+		Timestamp: t.End.UTC().Format(time.RFC3339Nano),
+		Service:   t.Service,
+		Component: t.Component,
+		CallChain: callChainPayload{
+			RootOperation: t.Operation,
+			StartTimeMs:   t.Start.UnixNano() / int64(time.Millisecond),
+			EndTimeMs:     t.End.UnixNano() / int64(time.Millisecond),
+			Spans:         spanPayload,
+		},
+		RequestContext: t.RequestContext,
+		Business: businessMetricsPayload{
+			Operation:          t.BusinessMetrics.Operation,
+			TotalDurationMs:    t.BusinessMetrics.TotalDurationMs,
+			OverallStatus:      t.BusinessMetrics.OverallStatus,
+			BusinessCode:       t.BusinessMetrics.BusinessCode,
+			BusinessMessage:    t.BusinessMetrics.BusinessMessage,
+			PerformanceSummary: performance,
+		},
+		Errors: errorAnalysisPayload{
+			TotalErrors:        errors,
+			DegradedOperations: degraded,
+			Categories:         errorSummary,
+		},
+	}
 }
 
 // Log emits the trace payload using structured logging.

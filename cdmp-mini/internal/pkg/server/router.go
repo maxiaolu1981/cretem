@@ -64,9 +64,12 @@ func (g *GenericAPIServer) installSystemRoutes() error {
 
 	if g != nil && g.options != nil && g.options.ServerRunOptions != nil {
 		cfg := common.UserTraceConfig{
-			Enabled:      g.options.ServerRunOptions.EnableUserTraceLogging,
-			Env:          g.options.ServerRunOptions.Env,
-			PathPrefixes: []string{"/v1/users"},
+			Enabled:         g.options.ServerRunOptions.EnableUserTraceLogging,
+			Env:             g.options.ServerRunOptions.Env,
+			PathPrefixes:    []string{"/v1/users"},
+			LogSampleRate:   g.options.ServerRunOptions.UserTraceLogSampleRate,
+			ForceLogOnError: g.options.ServerRunOptions.UserTraceForceLogErrors,
+			DisableLogging:  g.options.ServerRunOptions.UserTraceDisableLogging,
 		}
 		if g.options.Log != nil && g.options.Log.Name != "" {
 			cfg.ServiceName = g.options.Log.Name

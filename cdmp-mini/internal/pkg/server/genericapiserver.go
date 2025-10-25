@@ -721,29 +721,28 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 
 	// 1. 初始化生产端动态限速器
 	// 统计函数：返回总请求数和失败数
-	getProducerStats := func() (int, int) {
-		success := 0.0
-		fail := 0.0
-		ch := make(chan prometheus.Metric, 100)
-		metrics.ProducerSuccess.Collect(ch)
-		close(ch)
+	collectCounterTotal := func(collector prometheus.Collector) float64 {
+		ch := make(chan prometheus.Metric)
+		go func() {
+			collector.Collect(ch)
+			close(ch)
+		}()
+		total := 0.0
 		for m := range ch {
 			var pb dto.Metric
-			m.Write(&pb)
+			if err := m.Write(&pb); err != nil {
+				continue
+			}
 			if pb.Counter != nil {
-				success += pb.Counter.GetValue()
+				total += pb.Counter.GetValue()
 			}
 		}
-		ch2 := make(chan prometheus.Metric, 100)
-		metrics.ProducerFailures.Collect(ch2)
-		close(ch2)
-		for m := range ch2 {
-			var pb dto.Metric
-			m.Write(&pb)
-			if pb.Counter != nil {
-				fail += pb.Counter.GetValue()
-			}
-		}
+		return total
+	}
+
+	getProducerStats := func() (int, int) {
+		success := collectCounterTotal(metrics.ProducerSuccess)
+		fail := collectCounterTotal(metrics.ProducerFailures)
 		return int(success + fail), int(fail)
 	}
 

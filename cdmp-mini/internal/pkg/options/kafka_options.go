@@ -63,6 +63,13 @@ type KafkaOptions struct {
 	LagCheckInterval time.Duration `json:"lagCheckInterval" mapstructure:"lagCheckInterval"`
 	// 批量写入数据库时每个批次的L最大条数
 	MaxDBBatchSize int `json:"maxDBBatchSize" mapstructure:"maxDBBatchSize" validate:"min=1"`
+	// 批处理聚合通道容量（防止无界增长导致内存放大）
+	BatchChannelCapacity int `json:"batchChannelCapacity" mapstructure:"batchChannelCapacity" validate:"min=1"`
+	// 自适应批量写入的最小条数（压力大时收敛到该值）
+	MinDBBatchSize int `json:"minDBBatchSize" mapstructure:"minDBBatchSize" validate:"min=1"`
+	// 批量聚合的最小/最大超时时间边界
+	MinBatchTimeout time.Duration `json:"minBatchTimeout" mapstructure:"minBatchTimeout" validate:"min=1ms"`
+	MaxBatchTimeout time.Duration `json:"maxBatchTimeout" mapstructure:"maxBatchTimeout" validate:"min=1ms"`
 	// Producer in-flight limit: maximum concurrent synchronous sends allowed
 	ProducerMaxInFlight int `json:"producerMaxInFlight" mapstructure:"producerMaxInFlight" validate:"min=1"`
 	// 当前是否处于滞后保护状态（true 表示滞后超过阈值）
@@ -129,7 +136,11 @@ func NewKafkaOptions() *KafkaOptions {
 		LagScaleThreshold:        10000,            // 默认滞后阈值
 		LagCheckInterval:         30 * time.Second, // 默认滞后检查间隔
 		MaxDBBatchSize:           230,              // 默认批量写DB大小
-		InstanceID:               "",               // 新增字段默认值为空，建议启动时赋值
+		BatchChannelCapacity:     1024,
+		MinDBBatchSize:           120,
+		MinBatchTimeout:          40 * time.Millisecond,
+		MaxBatchTimeout:          200 * time.Millisecond,
+		InstanceID:               "", // 新增字段默认值为空，建议启动时赋值
 		StartingRate:             10000,
 		MinRate:                  10000,
 		MaxRate:                  20000,
@@ -239,6 +250,36 @@ func (k *KafkaOptions) Complete() {
 	if k.FallbackRetryMaxAttempts < 0 {
 		k.FallbackRetryMaxAttempts = 0
 	}
+
+	if k.BatchChannelCapacity <= 0 {
+		k.BatchChannelCapacity = 1024
+	}
+
+	if k.MaxDBBatchSize <= 0 {
+		k.MaxDBBatchSize = 230
+	}
+
+	if k.MinDBBatchSize <= 0 || k.MinDBBatchSize > k.MaxDBBatchSize {
+		k.MinDBBatchSize = k.MaxDBBatchSize / 2
+		if k.MinDBBatchSize <= 0 {
+			k.MinDBBatchSize = 1
+		}
+	}
+
+	if k.MinBatchTimeout <= 0 {
+		k.MinBatchTimeout = 40 * time.Millisecond
+	}
+	if k.MaxBatchTimeout <= 0 {
+		k.MaxBatchTimeout = 200 * time.Millisecond
+	}
+	if k.MaxBatchTimeout < k.MinBatchTimeout {
+		k.MaxBatchTimeout = k.MinBatchTimeout
+	}
+	if k.BatchTimeout < k.MinBatchTimeout {
+		k.BatchTimeout = k.MinBatchTimeout
+	} else if k.BatchTimeout > k.MaxBatchTimeout {
+		k.BatchTimeout = k.MaxBatchTimeout
+	}
 }
 
 // Validate 验证配置的有效性
@@ -315,6 +356,24 @@ func (k *KafkaOptions) Validate() []error {
 		errs = append(errs, field.Invalid(field.NewPath("kafka", "fallbackRetryMaxAttempts"), k.FallbackRetryMaxAttempts, "必须大于等于0"))
 	}
 
+	if k.BatchChannelCapacity < 1 {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "batchChannelCapacity"), k.BatchChannelCapacity, "必须大于0"))
+	}
+
+	if k.MinDBBatchSize < 1 {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "minDBBatchSize"), k.MinDBBatchSize, "必须大于0"))
+	}
+	if k.MinDBBatchSize > k.MaxDBBatchSize {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "minDBBatchSize"), k.MinDBBatchSize, "不能大于maxDBBatchSize"))
+	}
+
+	if k.MinBatchTimeout < time.Millisecond {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "minBatchTimeout"), k.MinBatchTimeout, "必须大于1ms"))
+	}
+	if k.MaxBatchTimeout < k.MinBatchTimeout {
+		errs = append(errs, field.Invalid(field.NewPath("kafka", "maxBatchTimeout"), k.MaxBatchTimeout, "必须不小于minBatchTimeout"))
+	}
+
 	// 如果启用SSL，验证证书文件
 	if k.EnableSSL && k.SSLCertFile != "" {
 		if _, err := os.Stat(k.SSLCertFile); os.IsNotExist(err) {
@@ -368,6 +427,18 @@ func (k *KafkaOptions) AddFlags(fs *pflag.FlagSet) {
 
 	fs.IntVar(&k.WorkerCount, "kafka.worker-count", k.WorkerCount,
 		"消费者worker数量")
+
+	fs.IntVar(&k.BatchChannelCapacity, "kafka.batch-channel-capacity", k.BatchChannelCapacity,
+		"Kafka消费者批处理聚合通道容量（减小可降低内存占用，增大可缓冲突发流量）")
+
+	fs.IntVar(&k.MinDBBatchSize, "kafka.min-db-batch-size", k.MinDBBatchSize,
+		"Kafka消费者在高压场景下的最小数据库批量写入条数，用于自适应限流")
+
+	fs.DurationVar(&k.MinBatchTimeout, "kafka.min-batch-timeout", k.MinBatchTimeout,
+		"Kafka消费者批量聚合的最小超时时间，用于快速清空堆积")
+
+	fs.DurationVar(&k.MaxBatchTimeout, "kafka.max-batch-timeout", k.MaxBatchTimeout,
+		"Kafka消费者批量聚合的最大超时时间，用于在空闲期降低写入频次")
 
 	fs.BoolVar(&k.EnableSSL, "kafka.enable-ssl", k.EnableSSL,
 		"是否启用SSL连接")

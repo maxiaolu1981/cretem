@@ -15,18 +15,17 @@ import (
 
 // 扩展 Options 结构体以支持集群
 type Options struct {
-	Host                  string           // 数据库主机地址（如 "127.0.0.1:3306"）
-	Username              string           // 数据库访问用户名
-	Password              string           // 数据库访问密码
-	Database              string           // 要连接的数据库名
-	MaxIdleConnections    int              // 连接池中的最大空闲连接数
-	MaxOpenConnections    int              // 与数据库的最大打开连接数
-	MaxConnectionLifeTime time.Duration    // 连接的最大可重用时间
-	LogLevel              int              // 日志级别（GORM 日志详细程度）
-	Logger                logger.Interface // GORM 日志器实例（用于自定义日志输出）
-	SlowQueryThreshold    time.Duration    // 自定义慢查询告警阈值
-	TablePrefix           string           // 表前缀
-	Timeout               time.Duration    // 连接超时
+	Host               string           // 数据库主机地址（如 "127.0.0.1:3306"）
+	Username           string           // 数据库访问用户名
+	Password           string           // 数据库访问密码
+	Database           string           // 要连接的数据库名
+	MaxIdleConnections int              // 连接池中的最大空闲连接数
+	MaxOpenConnections int              // 与数据库的最大打开连接数
+	LogLevel           int              // 日志级别（GORM 日志详细程度）
+	Logger             logger.Interface // GORM 日志器实例（用于自定义日志输出）
+	SlowQueryThreshold time.Duration    // 自定义慢查询告警阈值
+	TablePrefix        string           // 表前缀
+	Timeout            time.Duration    // 连接超时
 
 	// ========== 新增：集群配置 ==========
 	PrimaryHost         string        `json:"primary-host,omitempty"`          // 主节点主机
@@ -318,7 +317,7 @@ func New(opts *Options) (*gorm.DB, error) {
 	}
 
 	sqlDB.SetMaxOpenConns(opts.MaxOpenConnections)
-	sqlDB.SetConnMaxLifetime(opts.MaxConnectionLifeTime)
+	sqlDB.SetConnMaxLifetime(opts.ConnMaxLifetime)
 	sqlDB.SetMaxIdleConns(opts.MaxIdleConnections)
 	sqlDB.SetConnMaxIdleTime(opts.ConnMaxIdleTime)
 
@@ -345,8 +344,8 @@ func setDefaultOptions(opts *Options) {
 	if opts.MaxIdleConnections <= 0 {
 		opts.MaxIdleConnections = 20
 	}
-	if opts.MaxConnectionLifeTime <= 0 {
-		opts.MaxConnectionLifeTime = 1 * time.Hour
+	if opts.ConnMaxLifetime <= 0 {
+		opts.ConnMaxLifetime = 1 * time.Hour
 	}
 	if opts.Timeout <= 0 {
 		opts.Timeout = 10 * time.Second

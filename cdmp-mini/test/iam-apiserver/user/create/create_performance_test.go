@@ -641,6 +641,7 @@ func cleanupDegradedUsers(t testing.TB, env *framework.Env, names []string, wait
 				continue
 			}
 			if !exists {
+				delete(pending, name)
 				continue
 			}
 			deleted, err := attemptForceDelete(env, name)
@@ -688,6 +689,14 @@ func degradedUserExists(env *framework.Env, name string) (bool, error) {
 	case http.StatusNotFound:
 		return false, nil
 	default:
+		if resp.Code == code.ErrUserNotFound {
+			return false, nil
+		}
+		msg := strings.ToLower(resp.Message)
+		errMsg := strings.ToLower(resp.Error)
+		if strings.Contains(msg, "not found") || strings.Contains(errMsg, "not found") {
+			return false, nil
+		}
 		return false, fmt.Errorf("unexpected status %d while probing user %s", resp.HTTPStatus(), name)
 	}
 }
@@ -1486,8 +1495,8 @@ func TestCreatePerformance(t *testing.T) {
 	scenarios := []performanceScenario{
 		//baselineSerialScenario(),
 		//baselineConcurrentScenario(),
-		baselineSustainedScenario(),
-		//stressSpikeScenario(),
+		//baselineSustainedScenario(),
+		stressSpikeScenario(),
 		//	stressRampScenario(),
 		//	stressDestructiveScenario(),
 		//	specializedDBPoolScenario(),

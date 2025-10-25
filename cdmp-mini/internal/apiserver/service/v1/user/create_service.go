@@ -9,6 +9,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/code"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/userctx"
 
 	"strconv"
 
@@ -21,6 +22,7 @@ import (
 
 func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.CreateOptions, opt *options.Options) (err error) {
 	ctx, span := trace.StartSpan(ctx, "user-service", "create")
+	ctx = userctx.WithCreateState(ctx)
 	trace.AddRequestTag(ctx, "username", user.Name)
 	businessCode := strconv.Itoa(code.ErrSuccess)
 	spanStatus := "success"

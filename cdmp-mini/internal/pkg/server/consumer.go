@@ -51,6 +51,11 @@ type deleteMessage struct {
 	DeletedAt string `json:"deleted_at"`
 }
 
+type pendingMarkerMetadata struct {
+	Status   string `json:"status"`
+	Degraded bool   `json:"degraded"`
+}
+
 const cacheNullSentinel = "rate_limit_prevention"
 
 var (
@@ -303,45 +308,153 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 		}
 
 		// 单独的批处理队列 (用于批量DB写) — 由一个轻量 goroutine 管理定时刷新
-		batchCh := make(chan batchItem, 4096) // 批量通道容量提升
+		batchCapacity := c.opts.BatchChannelCapacity
+		if batchCapacity <= 0 {
+			batchCapacity = 1024
+		}
+		batchCh := make(chan batchItem, batchCapacity)
 		defer close(batchCh)
+
+		maxBatchBound := c.opts.MaxDBBatchSize
+		if maxBatchBound < 1 {
+			maxBatchBound = 100
+		}
+		minBatchBound := c.opts.MinDBBatchSize
+		if minBatchBound < 1 || minBatchBound > maxBatchBound {
+			minBatchBound = maxBatchBound / 2
+			if minBatchBound < 1 {
+				minBatchBound = 1
+			}
+		}
+
+		minTimeout := c.opts.MinBatchTimeout
+		if minTimeout <= 0 {
+			minTimeout = 40 * time.Millisecond
+		}
+		maxTimeout := c.opts.MaxBatchTimeout
+		if maxTimeout <= 0 {
+			maxTimeout = 200 * time.Millisecond
+		}
+		if maxTimeout < minTimeout {
+			maxTimeout = minTimeout
+		}
+		baseTimeout := c.opts.BatchTimeout
+		if baseTimeout <= 0 {
+			baseTimeout = minTimeout
+		}
+		if baseTimeout < minTimeout {
+			baseTimeout = minTimeout
+		} else if baseTimeout > maxTimeout {
+			baseTimeout = maxTimeout
+		}
+
+		batchPool := sync.Pool{
+			New: func() any {
+				return make([]kafka.Message, 0, maxBatchBound)
+			},
+		}
+		getBatch := func(batch []kafka.Message) []kafka.Message {
+			if batch != nil {
+				return batch
+			}
+			return batchPool.Get().([]kafka.Message)[:0]
+		}
+		releaseBatch := func(batch []kafka.Message) []kafka.Message {
+			if batch == nil {
+				return nil
+			}
+			for i := range batch {
+				batch[i] = kafka.Message{}
+			}
+			batchPool.Put(batch[:0])
+			return nil
+		}
 
 		// 批量缓冲与提交 goroutine
 		go func() {
-			// 批量写入超时参数提升，默认50ms-200ms
-			batchTimeout := c.opts.BatchTimeout
-			if batchTimeout < 50*time.Millisecond {
-				batchTimeout = 50 * time.Millisecond
-			} else if batchTimeout > 200*time.Millisecond {
-				batchTimeout = 200 * time.Millisecond
-			}
-			ticker := time.NewTicker(batchTimeout)
+			currentTimeout := baseTimeout
+			ticker := time.NewTicker(currentTimeout)
 			defer ticker.Stop()
-			var createBatch []kafka.Message
-			var deleteBatch []kafka.Message
-			var updateBatch []kafka.Message
-			// 批量写入最大条数提升，默认100-500
-			maxBatchSize := c.opts.MaxDBBatchSize
-			if maxBatchSize < 100 {
-				maxBatchSize = 100
-			} else if maxBatchSize > 500 {
-				maxBatchSize = 500
+
+			currentBatchLimit := maxBatchBound
+			adjustParams := func(pending int) {
+				if pending < 0 {
+					pending = 0
+				}
+				capacity := cap(batchCh)
+				targetLimit := maxBatchBound
+				targetTimeout := baseTimeout
+
+				if c.opts.LagProtected || (capacity > 0 && pending >= capacity*3/4) {
+					targetLimit = minBatchBound
+					targetTimeout = minTimeout
+				} else if capacity > 0 && pending >= capacity/2 {
+					mid := (minBatchBound + maxBatchBound) / 2
+					if mid < minBatchBound {
+						mid = minBatchBound
+					}
+					targetLimit = mid
+					if baseTimeout > minTimeout {
+						targetTimeout = baseTimeout - (baseTimeout-minTimeout)/2
+					} else {
+						targetTimeout = minTimeout
+					}
+				} else if capacity > 0 && pending <= capacity/4 && !c.opts.LagProtected {
+					extra := baseTimeout + (maxTimeout-baseTimeout)/2
+					if extra > maxTimeout {
+						extra = maxTimeout
+					}
+					targetTimeout = extra
+					targetLimit = maxBatchBound
+				}
+
+				if targetLimit < minBatchBound {
+					targetLimit = minBatchBound
+				} else if targetLimit > maxBatchBound {
+					targetLimit = maxBatchBound
+				}
+
+				if targetTimeout < minTimeout {
+					targetTimeout = minTimeout
+				} else if targetTimeout > maxTimeout {
+					targetTimeout = maxTimeout
+				}
+
+				if targetLimit != currentBatchLimit {
+					currentBatchLimit = targetLimit
+				}
+				if targetTimeout != currentTimeout {
+					ticker.Reset(targetTimeout)
+					currentTimeout = targetTimeout
+				}
 			}
+
+			var (
+				createBatch []kafka.Message
+				deleteBatch []kafka.Message
+				updateBatch []kafka.Message
+			)
+
 			flush := func() {
 				if len(createBatch) > 0 {
 					c.batchCreateToDB(ctx, createBatch)
-					createBatch = createBatch[:0]
 				}
+				createBatch = releaseBatch(createBatch)
+
 				if len(deleteBatch) > 0 {
 					c.batchDeleteFromDB(ctx, deleteBatch)
-					deleteBatch = deleteBatch[:0]
 				}
+				deleteBatch = releaseBatch(deleteBatch)
+
 				if len(updateBatch) > 0 {
 					c.batchUpdateToDB(ctx, updateBatch)
-					updateBatch = updateBatch[:0]
 				}
+				updateBatch = releaseBatch(updateBatch)
+				adjustParams(len(batchCh))
 			}
+
 			for {
+				adjustParams(len(batchCh))
 				select {
 				case bi, ok := <-batchCh:
 					if !ok {
@@ -350,22 +463,25 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 					}
 					switch bi.op {
 					case OperationCreate:
+						createBatch = getBatch(createBatch)
 						createBatch = append(createBatch, bi.msg)
-						if len(createBatch) >= maxBatchSize {
+						if len(createBatch) >= currentBatchLimit {
 							c.batchCreateToDB(ctx, createBatch)
-							createBatch = createBatch[:0]
+							createBatch = releaseBatch(createBatch)
 						}
 					case OperationDelete:
+						deleteBatch = getBatch(deleteBatch)
 						deleteBatch = append(deleteBatch, bi.msg)
-						if len(deleteBatch) >= maxBatchSize {
+						if len(deleteBatch) >= currentBatchLimit {
 							c.batchDeleteFromDB(ctx, deleteBatch)
-							deleteBatch = deleteBatch[:0]
+							deleteBatch = releaseBatch(deleteBatch)
 						}
 					case OperationUpdate:
+						updateBatch = getBatch(updateBatch)
 						updateBatch = append(updateBatch, bi.msg)
-						if len(updateBatch) >= maxBatchSize {
+						if len(updateBatch) >= currentBatchLimit {
 							c.batchUpdateToDB(ctx, updateBatch)
-							updateBatch = updateBatch[:0]
+							updateBatch = releaseBatch(updateBatch)
 						}
 					default:
 						// ignore others for batching
@@ -582,13 +698,23 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		return c.sendToRetry(ctx, msg, "PENDING_MARKER_ERROR: "+pendingErr.Error())
 	}
 	trace.AddRequestTag(ctx, "pending_marker_present", pendingExists)
+	pendingDegraded := false
 	if pendingExists && pendingValue != "" {
 		trace.AddRequestTag(ctx, "pending_marker_value_len", len(pendingValue))
+		if degraded, decodeErr := decodePendingMarkerDegraded(pendingValue); decodeErr != nil {
+			trace.AddRequestTag(ctx, "pending_marker_decode_error", decodeErr.Error())
+		} else if degraded {
+			pendingDegraded = true
+			trace.AddRequestTag(ctx, "pending_marker_degraded", true)
+		}
 	}
 	if pendingTTL > 0 {
 		trace.AddRequestTag(ctx, "pending_marker_ttl_ms", pendingTTL.Milliseconds())
 	}
+
+	markerMissingFallback := false
 	if !pendingExists {
+		markerMissingFallback = true
 		trace.AddRequestTag(ctx, "pending_marker_missing", true)
 		existing, err := c.loadUserSnapshotWithTrace(ctx, user.Name, "pending_marker_missing")
 		if err != nil {
@@ -601,13 +727,14 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 			}
 			return nil
 		}
-		return c.sendToDeadLetter(ctx, msg, "PENDING_MARKER_MISSING")
+		trace.AddRequestTag(ctx, "pending_marker_missing_fallback", true)
+		log.Warnf("未检测到用户创建pending标记，降级走数据库兜底: username=%s", user.Name)
 	}
 
 	persistStart := time.Now()
 	persistCtx, persistSpan := trace.StartSpan(ctx, "kafka-consumer", "persist_user")
 	trace.AddRequestTag(persistCtx, "username", user.Name)
-	created, err := c.createUserInDB(persistCtx, user)
+	created, err := c.createUserInDB(persistCtx, user, pendingDegraded)
 	persistDuration := time.Since(persistStart)
 	persistStatus := "success"
 	persistCode := strconv.Itoa(code.ErrSuccess)
@@ -625,6 +752,11 @@ func (c *UserConsumer) processCreateOperation(ctx context.Context, msg kafka.Mes
 		"created":     created,
 	})
 	if err != nil {
+		if markerMissingFallback {
+			trace.AddRequestTag(ctx, "pending_marker_missing_create_error", err.Error())
+			log.Errorf("pending标记缺失降级插入失败: username=%s err=%v", user.Name, err)
+			return nil
+		}
 		return c.sendToDeadLetter(ctx, msg, "CREATE_DB_ERROR: "+err.Error())
 	}
 	trace.AddRequestTag(ctx, "create_db_inserted", created)
@@ -769,7 +901,7 @@ func (c *UserConsumer) processUpdateOperation(ctx context.Context, msg kafka.Mes
 	return nil
 }
 
-func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) (bool, error) {
+func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User, markerDegraded bool) (bool, error) {
 	user.Email = usercache.NormalizeEmail(user.Email)
 	user.Phone = usercache.NormalizePhone(user.Phone)
 
@@ -807,7 +939,12 @@ func (c *UserConsumer) createUserInDB(ctx context.Context, user *v1.User) (bool,
 	)
 	if err != nil {
 		if isDuplicateKeyDBError(err) {
-			log.Warnf("忽略重复用户插入: username=%s err=%v", user.Name, err)
+			log.Warnf("检测到用户重复插入: username=%s err=%v", user.Name, err)
+			trace.AddRequestTag(ctx, "create_db_duplicate", true)
+			if markerDegraded {
+				trace.AddRequestTag(ctx, "create_degraded_conflict", true)
+				return false, errors.WithCode(code.ErrResourceConflict, "创建用户请求已降级且用户名已存在")
+			}
 			return false, nil
 		}
 		return false, fmt.Errorf("数据创建失败: %w", err)
@@ -938,6 +1075,28 @@ func (c *UserConsumer) getPendingCreateMarker(ctx context.Context, username stri
 		ttl = time.Duration(ttlSeconds) * time.Second
 	}
 	return true, value, ttl, getDuration, ttlDuration, nil
+}
+
+func decodePendingMarkerDegraded(raw string) (bool, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return false, nil
+	}
+	if trimmed[0] != '{' {
+		if strings.EqualFold(trimmed, "degraded") {
+			return true, nil
+		}
+		return false, nil
+	}
+	var marker pendingMarkerMetadata
+	if err := jsonCodec.Unmarshal([]byte(trimmed), &marker); err != nil {
+		return false, err
+	}
+	status := strings.ToLower(strings.TrimSpace(marker.Status))
+	if status == "degraded" || marker.Degraded {
+		return true, nil
+	}
+	return false, nil
 }
 
 // clearPendingCreateMarker 在消息处理完成后清理 pending 标记，防止重复请求受阻。
@@ -1210,14 +1369,16 @@ func (c *UserConsumer) startAsyncTraceContext(parentCtx context.Context, msg kaf
 		opName = "unknown"
 	}
 	_, asyncCtx := trace.NewDetached(trace.Options{
-		TraceID:   traceID,
-		Service:   "iam-apiserver",
-		Component: "user-consumer",
-		Operation: fmt.Sprintf("%s_async", opName),
-		RequestID: traceID,
-		Path:      c.topic,
-		Method:    "KAFKA",
-		Now:       time.Now(),
+		TraceID:         traceID,
+		Service:         "iam-apiserver",
+		Component:       "user-consumer",
+		Operation:       fmt.Sprintf("%s_async", opName),
+		RequestID:       traceID,
+		Path:            c.topic,
+		Method:          "KAFKA",
+		Now:             time.Now(),
+		DisableLogging:  true,
+		ForceLogOnError: true,
 	})
 
 	trace.AddRequestTag(asyncCtx, "topic", c.topic)
@@ -1618,7 +1779,7 @@ func (c *UserConsumer) batchCreateToDB(ctx context.Context, msgs []kafka.Message
 	)
 	for i := range users {
 
-		created, err := c.createUserInDB(ctx, &users[i])
+		created, err := c.createUserInDB(ctx, &users[i], false)
 		if err != nil {
 			opErr = err
 			errorType := getErrorType(err)

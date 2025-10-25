@@ -45,6 +45,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/server/producer"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/trace"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/usercache"
+	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/userctx"
 	"github.com/maxiaolu1981/cretem/cdmp-mini/internal/pkg/util"
 	"github.com/redis/go-redis/v9"
 
@@ -54,6 +55,7 @@ import (
 	v1 "github.com/maxiaolu1981/cretem/nexuscore/api/apiserver/v1"
 	metav1 "github.com/maxiaolu1981/cretem/nexuscore/component-base/meta/v1"
 	"github.com/maxiaolu1981/cretem/nexuscore/errors"
+	"golang.org/x/sync/semaphore"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -80,15 +82,28 @@ type UserService struct {
 	contactWarmupMu   sync.Mutex
 	contactWarming    bool
 	contactCacheReady atomic.Bool
+	preflightLimiter  *semaphore.Weighted
 }
 
 type contextKey string
 
 const forceCacheRefreshKey contextKey = "user.forceCacheRefresh"
 
+func newPreflightLimiter(opts *options.Options) *semaphore.Weighted {
+	if opts == nil || opts.ServerRunOptions == nil {
+		return semaphore.NewWeighted(int64(serveropts.DefaultContactPreflightMaxConcurrency))
+	}
+	concurrency := opts.ServerRunOptions.ContactPreflightMaxConcurrency
+	if concurrency <= 0 {
+		concurrency = serveropts.DefaultContactPreflightMaxConcurrency
+	}
+	return semaphore.NewWeighted(int64(concurrency))
+}
+
 // pendingMarkerPayload uses a concrete struct so JSON encoding avoids map-based reflection overhead.
 type pendingMarkerPayload struct {
 	Status          string `json:"status"`
+	Degraded        bool   `json:"degraded,omitempty"`
 	Username        string `json:"username"`
 	Timestamp       string `json:"timestamp"`
 	RequestID       string `json:"request_id,omitempty"`
@@ -120,11 +135,12 @@ func forceCacheRefreshFromContext(ctx context.Context) bool {
 // NewUserService 创建用户服务实例
 func NewUserService(store interfaces.Factory, redis *storage.RedisCluster, opts *options.Options, producer producer.MessageProducer, auditMgr *audit.Manager) *UserService {
 	return &UserService{
-		Store:    store,
-		Redis:    redis,
-		Options:  opts,
-		Producer: producer,
-		Audit:    auditMgr,
+		Store:            store,
+		Redis:            redis,
+		Options:          opts,
+		Producer:         producer,
+		Audit:            auditMgr,
+		preflightLimiter: newPreflightLimiter(opts),
 	}
 }
 
@@ -423,8 +439,15 @@ func (u *UserService) pendingCreateTTL() time.Duration {
 
 func (u *UserService) pendingCreatePayload(ctx context.Context, username string) string {
 	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
+	degraded := userctx.IsCreateDegraded(ctx)
+	status := "pending"
+	if degraded {
+		status = "degraded"
+		trace.AddRequestTag(ctx, "create_pending_degraded", true)
+	}
 	payload := pendingMarkerPayload{
-		Status:    "pending",
+		Status:    status,
+		Degraded:  degraded,
 		Username:  username,
 		Timestamp: timestamp,
 	}
@@ -589,7 +612,7 @@ func (u *UserService) emitProtectionAudit(ctx context.Context, username, reason 
 	}
 	event := audit.Event{
 		Actor:        actor,
-		Action:       fmt.Sprintf("user.protection.%s", reason),
+		Action:       "user.protection." + reason,
 		ResourceType: "user",
 		ResourceID:   username,
 		Target:       username,
@@ -773,7 +796,104 @@ func (u *UserService) newDBContext(parent context.Context, timeout time.Duration
 	return context.WithTimeout(base, timeout)
 }
 
+func shouldDegradeForError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.IsCode(err, code.ErrDatabaseTimeout) {
+		return true
+	}
+	cause := errors.Cause(err)
+	if cause == nil {
+		cause = err
+	}
+	if cause == context.DeadlineExceeded || cause == context.Canceled {
+		return true
+	}
+	if te, ok := cause.(interface{ Timeout() bool }); ok && te.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(cause.Error())
+	return strings.Contains(msg, "deadline exceeded") || strings.Contains(msg, "timeout")
+}
+
+func (u *UserService) markCreateDegraded(ctx context.Context, reason string, kv ...interface{}) {
+	if userctx.MarkCreateDegraded(ctx) {
+		trace.AddRequestTag(ctx, "create_degraded", true)
+		if reason != "" {
+			trace.AddRequestTag(ctx, "create_degraded_reason", reason)
+		}
+		fields := []interface{}{"reason", reason}
+		if len(kv) > 0 {
+			fields = append(fields, kv...)
+		}
+		log.Warnw("用户创建进入降级模式", fields...)
+		return
+	}
+	if reason != "" {
+		trace.AddRequestTag(ctx, "create_degraded_reason", reason)
+	}
+}
+
+func (u *UserService) ensureContactPlaceholder(ctx context.Context, cacheKey, owner string) {
+	if u.Redis == nil || cacheKey == "" {
+		return
+	}
+	placeholder := owner
+	if strings.TrimSpace(placeholder) == "" {
+		placeholder = RATE_LIMIT_PREVENTION
+	}
+	setCtx, setCancel := u.redisOpContext(ctx)
+	ok, err := u.Redis.SetNX(setCtx, cacheKey, placeholder, contactPlaceholderTTL)
+	setCancel()
+	if err != nil {
+		log.Warnw("唯一性灰度占位失败", "key", cacheKey, "error", err)
+		return
+	}
+	if ok {
+		return
+	}
+	getCtx, getCancel := u.redisOpContext(ctx)
+	existing, err := u.Redis.GetKey(getCtx, cacheKey)
+	getCancel()
+	if err != nil {
+		if err != redis.Nil {
+			log.Warnw("唯一性灰度占位读取失败", "key", cacheKey, "error", err)
+		}
+		return
+	}
+	if strings.EqualFold(existing, placeholder) || existing == "" || existing == RATE_LIMIT_PREVENTION {
+		refreshCtx, refreshCancel := u.redisOpContext(ctx)
+		if err := u.Redis.SetKey(refreshCtx, cacheKey, placeholder, contactPlaceholderTTL); err != nil {
+			log.Warnw("唯一性灰度占位刷新失败", "key", cacheKey, "error", err)
+		}
+		refreshCancel()
+	}
+}
+
+func (u *UserService) ensureDegradedContactPlaceholders(ctx context.Context, username, email, phone string) {
+	if email != "" {
+		emailKey := u.generateEmailCacheKey(email)
+		u.ensureContactPlaceholder(ctx, emailKey, username)
+	}
+	if phone != "" {
+		phoneKey := u.generatePhoneCacheKey(phone)
+		u.ensureContactPlaceholder(ctx, phoneKey, username)
+	}
+}
+
 func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User) (map[string]*v1.User, error) {
+	limiter := u.preflightLimiter
+	if limiter != nil {
+		if err := limiter.Acquire(ctx, 1); err != nil {
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, errors.WithCode(code.ErrDatabaseTimeout, "预检查询等待超时")
+			}
+			return nil, errors.WithCode(code.ErrDatabase, "预检查询等待失败: %v", err)
+		}
+		defer limiter.Release(1)
+	}
+
 	u.ensureContactCacheReady()
 	u.normalizeUserContacts(user)
 
@@ -814,7 +934,13 @@ func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User
 	}
 
 	if preflightErr != nil {
-		return nil, preflightErr
+		if shouldDegradeForError(preflightErr) {
+			u.markCreateDegraded(ctx, "preflight_timeout", "username", user.Name)
+			u.ensureDegradedContactPlaceholders(ctx, user.Name, email, phone)
+			preflightErr = nil
+		} else {
+			return nil, preflightErr
+		}
 	}
 	if preflight == nil {
 		preflight = make(map[string]*v1.User)
@@ -921,6 +1047,13 @@ func (u *UserService) ensureContactUnique(
 		return nil
 	}
 
+	if userctx.IsCreateDegraded(ctx) {
+		if u.Redis != nil {
+			u.ensureContactPlaceholder(ctx, cacheKey, allowedOwner)
+		}
+		return nil
+	}
+
 	if u.Redis == nil {
 		dbStart := time.Now()
 		existing, lookupErr := lookup(ctx)
@@ -1008,6 +1141,12 @@ func (u *UserService) ensureContactUnique(
 		return existing, nil
 	})
 	if retryErr != nil {
+		if shouldDegradeForError(retryErr) {
+			u.markCreateDegraded(ctx, "contact_lookup_timeout", "field", fieldKey, "owner", allowedOwner)
+			u.ensureContactPlaceholder(ctx, cacheKey, allowedOwner)
+			err = nil
+			return nil
+		}
 		err = retryErr
 		return err
 	}

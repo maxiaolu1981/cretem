@@ -125,14 +125,16 @@ func (p *UserProducer) emitProducerDeliveryTrace(meta *producerMetadata, msg *sa
 
 	spanOperation := fmt.Sprintf("broker_ack_%s", operationLabel)
 	_, ctx := trace.NewDetached(trace.Options{
-		TraceID:   traceID,
-		Service:   "iam-apiserver",
-		Component: "kafka-producer",
-		Operation: spanOperation,
-		Phase:     trace.PhaseAsync,
-		Method:    "KAFKA",
-		Path:      meta.topic,
-		Now:       time.Now(),
+		TraceID:         traceID,
+		Service:         "iam-apiserver",
+		Component:       "kafka-producer",
+		Operation:       spanOperation,
+		Phase:           trace.PhaseAsync,
+		Method:          "KAFKA",
+		Path:            meta.topic,
+		Now:             time.Now(),
+		DisableLogging:  true,
+		ForceLogOnError: true,
 	})
 
 	trace.AddRequestTag(ctx, "topic", meta.topic)

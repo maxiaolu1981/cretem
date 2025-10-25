@@ -216,13 +216,25 @@ func formatRetryAfter(d time.Duration) string {
 		if minutes <= 0 {
 			minutes = 1
 		}
-		return fmt.Sprintf("%d分钟", minutes)
+		return strconv.Itoa(minutes) + "分钟"
 	}
 	seconds := int(math.Ceil(d.Seconds()))
 	if seconds <= 0 {
 		seconds = 1
 	}
-	return fmt.Sprintf("%d秒", seconds)
+	return strconv.Itoa(seconds) + "秒"
+}
+
+func buildUnlockNextStep(ttl time.Duration) string {
+	minutes := int(math.Ceil(ttl.Minutes()))
+	if minutes <= 0 {
+		minutes = 1
+	}
+	var builder strings.Builder
+	builder.WriteString("请")
+	builder.WriteString(strconv.Itoa(minutes))
+	builder.WriteString("分钟后重试，或联系管理员解锁")
+	return builder.String()
 }
 
 func (g *GenericAPIServer) annotateLoginAttemptMetrics(c *gin.Context, count int, ttl time.Duration, status string) {
@@ -1447,10 +1459,15 @@ func buildExtraInfo(c *gin.Context, bizCode int) gin.H {
 			"note":    "仅支持Bearer认证方案，不支持Basic/其他方案",
 		}
 	case code.ErrAccountLocked: // 建议新增：账户被锁定
+		ttl := c.GetDuration(ctxLoginFailTTLKey)
+		retryAfter := int(math.Ceil(ttl.Seconds()))
+		if retryAfter < 0 {
+			retryAfter = 0
+		}
 		return gin.H{
 			"suggestion":  "账户因连续登录失败已被暂时锁定",
-			"next_step":   fmt.Sprintf("请%d分钟后重试，或联系管理员解锁", c.GetDuration(ctxLoginFailTTLKey)),
-			"retry_after": c.GetDuration(ctxLoginFailTTLKey) * 60, // 秒数，可用于前端倒计时
+			"next_step":   buildUnlockNextStep(ttl),
+			"retry_after": retryAfter, // 秒数，可用于前端倒计时
 		}
 	case code.ErrTokenInvalid: // 100208：令牌无效
 		return gin.H{
@@ -1815,7 +1832,7 @@ func getUserIDString(value interface{}) string {
 	case jsoniter.Number:
 		return v.String()
 	default:
-		return fmt.Sprintf("%v", v)
+		return fmt.Sprint(v)
 	}
 }
 

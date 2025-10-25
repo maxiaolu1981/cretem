@@ -19,11 +19,14 @@ import (
 
 // UserTraceConfig controls user trace logging behaviour.
 type UserTraceConfig struct {
-	Enabled      bool
-	ServiceName  string
-	Env          string
-	PathPrefixes []string
-	AwaitTimeout time.Duration
+	Enabled         bool
+	ServiceName     string
+	Env             string
+	PathPrefixes    []string
+	AwaitTimeout    time.Duration
+	LogSampleRate   float64
+	ForceLogOnError bool
+	DisableLogging  bool
 }
 
 // UserTraceLoggingMiddleware instruments user-related APIs with tracing and metrics.
@@ -62,16 +65,19 @@ func UserTraceLoggingMiddleware(cfg UserTraceConfig) gin.HandlerFunc {
 		traceCtx, _ := trace.Start(
 			c.Request.Context(),
 			trace.Options{
-				TraceID:      requestID,
-				Service:      nonEmpty(cfg.ServiceName, "iam-apiserver"),
-				Component:    "user-api",
-				Operation:    operation,
-				Phase:        trace.PhaseHTTP,
-				Path:         path,
-				Method:       c.Request.Method,
-				ClientIP:     c.ClientIP(),
-				RequestID:    requestID,
-				AwaitTimeout: cfg.AwaitTimeout,
+				TraceID:         requestID,
+				Service:         nonEmpty(cfg.ServiceName, "iam-apiserver"),
+				Component:       "user-api",
+				Operation:       operation,
+				Phase:           trace.PhaseHTTP,
+				Path:            path,
+				Method:          c.Request.Method,
+				ClientIP:        c.ClientIP(),
+				RequestID:       requestID,
+				AwaitTimeout:    cfg.AwaitTimeout,
+				DisableLogging:  cfg.DisableLogging,
+				LogSampleRate:   cfg.LogSampleRate,
+				ForceLogOnError: cfg.ForceLogOnError,
 			},
 		)
 

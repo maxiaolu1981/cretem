@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,7 +152,7 @@ func loginRateLimiter(redisCluster *storage.RedisCluster, provider func() (int, 
 				"data": gin.H{
 					"limit":       limit,
 					"window":      window.String(),
-					"retry_after": fmt.Sprintf("%d秒", remaining),
+					"retry_after": formatSecondsLabel(remaining),
 				},
 			})
 			return
@@ -270,7 +272,7 @@ func LoginRateLimiterByUser(redisCluster *storage.RedisCluster, limit int, windo
 			return
 		}
 
-		identifier := fmt.Sprintf("user:%v", userID)
+		identifier := buildUserIdentifier(userID)
 		rateLimitKey := buildRedisKey(redisCluster, "ratelimit:login:"+identifier)
 
 		// 本地限流检查
@@ -310,7 +312,7 @@ func LoginRateLimiterByUser(redisCluster *storage.RedisCluster, limit int, windo
 				"code":    100209,
 				"message": "操作过于频繁，请稍后再试",
 				"data": gin.H{
-					"retry_after": fmt.Sprintf("%d秒", remaining),
+					"retry_after": formatSecondsLabel(remaining),
 				},
 			})
 			return
@@ -345,4 +347,77 @@ func CleanupRateLimit(redisCluster *storage.RedisCluster) {
 	localLimiter.counters = make(map[string]*localCounter)
 	localLimiter.Unlock()
 
+}
+
+type stringer interface {
+	String() string
+}
+
+func formatSecondsLabel(seconds int64) string {
+	if seconds <= 0 {
+		return "0秒"
+	}
+	if seconds >= 60 {
+		minutes := (seconds + 59) / 60
+		return strconv.FormatInt(minutes, 10) + "分钟"
+	}
+	return strconv.FormatInt(seconds, 10) + "秒"
+}
+
+func buildUserIdentifier(userID interface{}) string {
+	const prefix = "user:"
+	if userID == nil {
+		return prefix
+	}
+	switch v := userID.(type) {
+	case string:
+		trimmed := strings.TrimSpace(v)
+		if trimmed == "" {
+			return prefix
+		}
+		return prefix + trimmed
+	case []byte:
+		trimmed := strings.TrimSpace(string(v))
+		if trimmed == "" {
+			return prefix
+		}
+		return prefix + trimmed
+	case int:
+		return prefix + strconv.Itoa(v)
+	case int8:
+		return prefix + strconv.FormatInt(int64(v), 10)
+	case int16:
+		return prefix + strconv.FormatInt(int64(v), 10)
+	case int32:
+		return prefix + strconv.FormatInt(int64(v), 10)
+	case int64:
+		return prefix + strconv.FormatInt(v, 10)
+	case uint:
+		return prefix + strconv.FormatUint(uint64(v), 10)
+	case uint8:
+		return prefix + strconv.FormatUint(uint64(v), 10)
+	case uint16:
+		return prefix + strconv.FormatUint(uint64(v), 10)
+	case uint32:
+		return prefix + strconv.FormatUint(uint64(v), 10)
+	case uint64:
+		return prefix + strconv.FormatUint(v, 10)
+	case float32:
+		return prefix + strconv.FormatFloat(float64(v), 'g', -1, 32)
+	case float64:
+		return prefix + strconv.FormatFloat(v, 'g', -1, 64)
+	case bool:
+		if v {
+			return prefix + "true"
+		}
+		return prefix + "false"
+	case stringer:
+		trimmed := strings.TrimSpace(v.String())
+		if trimmed == "" {
+			return prefix
+		}
+		return prefix + trimmed
+	default:
+		return prefix + fmt.Sprintf("%v", v)
+	}
 }

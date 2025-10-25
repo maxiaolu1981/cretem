@@ -147,17 +147,15 @@ type MySQLOptions struct {
 
 func NewMySQLOptions() *MySQLOptions {
 	return &MySQLOptions{
-		AdminUsername: "iam",
-		AdminPassword: "iam59!z$",
-		Host:          "192.168.10.8",
-		Port:          3306,
-		Password:      "iam59!z$",
-		Database:      "iam",
-
-		// 连接池优化
-		MaxIdleConnections: 200,             // 增加到200个空闲连接
-		MaxOpenConnections: 500,             // 增加到500个最大连接
-		ConnMaxLifetime:    5 * time.Minute, // 缩短到5分钟，促进连接轮换
+		AdminUsername:      "iam",
+		AdminPassword:      "iam59!z$",
+		Host:               "192.168.10.8",
+		Port:               3306,
+		Password:           "iam59!z$",
+		Database:           "iam",
+		MaxOpenConnections: 256,             // 增加到500个最大连接
+		MaxIdleConnections: 128,             // 增加到200个空闲连接
+		ConnMaxLifetime:    3 * time.Minute, // 缩短到5分钟，促进连接轮换
 		ConnMaxIdleTime:    2 * time.Minute, // 空闲2分钟释放
 		ReadTimeout:        3 * time.Second, // 读超时
 		WriteTimeout:       3 * time.Second, // 写超时

@@ -359,4 +359,13 @@ Profile 验证
 （A）将 encoding/json 替换为 json-iterator/go（jsoniter），drop-in 替换，性能提升显著，分配减少。
 （B）如日志/trace 只做内部分析，可用 fastjson、easyjson 等生成代码的序列化工具，进一步减少分配。
 （C）如日志内容有大 map，可考虑只序列化必要字段，或用 sync.Pool 复用 encodeState。
-（D）trace.ToLogPayload 可加采样/开关，减少不必要的序列化。
+（D）trace.ToLogPayload 可加采样/开关，减少不必要的序列化
+------------------
+
+- 压测结果回放：`stress_spike` 请求 4096 次、成功率 96.39%、P99=1113 ms。148 次失败全部来自 `/v1/users/:name` 探活，trace 中显示业务码 `record not found` 却仍返回 500，说明错误被包成 `ErrUnknown`，而不是 `ErrUserNotFound`。我们虽然在测试侧忽略了这类 500，但服务端仍耗时在重试/日志上，建议修正 `handleGetError` 或 `WriteResponse` 逻辑，让 “record not found” 直接返回 404，减少不必要的重试与日志。  
+- heap diff 显示主要分配点：`Conn.ReadBatchWith`、`UserConsumer.StartConsuming`、`trace.AddRequestTag`、`bufio.NewWriterSize/ReaderSize`、`Users.List` 等，占用 ~14.95%+3.54%+2.49%。下一步可：1）复用 `trace.AddRequestTag` 的 map（例如改为 `strings.Builder` + struct）；2）调低 kafka-go 批量缓冲大小或开启 `ReadLagInterval` 减压缓存；3）针对 `Users.List` 查本次压测是否触发批量自检，可考虑只在诊断模式才调用。  
+- 错误率优化：先按清单“紧急优先级”排查资源池与慢操作。建议压测时打开 MySQL 慢日志（>200 ms），并抓 Prometheus 中数据库连接池、Redis 连接池指标；若发现连接池打满，可把 `MysqlOptions.MaxIdleConns/MaxOpenConns`、`Redis pool size` 临时翻倍验证错误率是否下降。  
+- 长尾延迟：按照“高优先级”清单执行 block profile 与 GC profile。当前 heap Top10 中 trace/kafka 占比高，建议同步抓 `pprof/block` 和 `pprof/gc`，确认是否有锁竞争或频繁 GC；若 GC 次数大，可复用高频切片（如消费者批量、trace 标签）并减少 JSON 临时对象。  
+- 基准场景 P99 115 ms：排查链路中多出来的组件（RPS 低但并发高说明存在排队），可在 `MonitorBusinessOperation` 里记录排队时间或增加 Prometheus 直方图，把业务处理中 vs 等待 redis/db 的时间拆开，针对性优化。  
+
+若需要我继续修改服务端错误码映射或 trace 优化，请告诉我。

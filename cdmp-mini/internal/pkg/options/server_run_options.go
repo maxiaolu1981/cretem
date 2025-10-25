@@ -1,70 +1,3 @@
-/*
-这是一个 Go 语言编写的服务器运行选项配置包，主要功能是管理服务器的启动配置。以下是该包的详细分析：
-
-核心结构
-ServerRunOptions 结构体
-定义了服务器运行的三个核心配置项：
-
-Mode - 服务器运行模式（debug/test/release）
-
-# Healthz - 是否启用健康检查端点
-
-# Middlewares - 允许使用的中间件列表
-
-主要方法
-1. AddFlags()
-将配置选项绑定到命令行标志，支持通过命令行参数配置：
-
---server.mode - 设置服务器模式
-
---server.healthz - 启用/禁用健康检查
-
---server.middlewares - 指定中间件列表
-
-2. Validate()
-验证配置参数的合法性：
-
-模式验证：确保 mode 只能是 debug、test、release 之一
-
-中间件验证：检查每个中间件名称格式（字母数字、下划线、连字符）
-
-3. NewServerRunOptions()
-创建默认配置选项，从 server.Config 获取默认值
-
-4. ApplyTo()
-将选项应用到服务器配置对象，实现配置传递
-
-设计特点
-松耦合设计：通过 ApplyTo 方法将选项与具体实现分离
-
-双重配置源：支持代码配置和命令行参数配置
-
-强验证机制：对输入参数进行严格格式校验
-
-默认值管理：从服务器配置获取合理的默认值
-
-使用场景
-该包通常用于：
-
-命令行服务器应用的配置管理
-
-多环境配置（开发、测试、生产）
-
-中间件的动态启用/禁用
-
-健康检查功能的开关控制
-
-代码质量
-良好的错误处理和多错误返回
-
-使用正则表达式确保输入安全
-
-清晰的注释和文档
-
-符合 Go 语言的惯用法
-
-这个包体现了 Go 语言中常见的配置管理模式，结合了命令行标志绑定和配置验证的良好实践。
-*/
 package options
 
 import (
@@ -80,21 +13,26 @@ import (
 )
 
 const (
-	DefaultContactLookupTimeout  = 2 * time.Second
-	DefaultContactRefreshTimeout = 3 * time.Second
+	DefaultContactLookupTimeout           = 2 * time.Second
+	DefaultContactRefreshTimeout          = 3 * time.Second
+	DefaultContactPreflightMaxConcurrency = 64
 )
 
 type ServerRunOptions struct {
-	Mode                   string        `json:"mode"        mapstructure:"mode"`
-	Healthz                bool          `json:"healthz"     mapstructure:"healthz"`
-	Middlewares            []string      `json:"middlewares" mapstructure:"middlewares"`
-	EnableProfiling        bool          `json:"enableProfiling" mapstructure:"enableProfiling"`
-	EnableMetrics          bool          `json:"enableMetrics" mapstructure:"enableMetrics"`
-	FastDebugStartup       bool          `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
-	EnableContactWarmup    bool          `json:"enableContactWarmup" mapstructure:"enableContactWarmup"`
-	EnableUserTraceLogging bool          `json:"enableUserTraceLogging" mapstructure:"enableUserTraceLogging"`
-	ContactLookupTimeout   time.Duration `json:"contactLookupTimeout" mapstructure:"contactLookupTimeout"`
-	ContactRefreshTimeout  time.Duration `json:"contactRefreshTimeout" mapstructure:"contactRefreshTimeout"`
+	Mode                           string        `json:"mode"        mapstructure:"mode"`
+	Healthz                        bool          `json:"healthz"     mapstructure:"healthz"`
+	Middlewares                    []string      `json:"middlewares" mapstructure:"middlewares"`
+	EnableProfiling                bool          `json:"enableProfiling" mapstructure:"enableProfiling"`
+	EnableMetrics                  bool          `json:"enableMetrics" mapstructure:"enableMetrics"`
+	FastDebugStartup               bool          `json:"fastDebugStartup" mapstructure:"fastDebugStartup"`
+	EnableContactWarmup            bool          `json:"enableContactWarmup" mapstructure:"enableContactWarmup"`
+	EnableUserTraceLogging         bool          `json:"enableUserTraceLogging" mapstructure:"enableUserTraceLogging"`
+	UserTraceLogSampleRate         float64       `json:"userTraceLogSampleRate" mapstructure:"userTraceLogSampleRate"`
+	UserTraceForceLogErrors        bool          `json:"userTraceForceLogErrors" mapstructure:"userTraceForceLogErrors"`
+	UserTraceDisableLogging        bool          `json:"userTraceDisableLogging" mapstructure:"userTraceDisableLogging"`
+	ContactLookupTimeout           time.Duration `json:"contactLookupTimeout" mapstructure:"contactLookupTimeout"`
+	ContactRefreshTimeout          time.Duration `json:"contactRefreshTimeout" mapstructure:"contactRefreshTimeout"`
+	ContactPreflightMaxConcurrency int           `json:"contactPreflightMaxConcurrency" mapstructure:"contactPreflightMaxConcurrency"`
 	// 新增：Cookie相关配置
 	CookieDomain             string        `json:"cookieDomain"    mapstructure:"cookieDomain"`
 	CookieSecure             bool          `json:"cookieSecure"    mapstructure:"cookieSecure"`
@@ -130,41 +68,45 @@ type ServerRunOptions struct {
 
 func NewServerRunOptions() *ServerRunOptions {
 	return &ServerRunOptions{
-		Mode:                     gin.ReleaseMode,
-		Healthz:                  true,
-		Middlewares:              []string{},
-		EnableProfiling:          true,
-		EnableMetrics:            true,
-		FastDebugStartup:         false,
-		CookieDomain:             "",
-		CookieSecure:             false,
-		CtxTimeout:               50 * time.Second,
-		Env:                      "development",
-		LoginRateLimit:           500000, // 5万/分钟
-		WriteRateLimit:           500000, // 写操作默认限流（每 window）
-		LoginWindow:              2 * time.Minute,
-		MaxLoginFailures:         5,
-		LoginFailReset:           15 * time.Minute,
-		LoginFastFailThreshold:   0,
-		LoginFastFailMessage:     "系统繁忙，请稍后再试",
-		LoginUpdateBuffer:        1024,
-		LoginUpdateBatchSize:     64,
-		LoginUpdateFlushInterval: 200 * time.Millisecond,
-		LoginUpdateTimeout:       2 * time.Second,
-		LoginCredentialCacheTTL:  30 * time.Second, //凭证缓存有效期
-		LoginCredentialCacheSize: 1024,             //凭证缓存最大条目数
-		AdminToken:               "",
-		EnableRateLimiter:        true,              // 默认启用生产端限流器
-		MaxGoroutines:            100,               // 默认最大并发处理数
-		MaxQueueSize:             100,               // 默认任务队列大小
-		TimeoutThreshold:         100 * time.Second, // 默认单个请求超时阈值
-		EnableContactWarmup:      true,
-		EnableUserTraceLogging:   true, //跟踪日志
-		ContactLookupTimeout:     DefaultContactLookupTimeout,
-		ContactRefreshTimeout:    DefaultContactRefreshTimeout,
-		ProducerFallbackDir:      "/var/log/iam/producer",
-		PasswordHashCost:         6,
-		UserPendingCreateTTL:     2 * time.Minute,
+		Mode:                           gin.ReleaseMode,
+		Healthz:                        true,
+		Middlewares:                    []string{},
+		EnableProfiling:                true,
+		EnableMetrics:                  false,
+		FastDebugStartup:               false,
+		CookieDomain:                   "",
+		CookieSecure:                   false,
+		CtxTimeout:                     50 * time.Second,
+		Env:                            "development",
+		LoginRateLimit:                 500000, // 5万/分钟
+		WriteRateLimit:                 500000, // 写操作默认限流（每 window）
+		LoginWindow:                    2 * time.Minute,
+		MaxLoginFailures:               5,
+		LoginFailReset:                 15 * time.Minute,
+		LoginFastFailThreshold:         0,
+		LoginFastFailMessage:           "系统繁忙，请稍后再试",
+		LoginUpdateBuffer:              1024,
+		LoginUpdateBatchSize:           64,
+		LoginUpdateFlushInterval:       200 * time.Millisecond,
+		LoginUpdateTimeout:             2 * time.Second,
+		LoginCredentialCacheTTL:        30 * time.Second, //凭证缓存有效期
+		LoginCredentialCacheSize:       1024,             //凭证缓存最大条目数
+		AdminToken:                     "",
+		EnableRateLimiter:              false,             // 默认启用生产端限流器
+		MaxGoroutines:                  100,               // 默认最大并发处理数
+		MaxQueueSize:                   100,               // 默认任务队列大小
+		TimeoutThreshold:               100 * time.Second, // 默认单个请求超时阈值
+		EnableContactWarmup:            true,
+		EnableUserTraceLogging:         true, //跟踪日志
+		UserTraceLogSampleRate:         0.1,
+		UserTraceForceLogErrors:        true,
+		UserTraceDisableLogging:        false,
+		ContactLookupTimeout:           DefaultContactLookupTimeout,
+		ContactRefreshTimeout:          DefaultContactRefreshTimeout,
+		ContactPreflightMaxConcurrency: DefaultContactPreflightMaxConcurrency,
+		ProducerFallbackDir:            "/var/log/iam/producer",
+		PasswordHashCost:               6,
+		UserPendingCreateTTL:           2 * time.Minute,
 	}
 }
 
@@ -199,20 +141,19 @@ func (s *ServerRunOptions) Complete() {
 		s.Healthz = true
 	}
 
+	if s.UserTraceLogSampleRate < 0 {
+		s.UserTraceLogSampleRate = 0
+	} else if s.UserTraceLogSampleRate > 1 {
+		s.UserTraceLogSampleRate = 1
+	}
+
 	// Middlewares: 如果为nil或空，设置默认空切片
 	if s.Middlewares == nil {
 		s.Middlewares = []string{}
 	}
 
-	// EnableProfiling: 如果为零值，设置默认值
-	if !s.EnableProfiling {
-		s.EnableProfiling = true
-	}
-
-	// EnableMetrics: 如果为零值，设置默认值
-	if !s.EnableMetrics {
-		s.EnableMetrics = true
-	}
+	// EnableProfiling 默认为 true，但允许显式关闭
+	// EnableMetrics 默认为 true，但允许显式关闭
 
 	// CookieDomain: 如果为空，设置默认值
 	if s.CookieDomain == "" {
@@ -281,6 +222,10 @@ func (s *ServerRunOptions) Complete() {
 
 	if s.ContactRefreshTimeout <= 0 {
 		s.ContactRefreshTimeout = DefaultContactRefreshTimeout
+	}
+
+	if s.ContactPreflightMaxConcurrency <= 0 {
+		s.ContactPreflightMaxConcurrency = DefaultContactPreflightMaxConcurrency
 	}
 
 	if s.PasswordHashCost <= 0 {
@@ -398,6 +343,14 @@ func (s *ServerRunOptions) Validate() []error {
 		))
 	}
 
+	if s.ContactPreflightMaxConcurrency <= 0 {
+		errs = append(errs, field.Invalid(
+			path.Child("contactPreflightMaxConcurrency"),
+			s.ContactPreflightMaxConcurrency,
+			"联系人预检最大并发数必须大于0",
+		))
+	}
+
 	if s.PasswordHashCost < bcrypt.MinCost || s.PasswordHashCost > bcrypt.MaxCost {
 		errs = append(errs, field.Invalid(
 			path.Child("passwordHashCost"),
@@ -414,6 +367,14 @@ func (s *ServerRunOptions) Validate() []error {
 		))
 	}
 
+	if s.UserTraceLogSampleRate < 0 || s.UserTraceLogSampleRate > 1 {
+		errs = append(errs, field.Invalid(
+			path.Child("userTraceLogSampleRate"),
+			s.UserTraceLogSampleRate,
+			"用户链路日志采样率必须位于[0,1]区间",
+		))
+	}
+
 	agg := errs.ToAggregate()
 	if agg == nil {
 		return nil // 无错误时返回空切片，而非nil
@@ -424,7 +385,12 @@ func (s *ServerRunOptions) Validate() []error {
 func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 	fs.BoolVar(&s.EnableRateLimiter, "server.enable-rate-limiter", s.EnableRateLimiter, "是否启用生产端限流器（默认启用）")
 	fs.BoolVar(&s.EnableContactWarmup, "server.enable-contact-warmup", s.EnableContactWarmup, "是否在启动后预热邮箱/手机号唯一性缓存（默认关闭）")
+	fs.BoolVar(&s.EnableMetrics, "server.enable-metrics", s.EnableMetrics, "是否注册 Prometheus 指标路由")
+	fs.BoolVar(&s.EnableProfiling, "server.enable-profiling", s.EnableProfiling, "是否暴露 pprof 调试端点（仅 debug 模式有效）")
 	fs.BoolVar(&s.EnableUserTraceLogging, "server.enable-user-trace-logging", s.EnableUserTraceLogging, "是否启用用户API链路追踪日志输出")
+	fs.Float64Var(&s.UserTraceLogSampleRate, "server.user-trace-log-sample-rate", s.UserTraceLogSampleRate, "用户API链路日志的采样率（0-1 之间，默认0.1）")
+	fs.BoolVar(&s.UserTraceForceLogErrors, "server.user-trace-force-log-errors", s.UserTraceForceLogErrors, "是否在出现错误时强制输出用户链路日志")
+	fs.BoolVar(&s.UserTraceDisableLogging, "server.user-trace-disable-logging", s.UserTraceDisableLogging, "是否关闭用户链路日志（仍会在force模式下输出错误日志）")
 	fs.StringVarP(&s.Mode, "server.mode", "M", s.Mode, ""+
 		"指定服务器运行模式。支持的服务器模式：debug(调试)、test(测试)、release(发布)。")
 
@@ -467,6 +433,7 @@ func (s *ServerRunOptions) AddFlags(fs *pflag.FlagSet) {
 		"登录凭证比较结果本地缓存的最大条目数")
 	fs.DurationVar(&s.ContactLookupTimeout, "server.contact-lookup-timeout", s.ContactLookupTimeout, "联系人唯一性查库超时阈值")
 	fs.DurationVar(&s.ContactRefreshTimeout, "server.contact-refresh-timeout", s.ContactRefreshTimeout, "联系人唯一性负缓存刷新查库超时阈值")
+	fs.IntVar(&s.ContactPreflightMaxConcurrency, "server.contact-preflight-max-concurrency", s.ContactPreflightMaxConcurrency, "预检查询允许的最大并发数，用于保护数据库连接数")
 	fs.StringVar(&s.AdminToken, "server.admin-token", s.AdminToken,
 		"管理API的简单访问令牌（默认为空，仅允许本地访问）")
 	fs.BoolVar(&s.FastDebugStartup, "server.fast-debug-startup", s.FastDebugStartup, "调试模式下是否跳过耗时的依赖等待，加速本地调试启动")

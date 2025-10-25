@@ -138,10 +138,8 @@ func (u *Users) executeSingleGet(ctx context.Context, username string) (*v1.User
 
 // handleGetError 处理查询错误
 func (u *Users) handleGetError(err error) error {
-	// 使用错误码框架解析错误
-	coder := errors.ParseCoderByErr(err)
-	if coder != nil {
-		// 如果是已知错误码，直接返回
+	// 已经带业务码的错误保持不变（避免重复包装）
+	if errors.IsWithCode(err) {
 		return err
 	}
 

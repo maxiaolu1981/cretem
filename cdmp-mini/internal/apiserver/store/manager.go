@@ -202,17 +202,16 @@ func GetMySQLFactoryOr(opts *moptions.MySQLOptions) (interfaces.Factory, *gorm.D
 			// 集群模式
 			dbOptions := &db.Options{
 				// 基础配置
-				Host:                  opts.Host,
-				Username:              opts.Username,
-				Password:              opts.Password,
-				Database:              opts.Database,
-				MaxIdleConnections:    opts.MaxIdleConnections,
-				MaxOpenConnections:    opts.MaxOpenConnections,
-				MaxConnectionLifeTime: opts.MaxConnectionLifeTime,
-				LogLevel:              opts.LogLevel,
-				Logger:                logger.New(opts.LogLevel),
-				TablePrefix:           "",
-				Timeout:               opts.DialTimeout,
+				Host:               opts.Host,
+				Username:           opts.Username,
+				Password:           opts.Password,
+				Database:           opts.Database,
+				MaxIdleConnections: opts.MaxIdleConnections,
+				MaxOpenConnections: opts.MaxOpenConnections,
+				LogLevel:           opts.LogLevel,
+				Logger:             logger.New(opts.LogLevel),
+				TablePrefix:        "",
+				Timeout:            opts.DialTimeout,
 
 				// 集群配置
 				PrimaryHost:         opts.PrimaryHost,
@@ -247,17 +246,16 @@ func GetMySQLFactoryOr(opts *moptions.MySQLOptions) (interfaces.Factory, *gorm.D
 		} else {
 			// 单机模式（向后兼容）
 			dbOptions := &db.Options{
-				Host:                  opts.Host,
-				Username:              opts.Username,
-				Password:              opts.Password,
-				Database:              opts.Database,
-				MaxIdleConnections:    opts.MaxIdleConnections,
-				MaxOpenConnections:    opts.MaxOpenConnections,
-				MaxConnectionLifeTime: opts.MaxConnectionLifeTime,
-				LogLevel:              opts.LogLevel,
-				Logger:                logger.New(opts.LogLevel),
-				TablePrefix:           "",
-				Timeout:               opts.DialTimeout,
+				Host:               opts.Host,
+				Username:           opts.Username,
+				Password:           opts.Password,
+				Database:           opts.Database,
+				MaxIdleConnections: opts.MaxIdleConnections,
+				MaxOpenConnections: opts.MaxOpenConnections,
+				LogLevel:           opts.LogLevel,
+				Logger:             logger.New(opts.LogLevel),
+				TablePrefix:        "",
+				Timeout:            opts.DialTimeout,
 
 				// 设置单机模式下的集群配置
 				PrimaryHost:         opts.Host,

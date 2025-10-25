@@ -47,10 +47,13 @@ func (s *Server) Start() error {
 		"--server.healthz=true",
 		"--server.fast-debug-startup=true",
 		"--server.insecure-port=" + s.apiPort,
+		"--server.enable-metrics=false",
+		"--server.enable-profiling=false",
 		"--log.level=debug",
 		"--log.output-paths=stdout," + logFile,
 		"--feature.enable-audit=true",
 		"--audit.log-file=" + filepath.Join(outputDir, "iam-audit.log"),
+		"--audit.enable-metrics=false",
 		"--producer.fallback-dir=" + fallbackDir,
 	}
 	s.cmd = exec.Command(s.binaryPath, args...)
