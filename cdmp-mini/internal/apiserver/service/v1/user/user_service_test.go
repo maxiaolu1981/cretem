@@ -82,8 +82,10 @@ func TestEnsureContactUniquenessUsesPreflight(t *testing.T) {
 	svc.Options.RedisOptions.MaxRetries = 1
 
 	user := &v1.User{ObjectMeta: metav1.ObjectMeta{Name: "Alice"}, Email: "Alice@Example.com", Phone: " 13900000000 "}
-	if _, err := svc.ensureContactUniqueness(context.Background(), user); err != nil {
+	if _, usernameChecked, err := svc.ensureContactUniqueness(context.Background(), user); err != nil {
 		t.Fatalf("ensureContactUniqueness returned error: %v", err)
+	} else if !usernameChecked {
+		t.Fatalf("expected username to be preflighted")
 	}
 	if store.calls != 1 {
 		t.Fatalf("expected PreflightConflicts to be called once, got %d", store.calls)
@@ -103,7 +105,7 @@ func TestEnsureContactUniquenessReturnsErrorOnEmailConflict(t *testing.T) {
 	svc.Options.RedisOptions.MaxRetries = 1
 
 	user := &v1.User{ObjectMeta: metav1.ObjectMeta{Name: "Alice"}, Email: "alice@example.com"}
-	_, err := svc.ensureContactUniqueness(context.Background(), user)
+	_, _, err := svc.ensureContactUniqueness(context.Background(), user)
 	if err == nil {
 		t.Fatalf("expected validation error, got nil")
 	}
@@ -121,7 +123,7 @@ func TestEnsureContactUniquenessAllowsSameOwner(t *testing.T) {
 	svc.Options.RedisOptions.MaxRetries = 1
 
 	user := &v1.User{ObjectMeta: metav1.ObjectMeta{Name: "alice"}, Email: "alice@example.com"}
-	if _, err := svc.ensureContactUniqueness(context.Background(), user); err != nil {
+	if _, _, err := svc.ensureContactUniqueness(context.Background(), user); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

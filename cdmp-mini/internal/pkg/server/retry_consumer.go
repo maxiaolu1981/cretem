@@ -307,6 +307,19 @@ func (rc *RetryConsumer) processRetryCreate(ctx context.Context, msg kafka.Messa
 			fmt.Sprintf("MAX_RETRIES_EXCEEDED(%d): %s", rc.maxRetries, lastError))
 	}
 
+	existingSnapshot, snapshotErr := rc.loadUserSnapshot(ctx, user.Name)
+	if snapshotErr != nil {
+		return rc.handleProcessingError(ctx, msg, currentRetryCount, "查询用户失败: "+snapshotErr.Error())
+	}
+	if existingSnapshot != nil {
+		log.Infof("重试创建检测到用户已存在，跳过插入: username=%s", user.Name)
+		// 同步缓存，确保与数据库状态一致
+		if cacheErr := rc.setUserCache(ctx, existingSnapshot, nil); cacheErr != nil {
+			log.Warnf("重试创建同步缓存失败: username=%s err=%v", user.Name, cacheErr)
+		}
+		return nil
+	}
+
 	if time.Now().Before(nextRetryTime) {
 		remaining := time.Until(nextRetryTime)
 		log.Debugf("等待重试时间到达: username=%s, 剩余=%v", user.Name, remaining)
@@ -394,7 +407,6 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 		userID           uint64
 		existingSnapshot *v1.User
 	)
-	retryCount := currentRetryCount
 	if deleteRequest.Username != "" {
 		existing, err := rc.loadUserSnapshot(ctx, deleteRequest.Username)
 		if err != nil {
@@ -409,8 +421,10 @@ func (rc *RetryConsumer) processRetryDelete(ctx context.Context, msg kafka.Messa
 	if err := rc.deleteUserFromDB(ctx, deleteRequest.Username); err != nil {
 		// 检查是否为可忽略的错误
 		if rc.isIgnorableDeleteError(err) {
-			if strings.Contains(strings.ToLower(err.Error()), "not found") && retryCount == 0 {
+			lowerErr := strings.ToLower(err.Error())
+			if strings.Contains(lowerErr, "not found") || strings.Contains(lowerErr, "does not exist") || strings.Contains(lowerErr, "record not found") {
 				trace.AddRequestTag(ctx, "retry_not_found_delete", true)
+				log.Debugf("删除目标尚未创建，准备重试: username=%s, retryCount=%d", deleteRequest.Username, currentRetryCount)
 				return rc.prepareNextRetry(ctx, msg, currentRetryCount, "DELETE_TARGET_NOT_READY: "+err.Error())
 			}
 			log.Warnf("删除操作遇到可忽略错误，直接提交: username=%s, error=%v",
@@ -647,7 +661,14 @@ func (rc *RetryConsumer) createUserInDB(ctx context.Context, user *v1.User) erro
 		now,
 		now,
 	)
-	return execErr
+	if execErr != nil {
+		if isDuplicateKeyError(execErr.Error()) {
+			log.Warnf("重试创建检测到数据库已存在记录，跳过插入: username=%s", user.Name)
+			return nil
+		}
+		return execErr
+	}
+	return nil
 }
 
 func (rc *RetryConsumer) updateUserInDB(ctx context.Context, user *v1.User) error {

@@ -77,6 +77,22 @@ func (g *GenericAPIServer) fastDebugStartupEnabled() bool {
 	return g.isDebugMode() && g.options.ServerRunOptions.FastDebugStartup
 }
 
+func (g *GenericAPIServer) consumerGroupBase() string {
+	return ConsumerGroupPrefix
+}
+
+func (g *GenericAPIServer) consumerGroupID(suffix string) string {
+	base := g.consumerGroupBase()
+	suffix = strings.TrimSpace(suffix)
+	if suffix == "" {
+		return base
+	}
+	if strings.HasSuffix(base, "-") {
+		return base + suffix
+	}
+	return base + "-" + suffix
+}
+
 func (g *GenericAPIServer) shutdownAudit() {
 	if g.audit == nil {
 		return
@@ -404,7 +420,7 @@ func NewGenericAPIServer(opts *options.Options) (*GenericAPIServer, error) {
 			}
 
 			// 更新 prometheus 指标
-			retryGroupId := ConsumerGroupPrefix + "-retry"
+			retryGroupId := g.consumerGroupID("retry")
 			metrics.ConsumerTopicPartitions.WithLabelValues(UserRetryTopic).Set(float64(partitionCount))
 			metrics.ConsumerGroupInstances.WithLabelValues(retryGroupId).Set(float64(len(instances.retryConsumers)))
 			if len(instances.retryConsumers) == 0 {
@@ -772,7 +788,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	consumerCount := kafkaOpts.WorkerCount
 	retryconsumerCount := kafkaOpts.RetryWorkerCount
 
-	log.Infof("为每个主题创建 %d 个消费者实例", consumerCount)
+	log.Infof("为每个主题创建 %d 个消费者实例，消费组前缀: %s", consumerCount, g.consumerGroupBase())
 
 	// 创建消费者实例切片
 	createConsumers := make([]*UserConsumer, consumerCount)
@@ -780,15 +796,14 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	deleteConsumers := make([]*UserConsumer, consumerCount)
 	retryConsumers := make([]*RetryConsumer, retryconsumerCount)
 
-	for i := 0; i < consumerCount; i++ {
-		// 所有实例使用相同的消费组ID（不加后缀）
-		createGroupID := ConsumerGroupPrefix + "-create" // 相同的组ID
-		updateGroupID := ConsumerGroupPrefix + "-update" // 相同的组ID
-		deleteGroupID := ConsumerGroupPrefix + "-delete" // 相同的组ID
+	createGroupID := g.consumerGroupID("create")
+	updateGroupID := g.consumerGroupID("update")
+	deleteGroupID := g.consumerGroupID("delete")
 
+	for i := 0; i < consumerCount; i++ {
 		// 创建消费者实例 - 使用相同的消费组ID
 		createConsumers[i] = NewUserConsumer(kafkaOpts, UserCreateTopic,
-			createGroupID, db, g.redis) // ✅ 相同的组ID
+			createGroupID, db, g.redis)
 		createConsumers[i].SetProducer(userProducer)
 		createConsumers[i].SetInstanceID(i)
 		if g.datastore != nil {
@@ -799,7 +814,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		}
 
 		updateConsumers[i] = NewUserConsumer(kafkaOpts, UserUpdateTopic,
-			updateGroupID, db, g.redis) // ✅ 相同的组ID
+			updateGroupID, db, g.redis)
 		updateConsumers[i].SetProducer(userProducer)
 		updateConsumers[i].SetInstanceID(i)
 		if g.datastore != nil {
@@ -810,7 +825,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 		}
 
 		deleteConsumers[i] = NewUserConsumer(kafkaOpts, UserDeleteTopic,
-			deleteGroupID, db, g.redis) // ✅ 相同的组ID
+			deleteGroupID, db, g.redis)
 		deleteConsumers[i].SetProducer(userProducer)
 		deleteConsumers[i].SetInstanceID(i)
 		if g.datastore != nil {
@@ -822,7 +837,7 @@ func (g *GenericAPIServer) initKafkaComponents(db *gorm.DB) error {
 	}
 
 	log.Info("初始化重试消费者...")
-	retryGroupId := ConsumerGroupPrefix + "-retry"
+	retryGroupId := g.consumerGroupID("retry")
 	for i := 0; i < kafkaOpts.RetryWorkerCount; i++ {
 		retryConsumers[i] = NewRetryConsumer(db, g.redis, userProducer, kafkaOpts, UserRetryTopic, retryGroupId)
 		if g.datastore != nil {

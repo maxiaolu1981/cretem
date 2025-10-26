@@ -86,7 +86,7 @@ func ensureUserCoveringIndexes(db *gorm.DB) {
 }
 
 func NewUsers(db *gorm.DB, policyStore interfaces.PolicyStore) *Users {
-	ensureUserCoveringIndexes(db)
+	//	ensureUserCoveringIndexes(db)
 	var sqlCore *sql.DB
 	if db != nil {
 		if core, err := db.DB(); err != nil {

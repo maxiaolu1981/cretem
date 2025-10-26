@@ -74,7 +74,7 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 
 	contactCtx, contactSpan := trace.StartSpan(ctx, "user-service", "ensure_contacts_unique")
 	contactsStart := time.Now()
-	contactHits, errEnsure := u.ensureContactUniqueness(contactCtx, user)
+	contactHits, usernamePreflighted, errEnsure := u.ensureContactUniqueness(contactCtx, user)
 	contactsDuration = time.Since(contactsStart)
 	contactsErr = errEnsure
 	contactStatus := "success"
@@ -104,7 +104,10 @@ func (u *UserService) Create(ctx context.Context, user *v1.User, opts metav1.Cre
 		}
 	}
 
-	if existingUser == nil {
+	if existingUser == nil && usernamePreflighted {
+		u.recordUserCreateStep(ctx, "check_user_exist", "username", user.Name, 0, nil)
+		trace.AddRequestTag(ctx, "username_preflight_verified", true)
+	} else if existingUser == nil {
 		checkCtx, checkSpan := trace.StartSpan(ctx, "user-service", "check_user_exist")
 		existenceStart := time.Now()
 		ruser, errCheck := u.checkUserExist(checkCtx, user.Name, false)

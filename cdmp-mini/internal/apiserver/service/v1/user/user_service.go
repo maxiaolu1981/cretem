@@ -83,6 +83,7 @@ type UserService struct {
 	contactWarming    bool
 	contactCacheReady atomic.Bool
 	preflightLimiter  *semaphore.Weighted
+	poolReporter      *poolStatsReporter
 }
 
 type contextKey string
@@ -141,6 +142,7 @@ func NewUserService(store interfaces.Factory, redis *storage.RedisCluster, opts 
 		Producer:         producer,
 		Audit:            auditMgr,
 		preflightLimiter: newPreflightLimiter(opts),
+		poolReporter:     newPoolStatsReporterForFactory(store),
 	}
 }
 
@@ -239,6 +241,7 @@ func (u *UserService) getFromCache(ctx context.Context, cacheKey string) (*v1.Us
 
 // getUserFromDBAndSetCache 带缓存的用户查询核心逻辑
 func (u *UserService) getUserFromDBAndSetCache(ctx context.Context, username string) (*v1.User, error) {
+	defer u.reportDBPoolStats(ctx, "apiserver_user_service")
 
 	// 1. 查询数据库
 	user, err := u.Store.Users().Get(ctx, username, metav1.GetOptions{}, u.Options)
@@ -882,14 +885,14 @@ func (u *UserService) ensureDegradedContactPlaceholders(ctx context.Context, use
 	}
 }
 
-func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User) (map[string]*v1.User, error) {
+func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User) (map[string]*v1.User, bool, error) {
 	limiter := u.preflightLimiter
 	if limiter != nil {
 		if err := limiter.Acquire(ctx, 1); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, errors.WithCode(code.ErrDatabaseTimeout, "预检查询等待超时")
+				return nil, false, errors.WithCode(code.ErrDatabaseTimeout, "预检查询等待超时")
 			}
-			return nil, errors.WithCode(code.ErrDatabase, "预检查询等待失败: %v", err)
+			return nil, false, errors.WithCode(code.ErrDatabase, "预检查询等待失败: %v", err)
 		}
 		defer limiter.Release(1)
 	}
@@ -899,29 +902,29 @@ func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User
 
 	email := user.Email
 	phone := user.Phone
-	if email == "" && phone == "" {
-		return map[string]*v1.User{}, nil
-	}
 
 	store := u.userStoreReadOnly()
 	if store == nil {
-		return nil, errors.WithCode(code.ErrDatabase, "用户存储未就绪")
+		return nil, false, errors.WithCode(code.ErrDatabase, "用户存储未就绪")
 	}
 
 	var (
-		preflight     map[string]*v1.User
-		preflightErr  error
-		retryAttempts = u.Options.RedisOptions.MaxRetries
+		preflight       map[string]*v1.User
+		preflightErr    error
+		retryAttempts   = u.Options.RedisOptions.MaxRetries
+		usernameChecked bool
+		ranPreflight    bool
 	)
 
 	if retryAttempts <= 0 {
 		retryAttempts = 1
 	}
 
-	if email != "" || phone != "" {
+	if strings.TrimSpace(user.Name) != "" || email != "" || phone != "" {
 		result, err := util.RetryWithBackoff(retryAttempts, isRetryableError, func() (interface{}, error) {
 			dbCtx, cancel := u.newDBContext(ctx, u.contactLookupTimeout())
 			defer cancel()
+			ranPreflight = true
 			return store.PreflightConflicts(dbCtx, user.Name, email, phone, u.Options)
 		})
 		if err != nil {
@@ -933,13 +936,18 @@ func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User
 		}
 	}
 
+	if ranPreflight && strings.TrimSpace(user.Name) != "" && preflightErr == nil {
+		usernameChecked = true
+	}
+
 	if preflightErr != nil {
 		if shouldDegradeForError(preflightErr) {
 			u.markCreateDegraded(ctx, "preflight_timeout", "username", user.Name)
 			u.ensureDegradedContactPlaceholders(ctx, user.Name, email, phone)
 			preflightErr = nil
+			usernameChecked = false
 		} else {
-			return nil, preflightErr
+			return nil, false, preflightErr
 		}
 	}
 	if preflight == nil {
@@ -964,7 +972,7 @@ func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User
 				return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在")
 			},
 		); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
@@ -986,11 +994,11 @@ func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User
 				return nil, errors.WithCode(code.ErrUserNotFound, "用户不存在")
 			},
 		); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
 
-	return preflight, nil
+	return preflight, usernameChecked, nil
 }
 
 func (u *UserService) ensureEmailUnique(ctx context.Context, email, owner string) (err error) {

@@ -62,7 +62,7 @@ func (u *Users) List(ctx context.Context, username string, opts metav1.ListOptio
 		return nil, errors.WithCode(code.ErrDatabase, "统计用户数量失败: %v", err)
 	}
 
-	listQuery := fmt.Sprintf("SELECT id, instanceID, name, nickname, email, phone, status, isAdmin, createdAt, updatedAt FROM `user` WHERE %s ORDER BY id DESC LIMIT ? OFFSET ?", whereClause)
+	listQuery := fmt.Sprintf("SELECT id, instanceID, name, nickname, email, phone, status, isAdmin, createdAt, updatedAt FROM `user` WHERE %s  LIMIT ? OFFSET ?", whereClause)
 	listArgs := append(append([]interface{}{}, args...), ol.Limit, ol.Offset)
 	rows, err := sqlCore.QueryContext(ctx, listQuery, listArgs...)
 	if err != nil {

@@ -368,4 +368,5 @@ Profile 验证
 - 长尾延迟：按照“高优先级”清单执行 block profile 与 GC profile。当前 heap Top10 中 trace/kafka 占比高，建议同步抓 `pprof/block` 和 `pprof/gc`，确认是否有锁竞争或频繁 GC；若 GC 次数大，可复用高频切片（如消费者批量、trace 标签）并减少 JSON 临时对象。  
 - 基准场景 P99 115 ms：排查链路中多出来的组件（RPS 低但并发高说明存在排队），可在 `MonitorBusinessOperation` 里记录排队时间或增加 Prometheus 直方图，把业务处理中 vs 等待 redis/db 的时间拆开，针对性优化。  
 
-若需要我继续修改服务端错误码映射或 trace 优化，请告诉我。
+--------------
+你来进行修正把：抓取 sql.DB 连接池指标或慢查询看是否出现 wait_count/slow query 峰值；2) 排查缓存未落地的原因，降低重复读；3) 必要时优化 check_user_exist 查询和索引或调大池容量。

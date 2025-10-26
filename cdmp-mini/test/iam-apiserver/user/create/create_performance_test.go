@@ -122,7 +122,7 @@ type scenarioResult struct {
 	errors          []string
 	cacheHits       int
 	cacheChecks     int
-	cleanup         map[string]bool
+	cleanup         map[string]cleanupState
 	nameBuckets     map[string]int
 	passwordBuckets map[string]int
 	emailBuckets    map[string]int
@@ -132,6 +132,11 @@ type scenarioResult struct {
 
 type cleanupTask struct {
 	Name        string
+	RequireWait bool
+	Degraded    bool
+}
+
+type cleanupState struct {
 	RequireWait bool
 	Degraded    bool
 }
@@ -215,7 +220,7 @@ func (o scenarioOptions) normalized() scenarioOptions {
 func newScenarioResult(sc performanceScenario) *scenarioResult {
 	return &scenarioResult{
 		scenario:        sc,
-		cleanup:         make(map[string]bool),
+		cleanup:         make(map[string]cleanupState),
 		nameBuckets:     make(map[string]int),
 		passwordBuckets: make(map[string]int),
 		emailBuckets:    make(map[string]int),
@@ -237,7 +242,10 @@ func (r *scenarioResult) record(outcome operationOutcome) {
 	}
 	if outcome.degraded {
 		r.degraded++
-		r.cleanup[outcome.variant.Spec.Name] = false
+		state := r.cleanup[outcome.variant.Spec.Name]
+		state.Degraded = true
+		state.RequireWait = true
+		r.cleanup[outcome.variant.Spec.Name] = state
 	} else if outcome.success {
 		r.success++
 	} else {
@@ -247,8 +255,13 @@ func (r *scenarioResult) record(outcome operationOutcome) {
 		}
 	}
 	if outcome.created {
-		requireWait := !r.scenario.Options.SkipWaitForReady
-		r.cleanup[outcome.variant.Spec.Name] = requireWait
+		requireWait := r.scenario.Options.SkipWaitForReady
+		state := r.cleanup[outcome.variant.Spec.Name]
+		if requireWait {
+			state.RequireWait = true
+		}
+		state.Degraded = false
+		r.cleanup[outcome.variant.Spec.Name] = state
 	}
 	if outcome.cacheChecks > 0 {
 		r.cacheChecks += outcome.cacheChecks
@@ -286,11 +299,11 @@ func (r *scenarioResult) cleanupTasks() []cleanupTask {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	tasks := make([]cleanupTask, 0, len(r.cleanup))
-	for name, requireWait := range r.cleanup {
+	for name, state := range r.cleanup {
 		tasks = append(tasks, cleanupTask{
 			Name:        name,
-			RequireWait: requireWait,
-			Degraded:    !requireWait,
+			RequireWait: state.RequireWait,
+			Degraded:    state.Degraded,
 		})
 	}
 	return tasks
@@ -581,7 +594,7 @@ func parallelCleanup(t testing.TB, env *framework.Env, tasks []cleanupTask, opts
 					continue
 				}
 				needFollow := false
-				if task.RequireWait && opts.SkipWaitForReady {
+				if task.RequireWait {
 					if err := env.WaitForUser(task.Name, waitTimeout); err != nil {
 						t.Logf("cleanup wait for user %s failed: %v", task.Name, err)
 						needFollow = true
@@ -641,7 +654,6 @@ func cleanupDegradedUsers(t testing.TB, env *framework.Env, names []string, wait
 				continue
 			}
 			if !exists {
-				delete(pending, name)
 				continue
 			}
 			deleted, err := attemptForceDelete(env, name)
