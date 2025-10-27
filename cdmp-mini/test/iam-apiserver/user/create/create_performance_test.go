@@ -830,13 +830,21 @@ func executeRequest(env *framework.Env, variant userVariant, options scenarioOpt
 
 	if options.CacheChecks > 0 {
 		hits := 0
-		fetchStart := time.Now()
-		resp, err := env.AdminRequest(http.MethodGet, fmt.Sprintf("/v1/users/%s", variant.Spec.Name), nil)
-		fetchDuration := time.Since(fetchStart)
-		if err == nil && resp != nil && resp.HTTPStatus() == http.StatusOK && fetchDuration <= options.CacheHitThreshold {
-			hits++
+		totalChecks := options.CacheChecks
+
+		// 预先通过一次查询填充缓存，避免把首个冷启动请求计入命中统计。
+		_, _ = env.AdminRequest(http.MethodGet, fmt.Sprintf("/v1/users/%s", variant.Spec.Name), nil)
+
+		for i := 0; i < totalChecks; i++ {
+			fetchStart := time.Now()
+			resp, err := env.AdminRequest(http.MethodGet, fmt.Sprintf("/v1/users/%s", variant.Spec.Name), nil)
+			fetchDuration := time.Since(fetchStart)
+			if err == nil && resp != nil && resp.HTTPStatus() == http.StatusOK && fetchDuration <= options.CacheHitThreshold {
+				hits++
+			}
 		}
-		outcome.cacheChecks = options.CacheChecks
+
+		outcome.cacheChecks = totalChecks
 		outcome.cacheHits = hits
 	}
 	return outcome
@@ -1114,12 +1122,12 @@ func specializedCacheScenario() performanceScenario {
 		Generator:   newDefaultGenerator("cache"),
 		Options: scenarioOptions{
 			EnforceSLA:        true,
-			SkipWaitForReady:  true,
+			SkipWaitForReady:  false,
 			WaitForReady:      30 * time.Second,
-			CacheChecks:       3,
+			CacheChecks:       5,
 			CacheHitThreshold: 50 * time.Millisecond,
 			Notes: []string{
-				"减少等待与探测次数，以观测高吞吐下的缓存表现",
+				"等待服务端写入后多次读取同一用户，验证缓存命中是否按预期发生",
 			},
 		},
 		Stages: []workloadStage{
@@ -1510,15 +1518,15 @@ func TestCreatePerformance(t *testing.T) {
 	defer recorder.Flush(t)
 
 	scenarios := []performanceScenario{
-		//baselineSerialScenario(),
-		//baselineConcurrentScenario(),
+		baselineSerialScenario(),
+		baselineConcurrentScenario(),
 		baselineSustainedScenario(),
-		//stressSpikeScenario(),
-		//stressRampScenario(),
-		//	stressDestructiveScenario(),
-		//	specializedDBPoolScenario(),
-		//	specializedCacheScenario(),
-		//	specializedExtremeDataScenario(),
+		stressSpikeScenario(),
+		stressRampScenario(),
+		stressDestructiveScenario(),
+		specializedDBPoolScenario(),
+		specializedCacheScenario(),
+		specializedExtremeDataScenario(),
 	}
 
 	for _, sc := range scenarios {

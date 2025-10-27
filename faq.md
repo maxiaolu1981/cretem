@@ -1,3 +1,0 @@
-counter表示某事件发生了多少次
-guage:当前的状态是什么
-hisogram和summary:某事件分布情况如何?

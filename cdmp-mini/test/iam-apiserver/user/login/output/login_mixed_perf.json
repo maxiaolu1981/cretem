@@ -1,0 +1,53 @@
+[
+  {
+    "scenario": "login_mixed_traffic",
+    "requests": 1000,
+    "success_rate": 0.976,
+    "error_rate": 0.024,
+    "duration_ms": 113,
+    "qps": 8778.1049904194,
+    "error_count": 24,
+    "success_count": 976,
+    "latency": {
+      "min_ms": 0.000602,
+      "max_ms": 73.284263,
+      "avg_ms": 10.996354502,
+      "p50_ms": 6.710878,
+      "p90_ms": 27.676969,
+      "p95_ms": 40.251339,
+      "p99_ms": 53.425614
+    },
+    "counters": {
+      "account_locked": 4,
+      "expected_error_path": 300,
+      "limit_triggered": 4,
+      "login_attempt": 800,
+      "login_failure": 4,
+      "login_success": 496,
+      "logout_attempt": 100,
+      "logout_failure": 11,
+      "logout_success": 89,
+      "missing_tokens": 20,
+      "password_incorrect": 300,
+      "refresh_attempt": 100,
+      "refresh_failure": 9,
+      "refresh_success": 91
+    },
+    "notes": [
+      "account_locked=4",
+      "expected_error_path=300",
+      "limit_triggered=4",
+      "login_attempt=800",
+      "login_failure=4",
+      "login_success=496",
+      "logout_attempt=100",
+      "logout_failure=11",
+      "logout_success=89",
+      "missing_tokens=20",
+      "password_incorrect=300",
+      "refresh_attempt=100",
+      "refresh_failure=9",
+      "refresh_success=91"
+    ]
+  }
+]

@@ -1,21 +1,94 @@
 [
   {
-    "scenario": "baseline/baseline_sustained",
-    "requests": 72052,
+    "scenario": "baseline/baseline_serial",
+    "requests": 15,
     "success_rate": 1,
     "error_rate": 0,
-    "duration_ms": 32017,
-    "qps": 2250.382640046467,
+    "duration_ms": 553,
+    "qps": 27.10757540459132,
     "error_count": 0,
-    "success_count": 72052,
+    "success_count": 15,
     "latency": {
-      "min_ms": 7.530776,
-      "max_ms": 114.822992,
-      "avg_ms": 13.310941,
-      "p50_ms": 12.317815,
-      "p90_ms": 18.246102,
-      "p95_ms": 20.653542,
-      "p99_ms": 27.69748
+      "min_ms": 10.003164,
+      "max_ms": 21.093596,
+      "avg_ms": 16.662286,
+      "p50_ms": 18.292046,
+      "p90_ms": 20.728205,
+      "p95_ms": 20.728205,
+      "p99_ms": 21.093596
+    },
+    "counters": {
+      "cache_checks": 0,
+      "cache_hits": 0,
+      "degraded": 0,
+      "peak_concurrency": 1,
+      "stages": 1
+    },
+    "notes": [
+      "单用户串行创建 - 基础性能基准",
+      "Load pattern=uniform",
+      "串行创建测得平均延迟约220-230ms，设定宽松基线",
+      "username distribution: len_12=5, len_28=5, len_45=5",
+      "password distribution: complex=8, simple=7",
+      "email distribution: corp.internal=5, custom-domain.test=5, example.com=5",
+      "phone distribution: domestic=7, international=8",
+      "TPS=27.11"
+    ]
+  },
+  {
+    "scenario": "baseline/baseline_concurrent",
+    "requests": 2048,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 737,
+    "qps": 2778.411406919976,
+    "error_count": 0,
+    "success_count": 2048,
+    "latency": {
+      "min_ms": 8.371811,
+      "max_ms": 214.515555,
+      "avg_ms": 22.376851,
+      "p50_ms": 15.624894,
+      "p90_ms": 31.255168,
+      "p95_ms": 56.113996,
+      "p99_ms": 178.388872
+    },
+    "counters": {
+      "cache_checks": 0,
+      "cache_hits": 0,
+      "degraded": 0,
+      "peak_concurrency": 64,
+      "stages": 1
+    },
+    "notes": [
+      "多用户并发创建 - 模拟真实并发场景",
+      "Load pattern=uniform",
+      "目标对齐登录压测并发，生产端需快速拉满吞吐",
+      "SLA 基于近期基准结果: avg~277ms, p95~453ms, p99~599ms",
+      "username distribution: len_12=683, len_28=683, len_45=682",
+      "password distribution: complex=1024, simple=1024",
+      "email distribution: corp.internal=683, custom-domain.test=682, example.com=683",
+      "phone distribution: domestic=1024, international=1024",
+      "TPS=2778.41"
+    ]
+  },
+  {
+    "scenario": "baseline/baseline_sustained",
+    "requests": 72354,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 32015,
+    "qps": 2259.9549174938848,
+    "error_count": 0,
+    "success_count": 72354,
+    "latency": {
+      "min_ms": 6.978021,
+      "max_ms": 159.419825,
+      "avg_ms": 13.255694,
+      "p50_ms": 12.27431,
+      "p90_ms": 17.867665,
+      "p95_ms": 20.288963,
+      "p99_ms": 27.729304
     },
     "counters": {
       "cache_checks": 0,
@@ -29,11 +102,230 @@
       "Load pattern=uniform",
       "持续负载周期约30s，用于观察内存与资源走势",
       "取消ThinkTime，关注高并发持续压力下的稳定性",
-      "username distribution: len_12=24017, len_28=24017, len_45=24018",
-      "password distribution: complex=36026, simple=36026",
-      "email distribution: corp.internal=24017, custom-domain.test=24018, example.com=24017",
-      "phone distribution: domestic=36026, international=36026",
-      "TPS=2250.38"
+      "username distribution: len_12=24118, len_28=24118, len_45=24118",
+      "password distribution: complex=36177, simple=36177",
+      "email distribution: corp.internal=24118, custom-domain.test=24118, example.com=24118",
+      "phone distribution: domestic=36177, international=36177",
+      "TPS=2259.95"
+    ]
+  },
+  {
+    "scenario": "stress/stress_spike",
+    "requests": 4096,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 2239,
+    "qps": 1829.0320564137894,
+    "error_count": 0,
+    "success_count": 4096,
+    "latency": {
+      "min_ms": 8.958286,
+      "max_ms": 1101.094627,
+      "avg_ms": 102.475581,
+      "p50_ms": 66.646929,
+      "p90_ms": 136.120576,
+      "p95_ms": 181.116754,
+      "p99_ms": 1044.657539
+    },
+    "counters": {
+      "cache_checks": 0,
+      "cache_hits": 0,
+      "degraded": 0,
+      "peak_concurrency": 256,
+      "stages": 1
+    },
+    "notes": [
+      "峰值流量测试 - 短时间内突发高并发",
+      "Load pattern=spike",
+      "突发负载集中在单阶段",
+      "username distribution: len_12=1366, len_28=1365, len_45=1365",
+      "password distribution: complex=2048, simple=2048",
+      "email distribution: corp.internal=1365, custom-domain.test=1365, example.com=1366",
+      "phone distribution: domestic=2048, international=2048",
+      "TPS=1829.03"
+    ]
+  },
+  {
+    "scenario": "stress/stress_ramp",
+    "requests": 10240,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 3206,
+    "qps": 3193.08348879656,
+    "error_count": 0,
+    "success_count": 10240,
+    "latency": {
+      "min_ms": 8.952147,
+      "max_ms": 466.979032,
+      "avg_ms": 96.162009,
+      "p50_ms": 77.913989,
+      "p90_ms": 197.875596,
+      "p95_ms": 239.762543,
+      "p99_ms": 316.296533
+    },
+    "counters": {
+      "cache_checks": 0,
+      "cache_hits": 0,
+      "degraded": 0,
+      "peak_concurrency": 512,
+      "stages": 4
+    },
+    "notes": [
+      "容量规划测试 - 逐步增加负载直到系统极限",
+      "Load pattern=ramp",
+      "分阶段递增并发量",
+      "username distribution: len_12=3414, len_28=3413, len_45=3413",
+      "password distribution: complex=5120, simple=5120",
+      "email distribution: corp.internal=3413, custom-domain.test=3413, example.com=3414",
+      "phone distribution: domestic=5120, international=5120",
+      "TPS=3193.08"
+    ]
+  },
+  {
+    "scenario": "stress/stress_overload",
+    "requests": 8192,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 5450,
+    "qps": 1502.9749134499777,
+    "error_count": 0,
+    "success_count": 8192,
+    "latency": {
+      "min_ms": 7.94547,
+      "max_ms": 712.869679,
+      "avg_ms": 150.977981,
+      "p50_ms": 140.046005,
+      "p90_ms": 241.7976,
+      "p95_ms": 292.99831,
+      "p99_ms": 464.042898
+    },
+    "counters": {
+      "cache_checks": 0,
+      "cache_hits": 0,
+      "degraded": 0,
+      "peak_concurrency": 512,
+      "stages": 1
+    },
+    "notes": [
+      "破坏性测试 - 超过系统最大处理能力",
+      "Load pattern=spike",
+      "p99=464.042898ms above goal 420ms",
+      "预期观察降级策略和排队行为，允许出现失败",
+      "username distribution: len_12=2731, len_28=2730, len_45=2731",
+      "password distribution: complex=4096, simple=4096",
+      "email distribution: corp.internal=2730, custom-domain.test=2731, example.com=2731",
+      "phone distribution: domestic=4096, international=4096",
+      "TPS=1502.97"
+    ]
+  },
+  {
+    "scenario": "specialized/db_connection_pool",
+    "requests": 2048,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 744,
+    "qps": 2750.3802333524654,
+    "error_count": 0,
+    "success_count": 2048,
+    "latency": {
+      "min_ms": 9.50683,
+      "max_ms": 103.639886,
+      "avg_ms": 33.55478,
+      "p50_ms": 31.405691,
+      "p90_ms": 51.335448,
+      "p95_ms": 56.878148,
+      "p99_ms": 74.241457
+    },
+    "counters": {
+      "cache_checks": 0,
+      "cache_hits": 0,
+      "degraded": 0,
+      "peak_concurrency": 96,
+      "stages": 1
+    },
+    "notes": [
+      "数据库连接池测试 - 验证连接池配置合理性",
+      "Load pattern=uniform",
+      "并发数接近连接池阈值，关注等待时间",
+      "username distribution: len_12=683, len_28=683, len_45=682",
+      "password distribution: complex=1024, simple=1024",
+      "email distribution: corp.internal=683, custom-domain.test=682, example.com=683",
+      "phone distribution: domestic=1024, international=1024",
+      "TPS=2750.38"
+    ]
+  },
+  {
+    "scenario": "specialized/cache_hit_validation",
+    "requests": 1024,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 6976,
+    "qps": 146.78351512304687,
+    "error_count": 0,
+    "success_count": 1024,
+    "latency": {
+      "min_ms": 6.905476,
+      "max_ms": 29.953277,
+      "avg_ms": 9.878702,
+      "p50_ms": 8.353242,
+      "p90_ms": 14.330068,
+      "p95_ms": 18.726985,
+      "p99_ms": 27.092012
+    },
+    "counters": {
+      "cache_checks": 5120,
+      "cache_hits": 5120,
+      "degraded": 0,
+      "peak_concurrency": 48,
+      "stages": 1
+    },
+    "notes": [
+      "缓存命中率测试 - 测量缓存对性能的影响",
+      "Load pattern=uniform",
+      "等待服务端写入后多次读取同一用户，验证缓存命中是否按预期发生",
+      "username distribution: len_12=341, len_28=341, len_45=342",
+      "password distribution: complex=512, simple=512",
+      "email distribution: corp.internal=341, custom-domain.test=342, example.com=341",
+      "phone distribution: domestic=512, international=512",
+      "TPS=146.78",
+      "Cache hit rate=100.00%",
+      "Mean wait-for-ready=298.313882ms"
+    ]
+  },
+  {
+    "scenario": "specialized/extreme_payloads",
+    "requests": 1024,
+    "success_rate": 1,
+    "error_rate": 0,
+    "duration_ms": 475,
+    "qps": 2152.4443621666983,
+    "error_count": 0,
+    "success_count": 1024,
+    "latency": {
+      "min_ms": 7.678195,
+      "max_ms": 40.394828,
+      "avg_ms": 14.593796,
+      "p50_ms": 13.884809,
+      "p90_ms": 19.715187,
+      "p95_ms": 22.372876,
+      "p99_ms": 28.883685
+    },
+    "counters": {
+      "cache_checks": 0,
+      "cache_hits": 0,
+      "degraded": 0,
+      "peak_concurrency": 32,
+      "stages": 1
+    },
+    "notes": [
+      "极端数据测试 - 最小/最大长度、特殊字符、重复数据",
+      "Load pattern=uniform",
+      "数据分布覆盖最小/最大长度、特殊字符、重复手机号",
+      "username distribution: len_10=256, len_30=256, len_3=256, len_45=256",
+      "password distribution: extreme=1024",
+      "email distribution: custom-extreme.test=512, max-length.domain=512",
+      "phone distribution: extreme=1024",
+      "TPS=2152.44"
     ]
   }
 ]

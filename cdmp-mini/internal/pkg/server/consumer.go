@@ -445,6 +445,17 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 			defer ticker.Stop()
 
 			currentBatchLimit := maxBatchBound
+			batchWorkerID := -1
+			ackMessages := func(batch []kafka.Message) bool {
+				for _, m := range batch {
+					select {
+					case acks <- ackResult{message: m, workerID: batchWorkerID, err: nil}:
+					case <-ctx.Done():
+						return false
+					}
+				}
+				return true
+			}
 			adjustParams := func(pending int) {
 				if pending < 0 {
 					pending = 0
@@ -506,16 +517,25 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 			flush := func() {
 				if len(createBatch) > 0 {
 					c.batchCreateToDB(ctx, createBatch)
+					if !ackMessages(createBatch) {
+						return
+					}
 				}
 				createBatch = releaseBatch(createBatch)
 
 				if len(deleteBatch) > 0 {
 					c.batchDeleteFromDB(ctx, deleteBatch)
+					if !ackMessages(deleteBatch) {
+						return
+					}
 				}
 				deleteBatch = releaseBatch(deleteBatch)
 
 				if len(updateBatch) > 0 {
 					c.batchUpdateToDB(ctx, updateBatch)
+					if !ackMessages(updateBatch) {
+						return
+					}
 				}
 				updateBatch = releaseBatch(updateBatch)
 				adjustParams(len(batchCh))
@@ -535,6 +555,9 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 						createBatch = append(createBatch, bi.msg)
 						if len(createBatch) >= currentBatchLimit {
 							c.batchCreateToDB(ctx, createBatch)
+							if !ackMessages(createBatch) {
+								return
+							}
 							createBatch = releaseBatch(createBatch)
 						}
 					case OperationDelete:
@@ -542,6 +565,9 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 						deleteBatch = append(deleteBatch, bi.msg)
 						if len(deleteBatch) >= currentBatchLimit {
 							c.batchDeleteFromDB(ctx, deleteBatch)
+							if !ackMessages(deleteBatch) {
+								return
+							}
 							deleteBatch = releaseBatch(deleteBatch)
 						}
 					case OperationUpdate:
@@ -549,6 +575,9 @@ func (c *UserConsumer) StartConsuming(ctx context.Context, workerCount int, read
 						updateBatch = append(updateBatch, bi.msg)
 						if len(updateBatch) >= currentBatchLimit {
 							c.batchUpdateToDB(ctx, updateBatch)
+							if !ackMessages(updateBatch) {
+								return
+							}
 							updateBatch = releaseBatch(updateBatch)
 						}
 					default:

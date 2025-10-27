@@ -16,6 +16,8 @@ const (
 	DefaultContactLookupTimeout           = 2 * time.Second
 	DefaultContactRefreshTimeout          = 3 * time.Second
 	DefaultContactPreflightMaxConcurrency = 64
+	// MinUserPendingCreateTTL guarantees pending markers survive slow consumer restarts and large Kafka backlogs.
+	MinUserPendingCreateTTL = 10 * time.Minute
 )
 
 type ServerRunOptions struct {
@@ -106,7 +108,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		ContactPreflightMaxConcurrency: DefaultContactPreflightMaxConcurrency,
 		ProducerFallbackDir:            "/var/log/iam/producer",
 		PasswordHashCost:               6,
-		UserPendingCreateTTL:           2 * time.Minute,
+		UserPendingCreateTTL:           MinUserPendingCreateTTL,
 	}
 }
 
@@ -239,7 +241,10 @@ func (s *ServerRunOptions) Complete() {
 	}
 
 	if s.UserPendingCreateTTL <= 0 {
-		s.UserPendingCreateTTL = 2 * time.Minute
+		s.UserPendingCreateTTL = MinUserPendingCreateTTL
+	}
+	if s.UserPendingCreateTTL < MinUserPendingCreateTTL {
+		s.UserPendingCreateTTL = MinUserPendingCreateTTL
 	}
 }
 

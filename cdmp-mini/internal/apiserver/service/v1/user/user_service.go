@@ -431,12 +431,13 @@ func durationToSecondsCeil(d time.Duration) int64 {
 }
 
 func (u *UserService) pendingCreateTTL() time.Duration {
+	minTTL := serveropts.MinUserPendingCreateTTL
 	if u == nil || u.Options == nil || u.Options.ServerRunOptions == nil {
-		return 2 * time.Minute
+		return minTTL
 	}
 	ttl := u.Options.ServerRunOptions.UserPendingCreateTTL
-	if ttl <= 0 {
-		return 2 * time.Minute
+	if ttl < minTTL {
+		return minTTL
 	}
 	return ttl
 }
