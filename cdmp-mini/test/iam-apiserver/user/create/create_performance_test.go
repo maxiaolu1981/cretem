@@ -593,19 +593,23 @@ func parallelCleanup(t testing.TB, env *framework.Env, tasks []cleanupTask, opts
 				if task.Name == "" {
 					continue
 				}
-				needFollow := false
+				var waitErr error
 				if task.RequireWait {
 					if err := env.WaitForUser(task.Name, waitTimeout); err != nil {
 						t.Logf("cleanup wait for user %s failed: %v", task.Name, err)
-						needFollow = true
+						waitErr = err
 					}
 				}
+				needFollow := false
 				deleted, err := attemptForceDelete(env, task.Name)
 				if err != nil {
 					t.Logf("cleanup delete %s failed: %v", task.Name, err)
 					needFollow = true
 				} else if !deleted {
 					needFollow = true
+				} else if waitErr != nil {
+					// Wait failed but delete succeeded; nothing further to do.
+					waitErr = nil
 				}
 				if needFollow {
 					followupMu.Lock()
@@ -654,6 +658,7 @@ func cleanupDegradedUsers(t testing.TB, env *framework.Env, names []string, wait
 				continue
 			}
 			if !exists {
+				delete(pending, name)
 				continue
 			}
 			deleted, err := attemptForceDelete(env, name)
@@ -1507,8 +1512,8 @@ func TestCreatePerformance(t *testing.T) {
 	scenarios := []performanceScenario{
 		//baselineSerialScenario(),
 		//baselineConcurrentScenario(),
-		//baselineSustainedScenario(),
-		stressSpikeScenario(),
+		baselineSustainedScenario(),
+		//stressSpikeScenario(),
 		//stressRampScenario(),
 		//	stressDestructiveScenario(),
 		//	specializedDBPoolScenario(),

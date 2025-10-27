@@ -79,11 +79,12 @@ type UserService struct {
 	Audit    *audit.Manager
 	group    singleflight.Group
 
-	contactWarmupMu   sync.Mutex
-	contactWarming    bool
-	contactCacheReady atomic.Bool
-	preflightLimiter  *semaphore.Weighted
-	poolReporter      *poolStatsReporter
+	contactWarmupMu        sync.Mutex
+	contactWarming         bool
+	contactCacheReady      atomic.Bool
+	preflightLimiter       *semaphore.Weighted
+	poolReporter           *poolStatsReporter
+	contactWarmupNextRetry atomic.Int64
 }
 
 type contextKey string
@@ -740,6 +741,10 @@ func (u *UserService) ensureContactCacheReady() {
 	if u.Store == nil || u.Redis == nil {
 		return
 	}
+	next := u.contactWarmupNextRetry.Load()
+	if next > 0 && time.Now().Unix() < next {
+		return
+	}
 	u.contactWarmupMu.Lock()
 	if u.contactCacheReady.Load() || u.contactWarming {
 		u.contactWarmupMu.Unlock()
@@ -749,14 +754,17 @@ func (u *UserService) ensureContactCacheReady() {
 	u.contactWarmupMu.Unlock()
 
 	go func() {
+		retryDelay := 30 * time.Second
 		if err := u.warmContactCache(); err != nil {
-			log.Warnw("联系人缓存预热失败", "error", err)
+			u.contactWarmupNextRetry.Store(time.Now().Add(retryDelay).Unix())
+			log.Warnw("联系人缓存预热失败", "error", err, "retry_after", retryDelay)
 			u.contactWarmupMu.Lock()
 			u.contactWarming = false
 			u.contactWarmupMu.Unlock()
 			return
 		}
 		u.contactCacheReady.Store(true)
+		u.contactWarmupNextRetry.Store(0)
 		u.contactWarmupMu.Lock()
 		u.contactWarming = false
 		u.contactWarmupMu.Unlock()
@@ -838,17 +846,31 @@ func (u *UserService) markCreateDegraded(ctx context.Context, reason string, kv 
 	}
 }
 
+func contactFieldFromCacheKey(cacheKey string) string {
+	if strings.Contains(cacheKey, ":email:") {
+		return "email"
+	}
+	if strings.Contains(cacheKey, ":phone:") {
+		return "phone"
+	}
+	return "username"
+}
+
 func (u *UserService) ensureContactPlaceholder(ctx context.Context, cacheKey, owner string) {
 	if u.Redis == nil || cacheKey == "" {
 		return
 	}
+	fieldKey := contactFieldFromCacheKey(cacheKey)
 	placeholder := owner
 	if strings.TrimSpace(placeholder) == "" {
 		placeholder = RATE_LIMIT_PREVENTION
 	}
 	setCtx, setCancel := u.redisOpContext(ctx)
+	setStart := time.Now()
 	ok, err := u.Redis.SetNX(setCtx, cacheKey, placeholder, contactPlaceholderTTL)
+	setDuration := time.Since(setStart)
 	setCancel()
+	u.recordUserCreateStep(ctx, "redis_placeholder_setnx", fieldKey, owner, setDuration, err)
 	if err != nil {
 		log.Warnw("唯一性灰度占位失败", "key", cacheKey, "error", err)
 		return
@@ -857,8 +879,15 @@ func (u *UserService) ensureContactPlaceholder(ctx context.Context, cacheKey, ow
 		return
 	}
 	getCtx, getCancel := u.redisOpContext(ctx)
+	getStart := time.Now()
 	existing, err := u.Redis.GetKey(getCtx, cacheKey)
+	getDuration := time.Since(getStart)
 	getCancel()
+	getErr := err
+	if errors.Is(err, redis.Nil) {
+		getErr = nil
+	}
+	u.recordUserCreateStep(ctx, "redis_placeholder_get", fieldKey, owner, getDuration, getErr)
 	if err != nil {
 		if err != redis.Nil {
 			log.Warnw("唯一性灰度占位读取失败", "key", cacheKey, "error", err)
@@ -867,8 +896,12 @@ func (u *UserService) ensureContactPlaceholder(ctx context.Context, cacheKey, ow
 	}
 	if strings.EqualFold(existing, placeholder) || existing == "" || existing == RATE_LIMIT_PREVENTION {
 		refreshCtx, refreshCancel := u.redisOpContext(ctx)
-		if err := u.Redis.SetKey(refreshCtx, cacheKey, placeholder, contactPlaceholderTTL); err != nil {
-			log.Warnw("唯一性灰度占位刷新失败", "key", cacheKey, "error", err)
+		refreshStart := time.Now()
+		setErr := u.Redis.SetKey(refreshCtx, cacheKey, placeholder, contactPlaceholderTTL)
+		refreshDuration := time.Since(refreshStart)
+		u.recordUserCreateStep(ctx, "redis_placeholder_refresh", fieldKey, owner, refreshDuration, setErr)
+		if setErr != nil {
+			log.Warnw("唯一性灰度占位刷新失败", "key", cacheKey, "error", setErr)
 		}
 		refreshCancel()
 	}
@@ -888,13 +921,20 @@ func (u *UserService) ensureDegradedContactPlaceholders(ctx context.Context, use
 func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User) (map[string]*v1.User, bool, error) {
 	limiter := u.preflightLimiter
 	if limiter != nil {
-		if err := limiter.Acquire(ctx, 1); err != nil {
+		waitStart := time.Now()
+		err := limiter.Acquire(ctx, 1)
+		u.recordUserCreateStep(ctx, "preflight_limiter_wait", "limiter", user.Name, time.Since(waitStart), err)
+		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return nil, false, errors.WithCode(code.ErrDatabaseTimeout, "预检查询等待超时")
 			}
 			return nil, false, errors.WithCode(code.ErrDatabase, "预检查询等待失败: %v", err)
 		}
-		defer limiter.Release(1)
+		defer func() {
+			releaseStart := time.Now()
+			limiter.Release(1)
+			u.recordUserCreateStep(ctx, "preflight_limiter_release", "limiter", user.Name, time.Since(releaseStart), nil)
+		}()
 	}
 
 	u.ensureContactCacheReady()
@@ -925,7 +965,10 @@ func (u *UserService) ensureContactUniqueness(ctx context.Context, user *v1.User
 			dbCtx, cancel := u.newDBContext(ctx, u.contactLookupTimeout())
 			defer cancel()
 			ranPreflight = true
-			return store.PreflightConflicts(dbCtx, user.Name, email, phone, u.Options)
+			dbStart := time.Now()
+			conflicts, confErr := store.PreflightConflicts(dbCtx, user.Name, email, phone, u.Options)
+			u.recordUserCreateStep(ctx, "preflight_query", "database", user.Name, time.Since(dbStart), confErr)
+			return conflicts, confErr
 		})
 		if err != nil {
 			preflightErr = err
@@ -1201,9 +1244,17 @@ func (u *UserService) warmContactCache() error {
 			Limit:  &limit,
 		}
 
-		list, err := u.Store.Users().List(ctx, "", opts, u.Options)
+		result, err := util.RetryWithBackoff(3, isRetryableError, func() (interface{}, error) {
+			return u.Store.Users().List(ctx, "", opts, u.Options)
+		})
 		if err != nil {
 			return err
+		}
+		var list *v1.UserList
+		if result != nil {
+			if typed, ok := result.(*v1.UserList); ok {
+				list = typed
+			}
 		}
 		if list == nil || len(list.Items) == 0 {
 			break
@@ -1321,7 +1372,7 @@ func isRetryableError(err error) bool {
 		"timeout", "deadline exceeded", "connection refused", "network error",
 		"connection reset", "broken pipe", "no route to host",
 		// 数据库临时错误
-		"database is closed", "deadlock", "1213", "40001",
+		"database is closed", "deadlock", "1213", "40001", "invalid connection",
 		"temporary", "busy", "lock", "try again",
 		// 资源暂时不可用
 		"resource temporarily unavailable", "too many connections",

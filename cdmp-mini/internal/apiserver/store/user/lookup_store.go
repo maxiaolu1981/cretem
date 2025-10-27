@@ -73,15 +73,15 @@ func (u *Users) PreflightConflicts(ctx context.Context, username, email, phone s
 	args := make([]interface{}, 0, 3)
 
 	if normalizedName != "" {
-		queries = append(queries, "SELECT 'username' AS scope, name, email, phone, status FROM user WHERE name = ?")
+		queries = append(queries, "(SELECT 'username' AS scope, name, email, phone, status FROM `user` WHERE name = ? LIMIT 1)")
 		args = append(args, normalizedName)
 	}
 	if normalizedEmail != "" {
-		queries = append(queries, "SELECT 'email' AS scope, name, email, phone, status FROM user WHERE email = ?")
+		queries = append(queries, "(SELECT 'email' AS scope, name, email, phone, status FROM `user` WHERE email = ? LIMIT 1)")
 		args = append(args, normalizedEmail)
 	}
 	if normalizedPhone != "" {
-		queries = append(queries, "SELECT 'phone' AS scope, name, email, phone, status FROM user WHERE phone = ?")
+		queries = append(queries, "(SELECT 'phone' AS scope, name, email, phone, status FROM `user` WHERE phone = ? LIMIT 1)")
 		args = append(args, normalizedPhone)
 	}
 
@@ -109,23 +109,27 @@ func (u *Users) PreflightConflicts(ctx context.Context, username, email, phone s
 	}
 	defer rows.Close()
 
-	result := make(map[string]*v1.User, len(queries))
+	result := make(map[string]*v1.User, len(args))
 	for rows.Next() {
 		var row conflictRow
 		if scanErr := rows.Scan(&row.Scope, &row.Name, &row.Email, &row.Phone, &row.Status); scanErr != nil {
 			return nil, errors.WithCode(code.ErrDatabase, "预检查扫描失败: %v", scanErr)
 		}
-		if row.Scope == "" {
+		scope := strings.TrimSpace(row.Scope)
+		if scope == "" {
 			continue
 		}
-		if _, exists := result[row.Scope]; exists {
+		if _, exists := result[scope]; exists {
 			continue
 		}
-		result[row.Scope] = &v1.User{
-			ObjectMeta: metav1.ObjectMeta{Name: row.Name},
-			Email:      row.Email,
-			Phone:      row.Phone,
-			Status:     int(row.Status),
+		switch scope {
+		case "username", "email", "phone":
+			result[scope] = &v1.User{
+				ObjectMeta: metav1.ObjectMeta{Name: row.Name},
+				Email:      row.Email,
+				Phone:      row.Phone,
+				Status:     int(row.Status),
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {

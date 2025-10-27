@@ -96,8 +96,8 @@ func NewServerRunOptions() *ServerRunOptions {
 		MaxGoroutines:                  100,               // 默认最大并发处理数
 		MaxQueueSize:                   100,               // 默认任务队列大小
 		TimeoutThreshold:               100 * time.Second, // 默认单个请求超时阈值
-		EnableContactWarmup:            true,
-		EnableUserTraceLogging:         true, //跟踪日志
+		EnableContactWarmup:            false,             //联系人预热
+		EnableUserTraceLogging:         true,              //跟踪日志
 		UserTraceLogSampleRate:         0.1,
 		UserTraceForceLogErrors:        true,
 		UserTraceDisableLogging:        false,

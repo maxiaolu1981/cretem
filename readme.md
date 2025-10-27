@@ -370,3 +370,7 @@ Profile 验证
 
 --------------
 你来进行修正把：抓取 sql.DB 连接池指标或慢查询看是否出现 wait_count/slow query 峰值；2) 排查缓存未落地的原因，降低重复读；3) 必要时优化 check_user_exist 查询和索引或调大池容量。
+current trace shows user-service.ensure_contacts_unique 占到 user-service.create 的 ~95%，瓶颈在数据库层的唯一性校验 SQL，而非 Go 代码调度。
+现有实现用单条 UNION ALL 查询，把所有命中条件一次性交给 MySQL；改成多个 goroutine 并发查询，只是把一次往返拆成多次，会增加连接/往返开销，还会在热点压力下放大锁竞争，通常只会变慢。
+建议方向：1）确认 users 表上 phone、email、nickname、name 等字段是否都有独立索引/唯一索引，缺失的话先补齐；2）用 EXPLAIN/慢 SQL 抓执行计划，检查是否走全索引扫描；3）必要时把 UNION ALL 改成 SELECT ... WHERE (name=? OR email=? …) 这种单语句组合，减少排序/去重开销；4）在 Kafka 消费侧或落库时依赖数据库唯一约束捕获冲突，避免双重查询；5）对热点字段做缓存预校验（例如 Redis Set）再回源。
+如果以上优化仍不够，再考虑更深层手段（异步一致性校验、批量去重等），但不建议仅凭 goroutine 并发查询来“提速”。
