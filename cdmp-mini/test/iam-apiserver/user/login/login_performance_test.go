@@ -490,102 +490,124 @@ func mixedTrafficAction(req loadRequest) loadOutcome {
 	session := &state.sessions[req.WorkerID%len(state.sessions)]
 
 	step := req.Attempt % 10
-	switch {
-	case step < 5:
-		tokens, resp, err := req.Env.Login(session.spec.Name, session.spec.Password)
-		status, respCode := responseInfo(resp)
-		success := err == nil && resp != nil && status == http.StatusOK && respCode == code.ErrSuccess
-		flags := map[string]bool{
-			"login_attempt": true,
-		}
-		if success {
-			session.tokens = tokens
-			flags["login_success"] = true
-		} else {
-			flags["login_failure"] = true
-			if status == http.StatusTooManyRequests {
-				flags["limit_triggered"] = true
-			}
-			if respCode == code.ErrAccountLocked {
-				flags["account_locked"] = true
-			}
-			if respCode == code.ErrPasswordIncorrect {
-				flags["password_incorrect"] = true
-			}
-		}
-		return loadOutcome{Success: success, HTTPStatus: status, Code: respCode, Err: err, Flags: flags}
+	switch step {
+	case 0, 1, 2, 3:
+		return performLoginAttempt(req, session)
 
-	case step < 8:
-		payload := map[string]string{
-			"username": session.spec.Name,
-			"password": session.spec.Password + "_wrong",
-		}
-		resp, err := req.Env.AuthorizedRequest(http.MethodPost, "/login", "", payload)
-		status, respCode := responseInfo(resp)
-		passwordIncorrect := status == http.StatusUnauthorized && respCode == code.ErrPasswordIncorrect
-		limitTriggered := status == http.StatusTooManyRequests
-		accountLocked := respCode == code.ErrAccountLocked
-		success := passwordIncorrect || limitTriggered || accountLocked
-		flags := map[string]bool{
-			"login_attempt":       true,
-			"password_incorrect":  passwordIncorrect,
-			"limit_triggered":     limitTriggered,
-			"account_locked":      accountLocked,
-			"expected_error_path": success,
-		}
-		if !success {
-			flags["login_failure"] = true
-		}
-		return loadOutcome{Success: success, HTTPStatus: status, Code: respCode, Err: err, Flags: flags}
+	case 4:
+		return performRefreshAttempt(req, session)
 
-	case step == 8:
-		if session.tokens == nil {
-			flags := map[string]bool{
-				"refresh_attempt": true,
-				"refresh_failure": true,
-				"missing_tokens":  true,
-			}
-			return loadOutcome{Success: false, Flags: flags}
-		}
-		resp, err := req.Env.Refresh(session.tokens.AccessToken, session.tokens.RefreshToken)
-		status, respCode := responseInfo(resp)
-		success := err == nil && resp != nil && status == http.StatusOK && respCode == code.ErrSuccess
-		flags := map[string]bool{"refresh_attempt": true}
-		if success {
-			updateTokensFromResponse(session.tokens, resp.Data)
-			flags["refresh_success"] = true
-		} else {
-			flags["refresh_failure"] = true
-			if status == http.StatusUnauthorized {
-				flags["unauthorized"] = true
-			}
-		}
-		return loadOutcome{Success: success, HTTPStatus: status, Code: respCode, Err: err, Flags: flags}
+	case 5:
+		return performLogoutAttempt(req, session)
+
+	case 6, 8, 9:
+		return performLoginAttempt(req, session)
+
+	case 7:
+		return performWrongPasswordAttempt(req, session)
 
 	default:
-		if session.tokens == nil {
-			flags := map[string]bool{
-				"logout_attempt": true,
-				"logout_failure": true,
-				"missing_tokens": true,
-			}
-			return loadOutcome{Success: false, Flags: flags}
-		}
-		resp, err := req.Env.Logout(session.tokens.AccessToken, session.tokens.RefreshToken)
-		status, respCode := responseInfo(resp)
-		success := err == nil && resp != nil && status == http.StatusOK && respCode == code.ErrSuccess
-		flags := map[string]bool{"logout_attempt": true}
-		if success {
-			flags["logout_success"] = true
-			session.tokens = nil
-		} else {
-			flags["logout_failure"] = true
-			if status == http.StatusUnauthorized {
-				flags["unauthorized"] = true
-			}
-		}
-		return loadOutcome{Success: success, HTTPStatus: status, Code: respCode, Err: err, Flags: flags}
+		return performLoginAttempt(req, session)
 	}
+}
+
+func performLoginAttempt(req loadRequest, session *mixedSession) loadOutcome {
+	tokens, resp, err := req.Env.Login(session.spec.Name, session.spec.Password)
+	status, respCode := responseInfo(resp)
+	success := err == nil && resp != nil && status == http.StatusOK && respCode == code.ErrSuccess
+	flags := map[string]bool{
+		"login_attempt": true,
+	}
+	if success {
+		session.tokens = tokens
+		flags["login_success"] = true
+	} else {
+		flags["login_failure"] = true
+		if status == http.StatusTooManyRequests {
+			flags["limit_triggered"] = true
+		}
+		if respCode == code.ErrAccountLocked {
+			flags["account_locked"] = true
+		}
+		if respCode == code.ErrPasswordIncorrect {
+			flags["password_incorrect"] = true
+		}
+	}
+	return loadOutcome{Success: success, HTTPStatus: status, Code: respCode, Err: err, Flags: flags}
+}
+
+func performWrongPasswordAttempt(req loadRequest, session *mixedSession) loadOutcome {
+	payload := map[string]string{
+		"username": session.spec.Name,
+		"password": session.spec.Password + "_wrong",
+	}
+	resp, err := req.Env.AuthorizedRequest(http.MethodPost, "/login", "", payload)
+	status, respCode := responseInfo(resp)
+	passwordIncorrect := status == http.StatusUnauthorized && respCode == code.ErrPasswordIncorrect
+	limitTriggered := status == http.StatusTooManyRequests
+	accountLocked := respCode == code.ErrAccountLocked
+	success := passwordIncorrect || limitTriggered || accountLocked
+	flags := map[string]bool{
+		"login_attempt":       true,
+		"password_incorrect":  passwordIncorrect,
+		"limit_triggered":     limitTriggered,
+		"account_locked":      accountLocked,
+		"expected_error_path": success,
+	}
+	if !success {
+		flags["login_failure"] = true
+	}
+	return loadOutcome{Success: success, HTTPStatus: status, Code: respCode, Err: err, Flags: flags}
+}
+
+func performRefreshAttempt(req loadRequest, session *mixedSession) loadOutcome {
+	if session.tokens == nil {
+		flags := map[string]bool{
+			"refresh_attempt": true,
+			"refresh_failure": true,
+			"missing_tokens":  true,
+		}
+		return loadOutcome{Success: false, Flags: flags}
+	}
+	resp, err := req.Env.Refresh(session.tokens.AccessToken, session.tokens.RefreshToken)
+	status, respCode := responseInfo(resp)
+	success := err == nil && resp != nil && status == http.StatusOK && respCode == code.ErrSuccess
+	flags := map[string]bool{"refresh_attempt": true}
+	if success {
+		updateTokensFromResponse(session.tokens, resp.Data)
+		flags["refresh_success"] = true
+	} else {
+		flags["refresh_failure"] = true
+		if status == http.StatusUnauthorized {
+			flags["unauthorized"] = true
+		}
+	}
+	return loadOutcome{Success: success, HTTPStatus: status, Code: respCode, Err: err, Flags: flags}
+}
+
+func performLogoutAttempt(req loadRequest, session *mixedSession) loadOutcome {
+	if session.tokens == nil {
+		flags := map[string]bool{
+			"logout_attempt": true,
+			"logout_failure": true,
+			"missing_tokens": true,
+		}
+		return loadOutcome{Success: false, Flags: flags}
+	}
+	resp, err := req.Env.Logout(session.tokens.AccessToken, session.tokens.RefreshToken)
+	status, respCode := responseInfo(resp)
+	success := err == nil && resp != nil && status == http.StatusOK && respCode == code.ErrSuccess
+	flags := map[string]bool{"logout_attempt": true}
+	if success {
+		flags["logout_success"] = true
+		session.tokens = nil
+	} else {
+		flags["logout_failure"] = true
+		if status == http.StatusUnauthorized {
+			flags["unauthorized"] = true
+		}
+	}
+	return loadOutcome{Success: success, HTTPStatus: status, Code: respCode, Err: err, Flags: flags}
 }
 
 func teardownMixedState(t *testing.T, env *framework.Env, state any) {

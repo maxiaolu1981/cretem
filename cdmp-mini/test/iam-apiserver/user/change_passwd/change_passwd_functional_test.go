@@ -11,7 +11,7 @@ import (
 	"github.com/maxiaolu1981/cretem/cdmp-mini/test/iam-apiserver/tools/framework"
 )
 
-const testDir = "test/iam-apiserver/user/change_passwd"
+const testDir = "/home/mxl/cretem/cretem/cdmp-mini/test/iam-apiserver/user/change_passwd"
 
 func TestMain(m *testing.M) {
 	if os.Getenv("IAM_APISERVER_E2E") == "" {

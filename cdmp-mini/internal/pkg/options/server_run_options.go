@@ -74,7 +74,7 @@ func NewServerRunOptions() *ServerRunOptions {
 		Healthz:                        true,
 		Middlewares:                    []string{},
 		EnableProfiling:                true,
-		EnableMetrics:                  false,
+		EnableMetrics:                  true,
 		FastDebugStartup:               false,
 		CookieDomain:                   "",
 		CookieSecure:                   false,
